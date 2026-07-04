@@ -1,0 +1,174 @@
+app:
+  name: "ai-orchestrator"
+  version: "1.0.0"
+  environment: "production"
+  logLevel: "warn"
+
+server:
+  host: "0.0.0.0"
+  port: 3000
+  wsPort: 3001
+  cors:
+    origin: "https://your-domain.com"
+    credentials: true
+
+orchestrator:
+  maxConcurrentAgents: 50
+  defaultTimeout: 600000
+  retryAttempts: 5
+  retryDelay: 10000
+  heartbeatInterval: 180000
+  taskQueueSize: 10000
+  agentPoolSize: 20
+  healthCheckInterval: 30000
+
+agents:
+  defaultTimeout: 300000
+  maxRetries: 5
+  healthCheckInterval: 60000
+  restartOnFailure: true
+  maxRestarts: 5
+  types:
+    - "orchestrator"
+    - "worker"
+    - "researcher"
+    - "coder"
+    - "reviewer"
+    - "tester"
+    - "deployer"
+
+agents:
+  orchestrator:
+    maxConcurrent: 10
+    priority: 10
+    capabilities:
+      - "task-planning"
+      - "task-delegation"
+      - "progress-tracking"
+      - "result-aggregation"
+  worker:
+    maxConcurrent: 20
+    priority: 5
+    capabilities:
+      - "code-generation"
+      - "file-operations"
+      - "command-execution"
+  researcher:
+    maxConcurrent: 10
+    priority: 7
+    capabilities:
+      - "web-search"
+      - "documentation-lookup"
+      - "api-research"
+      - "best-practices"
+  coder:
+    maxConcurrent: 10
+    priority: 8
+    capabilities:
+      - "code-generation"
+      - "refactoring"
+      - "debugging"
+      - "testing"
+  reviewer:
+    maxConcurrent: 5
+    priority: 6
+    capabilities:
+      - "code-review"
+      - "security-audit"
+      - "performance-analysis"
+      - "best-practices"
+  tester:
+    maxConcurrent: 10
+    priority: 5
+    capabilities:
+      - "unit-testing"
+      - "integration-testing"
+      - "e2e-testing"
+      - "test-generation"
+  deployer:
+    maxConcurrent: 5
+    priority: 4
+    capabilities:
+      - "deployment"
+      - "ci-cd"
+      - "infrastructure"
+      - "monitoring"
+
+logging:
+  level: "warn"
+  format: "json"
+  directory: "/var/log/ai-orchestrator"
+  maxFiles: 30
+  maxSize: "50m"
+  console: false
+  file: true
+  rotation: "daily"
+
+database:
+  type: "postgresql"
+  host: "localhost"
+  port: 5432
+  database: "ai_orchestrator"
+  user: "orchestrator"
+  password: ""
+  pool:
+    min: 2
+    max: 10
+  migrations: "./migrations"
+
+cache:
+  type: "redis"
+  ttl: 7200
+  maxKeys: 100000
+  redis:
+    host: "localhost"
+    port: 6379
+    password: ""
+    db: 1
+
+queue:
+  type: "redis"
+  redis:
+    host: "localhost"
+    port: 6379
+    password: ""
+    db: 2
+
+monitoring:
+  enabled: true
+  metricsPort: 9090
+  healthCheckPath: "/health"
+  metricsPath: "/metrics"
+
+security:
+  apiKey: "${API_KEY}"
+  jwtSecret: "${JWT_SECRET}"
+  rateLimit:
+    windowMs: 900000
+    maxRequests: 1000
+
+notifications:
+  enabled: true
+  webhook: "${WEBHOOK_URL}"
+  email:
+    enabled: true
+    host: "${SMTP_HOST}"
+    port: 587
+    user: "${SMTP_USER}"
+    pass: "${SMTP_PASS}"
+    from: "${SMTP_FROM}"
+  slack:
+    enabled: true
+    webhook: "${SLACK_WEBHOOK}"
+  discord:
+    enabled: true
+    webhook: "${DISCORD_WEBHOOK}"
+
+agentManager:
+  enabled: true
+  worktreePath: "/var/worktrees/ai-orchestrator"
+  maxWorktrees: 50
+  autoCleanup: true
+  cleanupInterval: 86400000
+  defaultBranch: "main"
+  remoteName: "origin"

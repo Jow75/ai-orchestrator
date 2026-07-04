@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Runtime data (never commit live state)
+logs/
+state/
+sessions/
+status.json
+*.log
+
+# Environment / local overrides
+.env
+config/local.json
+config/projects/*.local.json
+
+# OS noise
+Thumbs.db
+.DS_Store
+
+# Coverage / build output
+coverage/
+dist/

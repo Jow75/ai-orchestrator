@@ -1,0 +1,66 @@
+{
+  "name": "ai-orchestrator",
+  "version": "1.0.0",
+  "description": "AI Orchestrator - Multi-agent orchestration system",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "docs": "jsdoc -c jsdoc.json",
+    "build": "babel src -d dist",
+    "clean": "rm -rf dist coverage"
+  },
+  "keywords": [
+    "ai",
+    "orchestrator",
+    "multi-agent",
+    "automation"
+  ],
+  "author": "AI Orchestrator",
+  "license": "MIT",
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "commander": "^12.0.0",
+    "winston": "^3.13.0",
+    "yaml": "^2.4.0",
+    "js-yaml": "^4.1.0",
+    "uuid": "^9.0.0",
+    "axios": "^1.6.0",
+    "ws": "^8.16.0",
+    "express": "^4.18.0",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "dotenv": "^16.4.0",
+    "lodash": "^4.17.21",
+    "dayjs": "^1.11.0",
+    "chalk": "^5.3.0",
+    "ora": "^8.0.0",
+    "inquirer": "^9.2.0",
+    "figlet": "^1.7.0",
+    "gradient-string": "^2.0.0",
+    "boxen": "^7.1.0",
+    "execa": "^8.0.0",
+    "glob": "^11.0.0",
+    "node-schedule": "^2.1.1",
+    "node-notifier": "^10.0.1",
+    "winston-daily-rotate-file": "^5.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "eslint": "^8.57.0",
+    "eslint-config-airbnb-base": "^15.0.0",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-jest": "^28.5.0",
+    "jsdoc": "^4.0.3",
+    "@babel/core": "^7.24.0",
+    "@babel/preset-env": "^7.24.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
