@@ -1,126 +1,141 @@
 # API Reference
 
-API documentation for AI-Orchestrator's REST and WebSocket interfaces.
+Three integration surfaces: the HTTP dashboard API, the plugin API, and the
+driver interface. (Programmatic library usage is a fourth — see the bottom.)
 
-## Base URL
-```
-http://localhost:3000/api
-```
+---
 
-## Authentication
-API Key authentication via Authorization header:
-```
-Authorization: Bearer <your-api-key>
-```
-Set API key in configuration:
-```yaml
-security:
-  apiKey: "your-secret-key"
-```
+## 1. Dashboard HTTP API
 
-## Rate Limiting
-Default: 100 requests per 15 minutes per IP
-Headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+Read-only, JSON, served on `http://127.0.0.1:4711` by default (see
+`api` in [CONFIGURATION.md](CONFIGURATION.md)). Built for the future web
+dashboard, equally useful for curl and monitoring.
 
-## Error Responses
-```json
+| Endpoint | Returns |
+| --- | --- |
+| `GET /api/health` | `{ ok, pid, uptimeMs }` — liveness probe |
+| `GET /api/status` | Live status (same data as `status.json`) |
+| `GET /api/sessions` | All active session records |
+| `GET /api/sessions/:project/history` | Finished sessions for a project |
+| `GET /api/projects` | Defined projects + `hasActiveSession` flag |
+
+### `/api/status` shape
+
+```jsonc
 {
-  "success": false,
-  "data": null,
-  "error": {
-    "message": "Error description",
-    "code": "ERROR_CODE"
-  }
+  "orchestrator": { "state": "supervising", "pid": 22072, "uptimeMs": 3204, ... },
+  "project": "my-project",
+  "session": { "id": "…", "engineSessionId": "…", "state": "running", ... },
+  "agent":   { "driver": "claude", "pid": 18324, "childPids": [22610], "state": "running" },
+  "activity": {
+    "currentTask": "Using tool: Bash",
+    "lastOutputAt": "2026-07-04T14:27:50.183Z",
+    "lastRestartAt": "…", "lastResumeAt": "…"
+  },
+  "counters":  { "runs": 6, "resumes": 5, "crashes": 0, "rateLimits": 4 },
+  "rateLimit": { "waiting": false, "resumeAt": null, "estimatedWaitMs": null },
+  "updatedAt": "…"
 }
 ```
 
-## Success Responses
-```json
-{
-  "success": true,
-  "data": { /* response data */ },
-  "error": null
+---
+
+## 2. Plugin API
+
+A plugin is a module at `plugins/<name>.js` or `plugins/<name>/index.js`:
+
+```js
+export default {
+  name: 'my-plugin',
+  version: '1.0.0',
+
+  async initialize({ orchestrator, driverRegistry, config, logger }) {
+    orchestrator.on('mission:complete', ({ project, summary }) => {
+      logger.info(`(plugin) ${project} finished: ${summary}`);
+    });
+    // Optionally register a new AI engine:
+    // driverRegistry.registerDriver('my-engine', MyEngineDriver);
+  },
+
+  async shutdown() { /* optional cleanup */ },
+};
+```
+
+Plugins that throw during load or initialize are skipped and logged — they
+can never take the supervisor down.
+
+### Orchestrator events
+
+| Event | Payload highlights |
+| --- | --- |
+| `session:launched` | `{ project, session, pid, resumed }` |
+| `session:exit` | `{ project, session, verdict: {cause, detail}, exitInfo }` |
+| `session:rate-limited` | `{ project, session, resumeAt, waitMs }` |
+| `session:network-error` | `{ project, session, retryInMs }` |
+| `session:crashed` | `{ project, session, consecutiveCrashes, restartInMs }` |
+| `session:resumed` | `{ project, session }` |
+| `session:gave-up` | `{ project, session, reason }` |
+| `session:recovered` | `{ project, session, after }` |
+| `mission:complete` | `{ project, session, summary }` |
+| `orchestrator:recovered-after-reboot` | `{ project }` |
+
+---
+
+## 3. Driver interface
+
+Implement `AIDriver` (`src/drivers/aiDriver.js`) to support a new engine:
+
+```js
+import { AIDriver, AgentRun } from '../src/drivers/aiDriver.js';
+
+class MyEngineDriver extends AIDriver {
+  constructor({ logger }) {
+    super({ logger });
+    this.id = 'my-engine';
+    this.name = 'My Engine CLI';
+    this.exitPatterns = {
+      usageLimit: [/quota exhausted/i],   // engine's limit messages
+      network:    [/connection lost/i],   // engine's network failures
+    };
+  }
+
+  async checkInstallation(executable) { /* → {ok, version?|error?} */ }
+
+  async launch({ project, prompt, engineSessionId }) {
+    // Spawn the engine; return an AgentRun that:
+    //  - emits 'engine-session-id' as soon as the conversation id is known
+    //  - emits 'activity' with short "doing X" strings
+    //  - emits 'output' for every chunk
+    //  - calls run.finish({code, signal, outputTail, resultText?}) on exit
+  }
+
+  extractLimitResetTime(outputTail) { /* → Date | null */ }
 }
 ```
 
-## Endpoints
+Contract rules:
 
-### System
-- `GET /health` - Basic health check
-- `GET /status` - Full system status
-- `GET /config` - Non-sensitive configuration
-- `GET /metrics` - System metrics
+- `launch` must **never** kill or restart the engine on its own — lifecycle
+  policy belongs to the orchestrator core.
+- `AgentRun.requestStop(reason)` is the only sanctioned termination path,
+  invoked solely for operator stops and shutdown.
+- When resuming (`engineSessionId` set), the driver must continue that
+  conversation (`claude --resume <id>` for Claude Code) and report the
+  (possibly new) conversation id via `engine-session-id`.
 
-### Orchestrator
-- `GET /orchestrator` - Orchestrator statistics
-- `GET /agents` - List all agents
-- `GET /agents/:id` - Get specific agent
-- `POST /tasks` - Submit new task
-- `GET /tasks` - Get task queue statistics
-- `GET /tasks/:id` - Get specific task
+---
 
-### Sessions
-- `GET /sessions` - List all sessions
-- `POST /sessions` - Create new session
-- `GET /sessions/:id` - Get specific session
-- `PUT /sessions/:id/start` - Start session
-- `PUT /sessions/:id/end` - End session
-- `POST /sessions/:id/checkpoint` - Create checkpoint
+## 4. Library usage
 
-### Logs
-- `GET /logs` - Retrieve application logs
+```js
+import { App } from 'ai-orchestrator';
 
-### WebSocket Events
-Connection: `io('http://localhost:3000')`
-
-**Server → Client:**
-- `status-update` - System status changes
-- `agents-update` - Agent status changes
-- `tasks-update` - Task queue changes
-- `sessions-update` - Session list changes
-- `metrics-update` - Metrics updates
-- `health-update` - Health check results
-- `log-entry` - New log entries
-- `notification` - System notifications
-
-**Client → Server:**
-- `subscribe` - `{ events: [...] }`
-- `unsubscribe` - `{ events: [...] }`
-- `get-status` - Request current status
-- `get-agents` - Request agent list
-- `get-tasks` - Request task queue
-- `get-sessions` - Request session list
-- `get-metrics` - Request metrics
-
-## Examples
-
-### Get System Status
-```bash
-curl -H "Authorization: Bearer $API_KEY" http://localhost:3000/status
+const app = new App();
+const result = await app.start({ projectName: 'my-project' });
+// result: { complete: boolean, session, reason }
 ```
 
-### Submit a Task
-```bash
-curl -X POST -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"type":"code-generation","payload":{"language":"python","spec":"Create a REST API"}}' \
-  http://localhost:3000/api/tasks
-```
-
-### Start WebSocket Connection (JavaScript)
-```javascript
-const socket = io('http://localhost:3000', {
-  auth: {
-    token: 'your-api-key'
-  }
-});
-
-socket.on('connect', () => {
-  console.log('Connected to API');
-  socket.emit('subscribe', { events: ['status', 'agents', 'tasks'] });
-});
-
-socket.on('status-update', (data) => {
-  console.log('Status update:', data);
-});
-```
+Lower-level building blocks (`Orchestrator`, `ClaudeDriver`,
+`SessionManager`, `classifyExit`, …) are exported from `src/index.js` and
+are all constructor-injected — see `test/orchestrator.test.js` for a
+complete example of composing them with fakes.

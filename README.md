@@ -1,126 +1,141 @@
 # AI-Orchestrator
 
-Enterprise Autonomous AI Supervisor for managing AI coding agents like Claude Code.
+**An autonomous supervisor for AI coding agents.**
 
-## Overview
+AI-Orchestrator launches an AI coding agent (Claude Code today; more engines
+via drivers), watches over it while it works — for hours, days, or weeks —
+and handles everything that would normally require a human at the keyboard:
 
-AI-Orchestrator is a production-grade, enterprise-ready system designed to autonomously manage AI coding agents. It provides reliable, long-running supervision of AI agents with features like automatic recovery, resume capabilities, rate limit handling, and comprehensive monitoring.
+- 🔋 **Usage limits** — detects when the agent hits its usage limit, computes
+  the reset time, waits, and **resumes the exact same conversation**. No
+  progress lost, no restarts from scratch.
+- 💥 **Crashes** — classifies unexpected exits, restarts with exponential
+  backoff, and gives up gracefully (session preserved) instead of thrashing.
+- 🔌 **Reboots & power loss** — a heartbeat file plus a Windows Task
+  Scheduler task means a mid-mission reboot turns into "the mission simply
+  continues at next logon".
+- 🧘 **Patience** — the prime directive: **while the agent process is alive,
+  the orchestrator does nothing.** Six silent hours waiting on a training
+  run is healthy work, not failure. Recovery logic only ever runs after the
+  process has actually exited.
 
-## Key Features
+## Quick start
 
-- **Autonomous Operation**: Manages AI agents without human intervention
-- **Intelligent Recovery**: Automatic restart, resume, and recovery from failures
-- **Rate Limit Handling**: Smartly manages API usage limits with automatic backoff
-- **State Persistence**: Saves and restores session state to prevent work loss
-- **Comprehensive Monitoring**: Real-time metrics, health checks, and logging
-- **Extensible Architecture**: Plugin system for adding new functionality
-- **Multi-Agent Support**: Manages multiple AI agents of different types
-- **Cross-Platform**: Runs on Windows, macOS, and Linux
-- **Production Ready**: Designed for years of continuous operation
-
-## Quick Start
-
-```bash
-# Clone the repository
-git clone https://github.com/your-org/ai-orchestrator.git
-cd ai-orchestrator
-
-# Install dependencies
+```bat
+:: 1. Install dependencies (once)
 npm install
 
-# Start in development mode
-npm run dev
+:: 2. Define a project (what the agent should work on)
+node bin\ai-orchestrator.js projects add my-project ^
+    --dir "C:\path\to\your\project" --prompt prompt.md
 
-# Or start in production
-npm start
+:: 3. Check your environment
+node bin\ai-orchestrator.js doctor
+
+:: 4. Start supervising
+node bin\ai-orchestrator.js start my-project
 ```
 
-Visit http://localhost:3000 to see the dashboard.
+Or just double-click **START_AI.bat**.
+
+While it runs, `status.json` (and `ai-orchestrator status`) always shows what
+is happening — current task, agent PID, child processes, counters for
+runs/resumes/crashes/rate-limits, and the estimated wait when a usage limit
+is being slept out.
+
+```text
+ai-orchestrator status
+
+  State:        supervising
+  Project:      my-project
+  Uptime:       17h 42m
+  Agent PID:    18324 (children: 22610)
+  Current task: Using tool: Bash
+  Counters:     runs 6 · resumes 5 · crashes 0 · rate limits 4
+  Waiting:      usage limit — resuming at 2026-07-05T03:00:00 (~2h 14m)
+```
+
+## How it works
+
+```text
+launch agent ──► agent works (orchestrator only observes)
+                      │
+                      ▼ agent process exits
+              classify WHY it exited
+                      │
+    ┌─────────────────┼───────────────┬──────────────┬───────────────┐
+    ▼                 ▼               ▼              ▼               ▼
+mission          usage limit       crash         network        operator
+complete         → wait until     → backoff      → short         stop
+→ done             reset            restart        delay retry   → session
+                 → resume         → give up                        preserved,
+                   same session     after N                        resumes on
+                                    (preserved)                    next start
+```
+
+The mission is defined by a prompt file. The agent signals completion by
+printing a **completion marker** (default `MISSION COMPLETE`) — until it
+appears, every clean-but-unfinished exit is automatically continued with a
+resume prompt against the same engine conversation.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `start [project] [--fresh]` | Start or resume supervising a project |
+| `resume [project]` | Resume only if something was interrupted (used at boot) |
+| `stop` | Gracefully stop the running orchestrator (session stays resumable) |
+| `status` | Live status snapshot |
+| `sessions [project]` | Active sessions / per-project history |
+| `projects list` / `projects add` | Manage project definitions |
+| `drivers` | List available AI engine drivers |
+| `scheduler install/uninstall/status` | Windows auto-resume task |
+| `doctor` | Diagnose environment, config, and engine installation |
+
+## Multiple projects
+
+Each project is one JSON file in `config/projects/` — working directory,
+prompt file, engine settings. The orchestrator is fully reusable: point it at
+a trading bot today and a website tomorrow without touching code. See
+[CONFIGURATION.md](CONFIGURATION.md).
+
+## Extending
+
+- **New AI engines** (Codex, Gemini CLI, Aider, …): implement one driver
+  interface — nothing else changes. See [ARCHITECTURE.md](ARCHITECTURE.md).
+- **Plugins**: drop a JS module in `plugins/` to subscribe to orchestrator
+  events or register drivers. See [API.md](API.md).
+- **Notifications**: desktop toasts by default; webhook, Discord, and
+  Telegram channels are config-only switches.
+- **Dashboard**: a local read-only HTTP API (`http://127.0.0.1:4711/api/status`)
+  is ready for a future web dashboard.
 
 ## Documentation
 
-- [Installation Guide](INSTALL.md) - Detailed installation instructions
-- [Configuration Guide](CONFIGURATION.md) - Complete configuration reference
-- [Architecture Overview](ARCHITECTURE.md) - System design and components
-- [API Reference](API.md) - Programmatic interface documentation
-- [Troubleshooting](TROUBLESHOOTING.md) - Common issues and solutions
-- [Release Notes](CHANGELOG.md) - Version history
-- [Roadmap](ROADMAP.md) - Planned features and improvements
+| File | Contents |
+| --- | --- |
+| [INSTALL.md](INSTALL.md) | Installation, auto-start setup |
+| [CONFIGURATION.md](CONFIGURATION.md) | Every setting, with defaults |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Modules, design rules, data flow |
+| [API.md](API.md) | HTTP API, plugin API, driver interface, library usage |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Diagnosing common problems |
+| [ROADMAP.md](ROADMAP.md) | Planned features |
+| [CHANGELOG.md](CHANGELOG.md) | Version history |
 
-## Example Usage
+## Requirements
 
-### Starting the Orchestrator
-```bash
-# Start with default settings (development environment)
-node src/index.js start
+- Node.js ≥ 18 (developed on v26)
+- Windows 10/11 for Task Scheduler integration (supervision core is
+  cross-platform)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI on PATH
+  for the `claude` driver
 
-# Start with specific environment
-node src/index.js start --env production
+## Safety rules (non-negotiable)
 
-# Start on custom port
-node src/index.js start --port 8080
-```
+1. Never interrupt a healthy agent process.
+2. Never confuse silence with failure.
+3. Only act after the process has exited, and only after classifying why.
+4. Every decision is logged; every state transition is persisted atomically.
+5. Giving up never abandons a mission — sessions are always preserved.
 
-### Managing Agents via CLI
-```bash
-# List available agent types
-node src/index.js agents --list
-
-# Create a new worker agent
-node src/index.js agents --create worker
-
-# Destroy an agent by ID
-node src/index.js agents --destroy agent-id-here
-```
-
-### Submitting Tasks
-```bash
-# Submit a code generation task
-node src/index.js tasks --submit code-generation \
-  --payload '{"language": "javascript", "specification": "Create a REST API server"}'
-```
-
-### Checking Status
-```bash
-# Get overall system status
-node src/index.js status
-
-# Get detailed agent information
-node src/index.js agents --list --detailed
-```
-
-## Architecture
-
-AI-Orchestrator follows a modular, extensible architecture:
-
-- **Core Orchestrator**: Manages agent lifecycle and task distribution
-- **Driver System**: Abstracts communication with different AI agents
-- **Agent Types**: Specialized agents for different tasks (coding, research, testing, etc.)
-- **Management Modules**: Handle recovery, scheduling, monitoring, notifications, etc.
-- **API Layer**: Provides REST and WebSocket interfaces
-- **Plugin System**: Allows extending functionality without modifying core code
-
-## Supported AI Agents
-
-Currently supports:
-- **Claude Code** (Anthropic's AI coding assistant)
-
-Planned support:
-- OpenAI Codex
-- Google Gemini CLI
-- GitHub Copilot CLI
-- Custom API integrations
-
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Built with Node.js and modern JavaScript practices
-- Inspired by the need for reliable AI agent management in production environments
-- Thanks to all contributors and users who have provided feedback
+MIT licensed. Built to run for months.

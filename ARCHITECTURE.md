@@ -1,278 +1,137 @@
-# Architecture Overview
+# Architecture
 
-## High-Level Architecture
+AI-Orchestrator is organised as small, single-purpose modules composed by one
+launcher. Policy (what to do) is separated from knowledge (engine-specific
+details) and from mechanism (process handling, persistence) throughout.
 
-The AI-Orchestrator follows a modular, layered architecture designed for extensibility, maintainability, and resilience.
+## Layer map
 
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│  Entry points                                                        │
+│  bin/ai-orchestrator.js → src/cli/index.js       START_AI.bat        │
+│  src/index.js (library exports)                  scripts/*.ps1       │
+├──────────────────────────────────────────────────────────────────────┤
+│  Composition root                                                    │
+│  src/app.js — builds and wires everything; the only place where      │
+│  concrete classes are constructed. Signal handling, stop-file watch, │
+│  double-launch guard, reboot recovery entry.                         │
+├──────────────────────────────────────────────────────────────────────┤
+│  Supervision core (policy)                 src/core/                 │
+│  orchestrator.js          the launch→observe→classify→recover loop   │
+│  exitClassifier.js        WHY did the process exit? (pure logic)     │
+│  rateLimitEngine.js       usage-limit wait policy + interruptible    │
+│                           waiting                                    │
+│  crashRecoveryEngine.js   backoff + give-up policy                   │
+│  processSupervisor.js     passive observation only (child PID scans, │
+│                           last-output tracking) — never intervenes   │
+├──────────────────────────────────────────────────────────────────────┤
+│  Drivers (engine knowledge)                src/drivers/              │
+│  aiDriver.js              the interface every engine implements      │
+│  claudeDriver.js          Claude Code: headless stream-json launch,  │
+│                           --resume, limit-message patterns, reset-   │
+│                           time parsing                               │
+│  mockDriver.js            scriptable engine for tests & dry runs     │
+│  driverRegistry.js        id → driver lookup; plugin-extensible      │
+├──────────────────────────────────────────────────────────────────────┤
+│  State (persistence)                       src/state/                │
+│  statePersistence.js      atomic writes, corruption quarantine, jsonl│
+│  sessionManager.js        session records: the resume memory         │
+│  statusManager.js         status.json live snapshot (write-only)     │
+│  heartbeat.js             liveness stamps; unclean-shutdown & double-│
+│                           launch detection                           │
+├──────────────────────────────────────────────────────────────────────┤
+│  Integrations (subscribers)                                          │
+│  src/notifications/       engine + channels (desktop/webhook/discord/│
+│                           telegram/email-stub)                       │
+│  src/plugins/             plugin loader (event & driver extension)   │
+│  src/api/                 read-only dashboard HTTP API               │
+├──────────────────────────────────────────────────────────────────────┤
+│  Foundation                                                          │
+│  src/config/              JSON config: defaults.js (every tunable) + │
+│                           configManager.js (merge, validate)         │
+│  src/infra/               logger (rotating), paths, time helpers     │
+└──────────────────────────────────────────────────────────────────────┘
 ```
-┌─────────────────────────────────┐
-│         Presentation Layer       │
-├────────────────────┬────────────┤
-│ CLI Interface      │ Dashboard  │
-│ (Command Line)     │ (Web UI)   │
-├────────────────────┴────────────┤
-│          API Layer              │
-├────────────────────┬────────────┤
-│ REST Endpoints     │ WebSocket  │
-├────────────────────┴────────────┤
-│        Application Layer        │
-├────────────────────┬────────────┬────────────┤
-│ Orchestrator Core  │ Session    │ Status     │
-│                    │ Manager    │ Manager    │
-├────────────────────┼────────────┼────────────┤
-│   Module Layer     │            │            │
-├───┬─────┬─────┬────┼─────┬──────┼─────┬──────┤
-│Proc │Crash│Rate │Resume│Health │Notify│Schedule│Plugin│
-│Super│Recov│Limit│Engine│Monitor│     │er      │System  │
-├─────┴─────┴─────┴──────┴───────┴─────┴────────┤
-│         Driver Layer                         │
-├────────────────────┬────────────┬────────────┤
-│ Claude Driver      │ Future     │ Future     │
-│                    │ Drivers    │ Drivers    │
-└────────────────────┴────────────┴────────────┘
-                   Infrastructure
-                   (Config, Logging, Storage)
-```
 
-## Core Components
+## The supervision loop
 
-### 1. Orchestrator Core
-The central coordinator that manages the lifecycle of agents, tasks, and sessions.
+One `Orchestrator` instance supervises one project's **mission** — a
+`session` that spans every launch, wait, and resume until completion:
 
-**Responsibilities:**
-- Agent lifecycle management (creation, destruction, health monitoring)
-- Task queuing, distribution, and tracking
-- Session management and persistence
-- Coordination between all system components
-- Event broadcasting and state management
+1. **Launch** — the driver starts the engine and returns an `AgentRun`
+   handle (events: `output`, `engine-session-id`, `activity`, `result`).
+2. **Observe** — the ProcessSupervisor records last-output time and child
+   PIDs into status.json. Nothing else happens while the process lives.
+   There are no timeouts on healthy processes, by design.
+3. **Classify** — when the process exits, `classifyExit()` decides between
+   `completed`, `usage-limit`, `network`, `interrupted`, `spawn-failure`,
+   and `crash`, using generic rules plus the driver's engine-specific
+   output patterns. Usage-limit evidence beats a clean exit code.
+4. **Recover** — each cause maps to a strategy:
 
-### 2. Agent System
-Abstract base classes and concrete implementations for different types of AI agents.
+   | Cause | Strategy |
+   | --- | --- |
+   | completed + marker | archive session, emit `mission:complete`, stop |
+   | completed, no marker | relaunch with the continue prompt (same conversation) |
+   | usage-limit | parse reset time (driver) → clamp (policy) → wait → resume |
+   | network | short fixed delay → resume |
+   | crash / external kill | exponential backoff; give up after N consecutive |
+   | spawn-failure | give up immediately (engine missing) |
 
-**Agent Types:**
-- **OrchestratorAgent**: Handles task planning, delegation, and result aggregation
-- **WorkerAgent**: Executes concrete tasks (code generation, file operations, commands)
-- **ResearcherAgent**: Performs information gathering, documentation lookup, web search
-- **CoderAgent**: Specialized in code generation, refactoring, debugging
-- **ReviewerAgent**: Handles code review, security audits, quality assurance
-- **TesterAgent**: Manages test generation, execution, and coverage analysis
-- **DeployerAgent**: Handles deployment, infrastructure provisioning, CI/CD
+   *Giving up never deletes anything* — the session stays on disk in a
+   resumable state and the next start continues the same conversation.
 
-### 3. Driver System
-Abstraction layer for interacting with different AI coding assistants.
+5. **Repeat** until the completion marker appears or the operator stops it.
 
-**Current Implementation:**
-- Claude Driver: Interface to Anthropic's Claude Code CLI
+## Crash-anywhere durability
 
-**Planned Extensions:**
-- OpenAI Codex Driver
-- Google Gemini CLI Driver
-- Microsoft Copilot CLI Driver
-- Custom API Driver for proprietary systems
+Every state transition is written before the action it describes takes
+effect, using atomic temp-file+rename writes:
 
-### 4. Management Modules
+- `state/sessions/<project>.json` — the active session (resume memory:
+  engine conversation id, counters, wait deadlines).
+- `state/heartbeat.json` — stamped every 15 s with pid + state. On startup:
+  a "running" heartbeat with a live PID blocks double-launch; with a dead
+  PID it proves an unclean shutdown and triggers automatic recovery.
+- `status.json` — human/dashboard snapshot. Write-only: the orchestrator
+  never reads it back for decisions.
 
-#### Process Supervisor
-Monitors child processes and handles their lifecycle events.
+Corrupt state files are quarantined (`*.corrupt-<ts>`), never trusted, and
+never fatal.
 
-#### Crash Recovery Engine
-Detects failures and implements recovery strategies based on failure type.
+## Events, not calls
 
-#### Rate Limit Engine
-Tracks API usage and implements throttling to prevent service limits.
+The orchestrator emits domain events (`session:launched`,
+`session:rate-limited`, `session:crashed`, `session:resumed`,
+`session:gave-up`, `session:recovered`, `mission:complete`, …). The
+notification engine, plugins, and any future dashboard subscribe to these.
+Integrations can fail freely without touching supervision.
 
-#### Resume Engine
-Saves and restores application state to enable seamless recovery.
+## Adding an engine (driver contract)
 
-#### Health Monitor
-Continuously checks system and application health metrics.
+Implement `AIDriver` (see `src/drivers/aiDriver.js`):
 
-#### Notification Engine
-Handles alerting and notifications via multiple channels.
+- `checkInstallation()` → `{ok, version|error}`
+- `launch({project, prompt, engineSessionId})` → `AgentRun`
+- `exitPatterns` — regexes for usage-limit / network messages
+- `extractLimitResetTime(outputTail)` → `Date|null`
 
-#### Scheduler
-Manages timed and recurring tasks using node-schedule.
+Register it in `driverRegistry.js` (or from a plugin via
+`driverRegistry.registerDriver(id, Class)`), reference it as `"driver": "<id>"`
+in a project config — done. No supervision code changes.
 
-#### Plugin System
-Allows extension of core functionality without modifying core code.
+## Design rules
 
-### 5. API Layer
-Provides programmatic access to all system functionality.
-
-**Endpoints:**
-- REST API for CRUD operations and control
-- WebSocket interface for real-time updates
-- Health check endpoints
-- Metrics and monitoring endpoints
-
-### 6. Configuration System
-Hierarchical configuration management using YAML files.
-
-**Layers:**
-- Default values (bundled with application)
-- Environment-specific overrides (development/production)
-- Local overrides (not version controlled)
-- Environment variable overrides
-- Runtime overrides
-
-### 7. Persistence Layer
-Handles data persistence for sessions, state, and historical data.
-
-**Storage Mechanisms:**
-- JSON files for session state and checkpoints
-- SQLite database for metadata and history
-- Pluggable storage backend for enterprise deployments
-
-## Data Flow
-
-### Task Execution Flow
-1. Task submitted via CLI, API, or scheduler
-2. Orchestrator validates task and places in queue
-3. Available agent picks up task based on capabilities
-4. Agent executes task via appropriate driver
-5. Progress and results reported back to orchestrator
-6. Orchestrator updates status and notifies stakeholders
-7. Task marked as completed or failed with appropriate handling
-
-### Recovery Flow
-1. Process supervisor detects abnormal termination
-2. Crash recovery engine analyzes failure cause
-3. Appropriate recovery strategy is executed
-4. State is restored from last checkpoint if available
-5. Operation resumes from recovery point
-6. Incident logged and notifications sent if configured
-
-### Communication Patterns
-- **Internal**: Event-driven architecture using Node.js EventEmitter
-- **External**: REST API for synchronous operations
-- **Real-time**: WebSocket for live dashboard updates
-- **Drivers**: Child process communication via stdio
-- **Plugins**: Interface-based extension points
-
-## Security Considerations
-
-### Authentication & Authorization
-- API key-based authentication for external access
-- Role-based access control (planned)
-- JWT token system for session management
-
-### Data Protection
-- Environment variables for sensitive configuration
-- Encryption options for stored credentials
-- Secure deletion of sensitive data
-- Input validation and sanitization
-
-### Process Security
-- Sandboxed execution environments (planned)
-- Resource limits and quotas
-- Secure inter-process communication
-- Audit logging of all operations
-
-## Scalability Considerations
-
-### Horizontal Scaling
-- Stateless API servers behind load balancer
-- Shared state via database or Redis
-- Distributed task queues (future enhancement)
-
-### Vertical Scaling
-- Resource pooling for agent workers
-- Configurable concurrency limits
-- Memory and CPU usage monitoring
-- Automatic scaling based on workload (future)
-
-## Extensibility Points
-
-### Adding New Drivers
-1. Implement AIDriver abstract class
-2. Register driver with DriverRegistry
-3. Configure driver-specific settings
-4. Handle driver-specific communication protocols
-
-### Adding New Agent Types
-1. Extend BaseAgent class
-2. Implement processTask() method
-3. Define required capabilities
-4. Register with orchestrator configuration
-
-### Adding New Plugins
-1. Implement BasePlugin interface
-2. Register hooks for extension points
-3. Package as npm module or local directory
-4. Configure in plugins section of config file
-
-### Adding New Notification Channels
-1. Extend NotificationChannel base class
-2. Implement send() method
-3. Register with NotificationEngine
-4. Configure in notifications section
-
-## Failure Modes & Recovery
-
-### Process Failures
-- Automatic restart with exponential backoff
-- Maximum retry attempts to prevent infinite loops
-- Escalation to manual intervention after threshold
-
-### Network Issues
-- Queueing of operations during outages
-- Timeout and retry mechanisms
-- Fallback to local operation when possible
-
-### Resource Exhaustion
-- Graceful degradation of non-essential services
-- Priority-based resource allocation
-- Automatic cleanup of temporary resources
-
-### Data Corruption
-- Regular backups of critical state
-- Immutable append-only logs where possible
-- Consistency checks and repair mechanisms
-
-## Performance Characteristics
-
-### Latency Targets
-- API response time: <100ms for 95% of requests
-- Task dispatch latency: <50ms
-- Event propagation: <10ms
-- Recovery initiation: <1s after failure detection
-
-### Throughput Capacity
-- Concurrent agents: Configurable (default: 50)
-- Tasks per second: Limited by agent capacity
-- Events per second: 1000+ with efficient event handling
-
-### Resource Usage
-- Memory: <200MB base + agent-dependent
-- CPU: Minimal when idle, scales with active agents
-- Disk: Efficient storage with rotation policies
-- Network: Minimal overhead, primarily for API calls
-
-## Design Principles
-
-### Separation of Concerns
-Each module has a single, well-defined responsibility.
-
-### Loose Coupling
-Components interact through well-defined interfaces.
-
-### High Cohesion
-Related functionality is grouped within modules.
-
-### Fail Fast, Recover Quickly
-Errors are detected and handled promptly.
-
-### Configure, Don't Code
-Behavior is modified through configuration rather than code changes.
-
-### Observable by Design
-Comprehensive logging, metrics, and tracing built-in.
-
-### Secure by Default
-Secure defaults with explicit opt-in for less secure options.
-
-### Extensible Architecture
-New functionality added without modifying existing code.
-
-### Portable & Environment Agnostic
-Runs consistently across different operating systems and environments.
+1. **Dependency injection everywhere** — only `app.js` constructs concrete
+   objects; every module receives collaborators, which keeps them
+   unit-testable with fakes (see `test/orchestrator.test.js`).
+2. **No magic numbers** — every tunable lives in `src/config/defaults.js`
+   and is overridable from JSON config.
+3. **Knowledge/policy split** — drivers know what engine messages look
+   like; core engines decide what to do about them.
+4. **Observability is never load-bearing** — status writes, notifications,
+   the API, and child scans are all best-effort; their failures are logged
+   and swallowed.
+5. **The process is the truth** — supervision decisions key off actual
+   process exit, never off output silence or heuristics about "stuck".

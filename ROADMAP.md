@@ -1,58 +1,54 @@
 # Roadmap
 
-## Phase 1: Foundation (Current)
-- [x] Core orchestrator architecture
-- [x] Claude Code driver implementation
-- [x] Process supervision and monitoring
-- [x] Basic configuration system
-- [x] Logging infrastructure
-- [x] CLI interface
-- [x] REST API endpoints
-- [ ] WebSocket real-time updates
-- [ ] Basic dashboard UI
+## v1.0 — Shipped ✔
 
-## Phase 2: Reliability & Recovery
-- [x] Crash detection and recovery
-- [x] Rate limit handling and automatic retry
-- [x] Session persistence and resume capability
-- [ ] Windows service integration
-- [ ] Automatic startup after reboot
-- [ ] Enhanced error reporting and diagnostics
-- [ ] Health check extensions
-- [ ] Resource usage monitoring
+- Supervision loop with passive observation (never interrupt a live agent)
+- Exit-cause classification (completed / usage-limit / network /
+  interrupted / spawn-failure / crash), each with its own recovery strategy
+- Usage-limit recovery: reset-time parsing, bounded waits, automatic resume
+  of the same engine conversation
+- Crash recovery with exponential backoff and a preserve-the-mission give-up
+- Reboot / power-loss recovery: heartbeat + Task Scheduler auto-resume
+- Claude Code driver (headless stream-json, `--resume`), mock driver
+- Multi-project JSON configuration; per-project engine settings
+- Session records, atomic state persistence, live status.json
+- Rotating structured logs; every decision recorded
+- Notifications: desktop, webhook, Discord, Telegram (email stubbed)
+- Read-only dashboard HTTP API
+- Plugin system (event subscribers, driver registration)
+- CLI: start/resume/stop/status/sessions/projects/drivers/scheduler/doctor
+- 53 unit/integration tests on Node's built-in test runner
 
-## Phase 3: Multi-Agent Orchestration
-- [ ] Additional AI driver implementations (OpenAI Codex, Gemini CLI, etc.)
-- [ ] Agent specialization and role assignment
-- [ ] Inter-agent communication protocols
-- [ ] Task distribution and load balancing
-- [ ] Dependency management between agents
-- [ ] Collaborative workflow execution
-- [ ] Agent performance metrics and optimization
+## v1.1 — Hardening
 
-## Phase 4: Advanced Features
-- [ ] Plugin marketplace and SDK
-- [ ] Machine learning-based optimization
-- [ ] Predictive scaling and resource allocation
-- [ ] Advanced scheduling algorithms
-- [ ] Integration with CI/CD systems
-- [ ] Visual workflow designer
-- [ ] Audit trail and compliance reporting
-- [ ] Multi-tenancy support
+- [ ] Email notification channel (SMTP via optional dependency)
+- [ ] `runtime_history.json`: daily aggregates (runtime, completed phases,
+      limits hit) for long-mission trend review
+- [ ] Structured progress tracking: let the agent drop a `progress.json`
+      the orchestrator surfaces in status/API
+- [ ] Optional periodic status notification ("still running, 22h, phase E2")
+- [ ] Windows service mode (run without logon) via `node-windows` or NSSM
 
-## Phase 5: Enterprise & Scale
-- [ ] High availability clustering
-- [ ] Distributed processing capabilities
-- [ ] Advanced security and access control
-- [ ] Enterprise SSO integration (LDAP, SAML, OIDC)
-- [ ] Detailed analytics and reporting dashboard
-- [ ] API rate limiting and quotas
-- [ ] Backup and disaster recovery
-- [ ] Performance benchmarking and optimization tools
+## v1.2 — More engines
 
-## Long-term Vision
-- Become the standard operating system for autonomous AI development teams
-- Support for heterogeneous AI agent fleets
-- Self-optimizing orchestration based on workload patterns
-- Integration with enterprise IT service management systems
-- AI-driven capacity planning and forecasting
+- [ ] OpenAI Codex CLI driver
+- [ ] Gemini CLI driver
+- [ ] Aider driver
+- [ ] OpenCode / Qwen drivers
+- [ ] Driver conformance test-kit (one suite every driver must pass)
+
+## v2.0 — Dashboard & fleet
+
+- [ ] Web dashboard on the existing API (live status, history charts,
+      log tail, stop/resume buttons)
+- [ ] Concurrent multi-project supervision in one process
+- [ ] Mission queues: run project B when project A completes
+- [ ] Remote/mobile notifications with actionable replies
+- [ ] Cross-machine status aggregation
+
+## Non-goals
+
+- Editing or generating code itself — that is the agent's job; the
+  orchestrator supervises.
+- Interactive TUI sessions — supervision targets headless runs; interactive
+  use already has a human present.

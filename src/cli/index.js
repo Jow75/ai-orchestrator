@@ -1,422 +1,434 @@
+/**
+ * cli/index.js — Command-line interface.
+ *
+ * The human control surface of AI-Orchestrator:
+ *
+ *   start [project]        Launch (or resume) supervision of a project
+ *   resume [project]       Resume only if something was interrupted
+ *   stop                   Ask the running orchestrator to stop gracefully
+ *   status                 Show live status (from status.json)
+ *   sessions [project]     Show active sessions / a project's history
+ *   projects list|add      Manage project definitions
+ *   drivers                List available AI engine drivers
+ *   scheduler ...          Install/inspect the Windows auto-start task
+ *   doctor                 Diagnose the environment and configuration
+ *
+ * The CLI is a thin shell: all real behaviour lives in the application
+ * modules, so everything here is also available programmatically.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { Command } from 'commander';
 import chalk from 'chalk';
-import figlet from 'figlet';
-import gradient from 'gradient-string';
-import boxen from 'boxen';
-import ora from 'ora';
-import inquirer from 'inquirer';
-import fs from 'fs';
-import path from 'path';
-import ConfigManager from '../utils/configManager.js';
-import Logger from '../utils/logger.js';
+import App, { STOP_REQUEST_FILENAME } from '../app.js';
+import ConfigManager, { ConfigError } from '../config/configManager.js';
+import { silentLogger } from '../infra/logger.js';
+import SessionManager from '../state/sessionManager.js';
+import DriverRegistry from '../drivers/driverRegistry.js';
+import { readJsonSafe } from '../state/statePersistence.js';
+import { isPidAlive } from '../state/heartbeat.js';
+import { formatDuration } from '../infra/time.js';
+import { ROOT_DIR } from '../infra/paths.js';
 
-class CLI {
-  constructor() {
-    this.program = new Command();
-    this.config = new ConfigManager();
-    this.logger = new Logger();
-    this.setupCommands();
-  }
+/** Windows Task Scheduler task name used by `scheduler` commands. */
+const SCHEDULED_TASK_NAME = 'AI-Orchestrator Auto-Resume';
 
-  setupCommands() {
-    this.program
-      .name('ai-orchestrator')
-      .description('AI Orchestrator - Multi-agent orchestration system')
-      .version('1.0.0')
-      .option('-c, --config <path>', 'Config directory path', './config')
-      .option('-v, --verbose', 'Verbose output')
-      .hook('preAction', (thisCommand) => {
-        const opts = thisCommand.opts();
-        if (opts.verbose) {
-          this.logger.config.level = 'debug';
-        }
-        this.config.configPath = opts.config;
-      });
+/** Build a ConfigManager + quiet SessionManager for read-only commands. */
+function readOnlyContext() {
+  const configManager = new ConfigManager();
+  const paths = configManager.getPaths();
+  const sessionManager = new SessionManager({
+    sessionsDir: paths.sessionsDir,
+    logger: silentLogger,
+  });
+  return { configManager, paths, sessionManager };
+}
 
-    this.program
-      .command('start')
-      .description('Start the orchestrator')
-      .option('-d, --daemon', 'Run as daemon')
-      .option('--env <env>', 'Environment (development|production)', 'development')
-      .action(async (options) => {
-        await this.start(options);
-      });
+/** Uniform fatal-error rendering for every command. */
+function fail(error) {
+  const message = error instanceof ConfigError ? error.message : (error.stack ?? error.message);
+  console.error(chalk.red(`\nError: ${error.message}`));
+  if (message !== error.message) console.error(chalk.dim(message));
+  process.exitCode = 1;
+}
 
-    this.program
-      .command('stop')
-      .description('Stop the orchestrator')
-      .action(async () => {
-        await this.stop();
-      });
+export function buildProgram() {
+  const program = new Command();
 
-    this.program
-      .command('status')
-      .description('Show orchestrator status')
-      .option('-w, --watch', 'Watch status changes')
-      .option('--json', 'Output as JSON')
-      .action(async (options) => {
-        await this.status(options);
-      });
+  program
+    .name('ai-orchestrator')
+    .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
+    .version('1.0.0');
 
-    this.program
-      .command('agents')
-      .description('Manage agents')
-      .option('-l, --list', 'List all agents')
-      .option('-c, --create <type>', 'Create agent of type')
-      .option('-d, --destroy <id>', 'Destroy agent by ID')
-      .action(async (options) => {
-        await this.agents(options);
-      });
-
-    this.program
-      .command('tasks')
-      .description('Manage tasks')
-      .option('-l, --list', 'List all tasks')
-      .option('-s, --submit <type>', 'Submit task of type')
-      .option('-p, --payload <json>', 'Task payload as JSON')
-      .option('--priority <num>', 'Task priority', '5')
-      .action(async (options) => {
-        await this.tasks(options);
-      });
-
-    this.program
-      .command('sessions')
-      .description('Manage sessions')
-      .option('-l, --list', 'List all sessions')
-      .option('-c, --create <name>', 'Create new session')
-      .option('-s, --start <id>', 'Start session')
-      .option('-e, --end <id>', 'End session')
-      .action(async (options) => {
-        await this.sessions(options);
-      });
-
-    this.program
-      .command('logs')
-      .description('View logs')
-      .option('-f, --follow', 'Follow log output')
-      .option('-n, --lines <num>', 'Number of lines', '100')
-      .option('--level <level>', 'Log level filter')
-      .action(async (options) => {
-        await this.logs(options);
-      });
-
-    this.program
-      .command('config')
-      .description('Manage configuration')
-      .option('-s, --show', 'Show current config')
-      .option('-g, --get <key>', 'Get config value')
-      .option('--set <key=value>', 'Set config value')
-      .option('-e, --edit', 'Edit config file')
-      .action(async (options) => {
-        await this.configCmd(options);
-      });
-
-    this.program
-      .command('dashboard')
-      .description('Start dashboard server')
-      .option('-p, --port <port>', 'Port number', '3000')
-      .action(async (options) => {
-        await this.dashboard(options);
-      });
-
-    this.program
-      .command('init')
-      .description('Initialize project')
-      .option('-p, --project <name>', 'Project name')
-      .action(async (options) => {
-        await this.init(options);
-      });
-
-    this.program
-      .command('doctor')
-      .description('Check system health')
-      .action(async () => {
-        await this.doctor();
-      });
-  }
-
-  async start(options) {
-    this.printBanner();
-
-    process.env.NODE_ENV = options.env;
-    this.config.load();
-
-    const spinner = ora('Starting orchestrator...').start();
-
-    try {
-      const { Orchestrator } = await import('../core/orchestrator.js');
-      const orchestrator = new Orchestrator({
-        config: this.config.getAll(),
-        logger: this.logger
-      });
-
-      await orchestrator.start();
-
-      spinner.succeed('Orchestrator started successfully');
-      this.logger.info('Orchestrator running. Press Ctrl+C to stop.');
-
-      process.on('SIGINT', async () => {
-        spinner.info('Shutting down...');
-        await orchestrator.stop();
-        process.exit(0);
-      });
-
-      if (!options.daemon) {
-        await new Promise(() => {});
-      }
-    } catch (error) {
-      spinner.fail('Failed to start orchestrator');
-      this.logger.error('Start failed', { error: error.message });
-      process.exit(1);
-    }
-  }
-
-  async stop() {
-    const spinner = ora('Stopping orchestrator...').start();
-
-    try {
-      spinner.succeed('Orchestrator stopped');
-    } catch (error) {
-      spinner.fail('Failed to stop orchestrator');
-      this.logger.error('Stop failed', { error: error.message });
-    }
-  }
-
-  async status(options) {
-    this.config.load();
-
-    if (options.json) {
-      const status = this.getStatus();
-      console.log(JSON.stringify(status, null, 2));
-      return;
-    }
-
-    if (options.watch) {
-      this.watchStatus();
-      return;
-    }
-
-    const status = this.getStatus();
-    this.printStatus(status);
-  }
-
-  getStatus() {
-    return {
-      orchestrator: { status: 'running', uptime: 123456 },
-      agents: { total: 5, idle: 3, busy: 2 },
-      tasks: { queued: 10, processing: 2, completed: 150, failed: 5 },
-      sessions: { active: 1, total: 10 }
-    };
-  }
-
-  printStatus(status) {
-    console.log(boxen(
-      gradient('cyan', 'blue')('AI Orchestrator Status'),
-      { padding: 1, borderColor: 'cyan' }
-    ));
-
-    console.log(chalk.bold('\nOrchestrator:'));
-    console.log(`  Status: ${chalk.green(status.orchestrator.status)}`);
-    console.log(`  Uptime: ${this.formatUptime(status.orchestrator.uptime)}`);
-
-    console.log(chalk.bold('\nAgents:'));
-    console.log(`  Total: ${status.agents.total}`);
-    console.log(`  Idle: ${chalk.green(status.agents.idle)}`);
-    console.log(`  Busy: ${chalk.yellow(status.agents.busy)}`);
-
-    console.log(chalk.bold('\nTasks:'));
-    console.log(`  Queued: ${chalk.blue(status.tasks.queued)}`);
-    console.log(`  Processing: ${chalk.yellow(status.tasks.processing)}`);
-    console.log(`  Completed: ${chalk.green(status.tasks.completed)}`);
-    console.log(`  Failed: ${chalk.red(status.tasks.failed)}`);
-
-    console.log(chalk.bold('\nSessions:'));
-    console.log(`  Active: ${status.sessions.active}`);
-    console.log(`  Total: ${status.sessions.total}`);
-  }
-
-  watchStatus() {
-    console.log(chalk.cyan('Watching status... (Press Ctrl+C to stop)'));
-    setInterval(() => {
-      console.clear();
-      this.printStatus(this.getStatus());
-    }, 5000);
-  }
-
-  async agents(options) {
-    if (options.list) {
-      console.log(chalk.cyan('Agents:'));
-      console.log('  orchestrator - Task planning and delegation');
-      console.log('  worker - Code execution and file operations');
-      console.log('  researcher - Web search and documentation lookup');
-      console.log('  coder - Code generation and refactoring');
-      console.log('  reviewer - Code review and security audit');
-      console.log('  tester - Test execution and generation');
-      console.log('  deployer - Deployment and infrastructure');
-    }
-
-    if (options.create) {
-      console.log(chalk.green(`Creating ${options.create} agent...`));
-    }
-
-    if (options.destroy) {
-      console.log(chalk.yellow(`Destroying agent ${options.destroy}...`));
-    }
-  }
-
-  async tasks(options) {
-    if (options.list) {
-      console.log(chalk.cyan('Tasks:'));
-      console.log('  No tasks in queue');
-    }
-
-    if (options.submit) {
-      let payload = JSON.parse(options.payload || '{}');
-      console.log(chalk.green(`Submitting ${options.submit} task...`));
-      console.log('Payload:', payload);
-    }
-  }
-
-  async sessions(options) {
-    if (options.list) {
-      console.log(chalk.cyan('Sessions:'));
-      console.log('  No active sessions');
-    }
-
-    if (options.create) {
-      console.log(chalk.green(`Creating session: ${options.create}`));
-    }
-
-    if (options.start) {
-      console.log(chalk.green(`Starting session: ${options.start}`));
-    }
-
-    if (options.end) {
-      console.log(chalk.yellow(`Ending session: ${options.end}`));
-    }
-  }
-
-  async logs(options) {
-    const logDir = this.config.get('logging.directory') || './logs';
-    const logFile = path.join(logDir, 'application.log');
-
-    if (!fs.existsSync(logFile)) {
-      console.log(chalk.yellow('No log file found'));
-      return;
-    }
-
-    if (options.follow) {
-      console.log(chalk.cyan(`Following ${logFile}...`));
-      // Tail -f implementation
-    } else {
-      const lines = parseInt(options.lines, 10);
-      const content = fs.readFileSync(logFile, 'utf8');
-      const allLines = content.trim().split('\n');
-      const recent = allLines.slice(-lines).join('\n');
-      console.log(recent);
-    }
-  }
-
-  async configCmd(options) {
-    this.config.load();
-
-    if (options.show) {
-      console.log(JSON.stringify(this.config.getAll(), null, 2));
-    }
-
-    if (options.get) {
-      const value = this.config.get(options.get);
-      console.log(value !== undefined ? value : 'Not set');
-    }
-
-    if (options.set) {
-      const [key, value] = options.set.split('=');
-      this.config.set(key, value);
-      console.log(chalk.green(`Set ${key} = ${value}`));
-    }
-
-    if (options.edit) {
-      console.log(chalk.cyan('Edit config file...'));
-    }
-  }
-
-  async dashboard(options) {
-    console.log(chalk.cyan(`Starting dashboard on port ${options.port}...`));
-    // Dashboard implementation
-  }
-
-  async init(options) {
-    this.printBanner();
-
-    const answers = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'projectName',
-        message: 'Project name:',
-        default: options.project || 'my-project'
-      },
-      {
-        type: 'list',
-        name: 'environment',
-        message: 'Environment:',
-        choices: ['development', 'production'],
-        default: 'development'
-      }
-    ]);
-
-    const projectDir = path.join(process.cwd(), answers.projectName);
-    fs.mkdirSync(projectDir, { recursive: true });
-    fs.mkdirSync(path.join(projectDir, 'config'), { recursive: true });
-    fs.mkdirSync(path.join(projectDir, 'logs'), { recursive: true });
-    fs.mkdirSync(path.join(projectDir, 'sessions'), { recursive: true });
-
-    console.log(chalk.green(`Project initialized at ${projectDir}`));
-  }
-
-  async doctor() {
-    this.printBanner();
-    console.log(chalk.cyan('Running health checks...\n'));
-
-    const checks = [
-      { name: 'Node.js version', check: () => process.version },
-      { name: 'Config directory', check: () => fs.existsSync('./config') },
-      { name: 'Logs directory', check: () => fs.existsSync('./logs') },
-      { name: 'Write permissions', check: () => fs.accessSync('.', fs.constants.W_OK) }
-    ];
-
-    for (const { name, check } of checks) {
+  program
+    .command('start')
+    .argument('[project]', 'project name (defaults to config "defaultProject")')
+    .option('--fresh', 'abandon any interrupted session and start the mission over')
+    .description('Start (or resume) supervising a project until its mission completes')
+    .action(async (project, options) => {
       try {
-        const result = check();
-        console.log(`  ${chalk.green('✓')} ${name}: ${result === true ? 'OK' : result}`);
-      } catch {
-        console.log(`  ${chalk.red('✗')} ${name}: FAILED`);
+        const app = new App();
+        const result = await app.start({ projectName: project, fresh: options.fresh });
+        if (result?.complete) {
+          console.log(chalk.green(`\n✔ Mission complete: ${result.reason}`));
+        } else if (result) {
+          console.log(chalk.yellow(`\n■ Supervision ended: ${result.reason}`));
+        }
+      } catch (error) {
+        fail(error);
       }
-    }
-  }
+    });
 
-  printBanner() {
+  program
+    .command('resume')
+    .argument('[project]', 'project name')
+    .description('Resume supervision only if an interrupted session exists (used at boot)')
+    .action(async (project) => {
+      try {
+        const app = new App();
+        const result = await app.start({ projectName: project, onlyIfResumable: true });
+        if (result === null) {
+          console.log('Nothing to resume.');
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  program
+    .command('stop')
+    .description('Ask the running orchestrator to stop gracefully (session stays resumable)')
+    .action(() => {
+      try {
+        const { paths } = readOnlyContext();
+        const heartbeat = readJsonSafe(paths.heartbeatFile);
+        if (!heartbeat || heartbeat.state !== 'running' || !isPidAlive(heartbeat.pid)) {
+          console.log('No running orchestrator found.');
+          return;
+        }
+        fs.writeFileSync(path.join(paths.stateDir, STOP_REQUEST_FILENAME), '');
+        console.log(
+          `Stop requested (pid ${heartbeat.pid}). ` +
+          'The orchestrator will stop after the current agent process exits or within a few seconds.'
+        );
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  program
+    .command('status')
+    .description('Show what the orchestrator is doing right now')
+    .action(() => {
+      try {
+        const { paths } = readOnlyContext();
+        const status = readJsonSafe(paths.statusFile);
+        if (!status) {
+          console.log('No status.json yet — the orchestrator has not run.');
+          return;
+        }
+        printStatus(status, paths.statusFile);
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  program
+    .command('sessions')
+    .argument('[project]', 'show history for one project')
+    .description('List active sessions, or one project’s session history')
+    .action((project) => {
+      try {
+        const { sessionManager } = readOnlyContext();
+        if (project) {
+          const history = sessionManager.getHistory(project);
+          const active = sessionManager.getActiveSession(project);
+          if (active) printSession(active, 'ACTIVE');
+          if (!history.length && !active) console.log(`No sessions recorded for "${project}".`);
+          for (const record of history) printSession(record, 'archived');
+        } else {
+          const active = sessionManager.listActiveSessions();
+          if (!active.length) {
+            console.log('No active sessions.');
+            return;
+          }
+          for (const record of active) printSession(record, 'ACTIVE');
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  const projects = program.command('projects').description('Manage project definitions');
+
+  projects
+    .command('list')
+    .description('List defined projects')
+    .action(() => {
+      try {
+        const { configManager, sessionManager } = readOnlyContext();
+        const names = configManager.listProjects();
+        if (!names.length) {
+          console.log('No projects defined. Create one with "ai-orchestrator projects add".');
+          return;
+        }
+        for (const name of names) {
+          const session = sessionManager.getActiveSession(name);
+          const marker = session ? chalk.green(` [active: ${session.state}]`) : '';
+          console.log(`  ${chalk.bold(name)}${marker}`);
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  projects
+    .command('add')
+    .argument('<name>', 'project name')
+    .requiredOption('--dir <path>', 'working directory the agent operates in')
+    .requiredOption('--prompt <file>', 'mission prompt file (relative to --dir or absolute)')
+    .option('--driver <id>', 'AI engine driver', 'claude')
+    .description('Create a new project definition')
+    .action((name, options) => {
+      try {
+        const { configManager } = readOnlyContext();
+        const file = configManager.saveProject(name, {
+          driver: options.driver,
+          workingDirectory: path.resolve(options.dir),
+          promptFile: options.prompt,
+        });
+        console.log(chalk.green(`Project created: ${file}`));
+        console.log(`Start it with:  ai-orchestrator start ${name}`);
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  program
+    .command('drivers')
+    .description('List available AI engine drivers')
+    .action(() => {
+      const registry = new DriverRegistry({ logger: silentLogger });
+      for (const id of registry.listDrivers()) {
+        const driver = registry.getDriver(id);
+        console.log(`  ${chalk.bold(id)} — ${driver.name}`);
+      }
+    });
+
+  const scheduler = program
+    .command('scheduler')
+    .description('Windows Task Scheduler integration (auto-start after reboot)');
+
+  scheduler
+    .command('install')
+    .option('--project <name>', 'project the boot task should resume')
+    .description('Install a logon task that resumes interrupted missions automatically')
+    .action((options) => {
+      try {
+        runSchedulerScript('install-task.ps1', options.project);
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  scheduler
+    .command('uninstall')
+    .description('Remove the auto-resume scheduled task')
+    .action(() => {
+      try {
+        runSchedulerScript('uninstall-task.ps1');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  scheduler
+    .command('status')
+    .description('Show whether the auto-resume task is installed')
+    .action(() => {
+      const result = spawnSync(
+        'schtasks',
+        ['/Query', '/TN', SCHEDULED_TASK_NAME, '/FO', 'LIST'],
+        { encoding: 'utf8', windowsHide: true }
+      );
+      if (result.status === 0) {
+        console.log(chalk.green('Auto-resume task is installed:'));
+        console.log(result.stdout.trim());
+      } else {
+        console.log('Auto-resume task is NOT installed. Run "ai-orchestrator scheduler install".');
+      }
+    });
+
+  program
+    .command('doctor')
+    .description('Diagnose the environment, configuration, and engine installation')
+    .action(async () => {
+      await runDoctor();
+    });
+
+  return program;
+}
+
+/** Render status.json for humans. */
+function printStatus(status, statusFile) {
+  const stateColor =
+    {
+      supervising: chalk.green,
+      'mission-complete': chalk.green,
+      'gave-up': chalk.red,
+      stopped: chalk.yellow,
+    }[status.orchestrator?.state] ?? chalk.white;
+
+  console.log(chalk.bold('\nAI-Orchestrator status'));
+  console.log(chalk.dim(`  (${statusFile})`));
+  console.log(`  State:        ${stateColor(status.orchestrator?.state)}`);
+  console.log(`  Project:      ${status.project ?? '-'}`);
+  console.log(`  Uptime:       ${formatDuration(status.orchestrator?.uptimeMs ?? 0)}`);
+  if (status.session) {
+    console.log(`  Session:      ${status.session.id} (${status.session.state})`);
+  }
+  if (status.agent?.pid) {
+    const children = status.agent.childPids?.length
+      ? ` (children: ${status.agent.childPids.join(', ')})`
+      : '';
+    console.log(`  Agent PID:    ${status.agent.pid}${children}`);
+  }
+  if (status.activity?.currentTask) {
+    console.log(`  Current task: ${status.activity.currentTask}`);
+  }
+  if (status.activity?.lastOutputAt) {
+    console.log(`  Last output:  ${status.activity.lastOutputAt}`);
+  }
+  const c = status.counters ?? {};
+  console.log(
+    `  Counters:     runs ${c.runs ?? 0} · resumes ${c.resumes ?? 0} · ` +
+    `crashes ${c.crashes ?? 0} · rate limits ${c.rateLimits ?? 0}`
+  );
+  if (status.rateLimit?.waiting) {
     console.log(
-      gradient('cyan', 'blue')(
-        figlet.textSync('AI Orchestrator', { horizontalLayout: 'full' })
+      chalk.yellow(
+        `  Waiting:      usage limit — resuming at ${status.rateLimit.resumeAt} ` +
+        `(~${formatDuration(status.rateLimit.estimatedWaitMs ?? 0)})`
       )
     );
   }
+  console.log(chalk.dim(`  Updated:      ${status.updatedAt}\n`));
+}
 
-  formatUptime(ms) {
-    const seconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    const days = Math.floor(hours / 24);
+/** Render one session record. */
+function printSession(session, label) {
+  console.log(
+    `  ${chalk.bold(session.project)} [${label}] ${session.state} — ` +
+    `runs ${session.runs}, resumes ${session.resumes}, crashes ${session.crashes}, ` +
+    `rate limits ${session.rateLimits}` +
+    (session.lastActivity ? chalk.dim(` — ${session.lastActivity}`) : '')
+  );
+}
 
-    if (days > 0) return `${days}d ${hours % 24}h`;
-    if (hours > 0) return `${hours}h ${minutes % 60}m`;
-    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
-    return `${seconds}s`;
-  }
+/** Invoke a PowerShell helper script from scripts/. */
+function runSchedulerScript(scriptName, project) {
+  const script = path.join(ROOT_DIR, 'scripts', scriptName);
+  const args = [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    script,
+    '-InstallRoot',
+    ROOT_DIR,
+  ];
+  if (project) args.push('-Project', project);
 
-  run(argv) {
-    this.program.parse(argv);
+  const result = spawnSync('powershell.exe', args, {
+    stdio: 'inherit',
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    throw new Error(`${scriptName} exited with code ${result.status}`);
   }
 }
 
-export default CLI;
+/** Environment/config diagnostics for `doctor`. */
+async function runDoctor() {
+  const check = (ok, label, detail = '') => {
+    const mark = ok ? chalk.green('✔') : chalk.red('✘');
+    console.log(`  ${mark} ${label}${detail ? chalk.dim(` — ${detail}`) : ''}`);
+    return ok;
+  };
+
+  console.log(chalk.bold('\nAI-Orchestrator doctor\n'));
+
+  // Node version.
+  const major = Number(process.versions.node.split('.')[0]);
+  check(major >= 18, `Node.js ${process.version}`, major >= 18 ? 'supported' : 'need >= 18');
+
+  // Configuration.
+  let configManager;
+  try {
+    configManager = new ConfigManager();
+    configManager.load();
+    check(true, 'Global configuration loads', 'config/orchestrator.json');
+  } catch (error) {
+    check(false, 'Global configuration loads', error.message);
+    return;
+  }
+
+  // Projects.
+  const projectNames = configManager.listProjects();
+  check(projectNames.length > 0, `Projects defined: ${projectNames.length}`,
+    projectNames.join(', ') || 'add one with "projects add"');
+  const registry = new DriverRegistry({ logger: silentLogger });
+  for (const name of projectNames) {
+    try {
+      const project = configManager.getProject(name);
+      check(true, `Project "${name}" is valid`, project.workingDirectory);
+
+      const driver = registry.getDriver(project.driver);
+      // eslint-disable-next-line no-await-in-loop
+      const installation = await driver.checkInstallation(
+        project[project.driver]?.executable
+      );
+      check(installation.ok, `Engine for "${name}" (${project.driver})`,
+        installation.version ?? installation.error);
+    } catch (error) {
+      check(false, `Project "${name}" is valid`, error.message);
+    }
+  }
+
+  // Writable runtime dirs.
+  const paths = configManager.getPaths();
+  try {
+    fs.mkdirSync(paths.stateDir, { recursive: true });
+    const probe = path.join(paths.stateDir, '.doctor-probe');
+    fs.writeFileSync(probe, 'ok');
+    fs.rmSync(probe);
+    check(true, 'State directory writable', paths.stateDir);
+  } catch (error) {
+    check(false, 'State directory writable', error.message);
+  }
+
+  // Running instance?
+  const heartbeat = readJsonSafe(paths.heartbeatFile);
+  if (heartbeat?.state === 'running' && isPidAlive(heartbeat.pid)) {
+    console.log(chalk.yellow(`\n  An orchestrator is currently running (pid ${heartbeat.pid}).`));
+  }
+
+  // Scheduled task (Windows only).
+  if (process.platform === 'win32') {
+    const task = spawnSync('schtasks', ['/Query', '/TN', SCHEDULED_TASK_NAME], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    check(
+      task.status === 0,
+      'Auto-resume scheduled task',
+      task.status === 0 ? 'installed' : 'not installed (optional) — "scheduler install"'
+    );
+  }
+
+  console.log('');
+}
+
+export default buildProgram;

@@ -1,0 +1,116 @@
+/**
+ * mockDriver.js — Scriptable in-process driver for tests and dry runs.
+ *
+ * Lets the orchestrator be exercised end-to-end without a real AI engine:
+ * each launch plays the next entry of a scripted sequence (defined in the
+ * project's `mock.runs` config), emitting output and exiting exactly as a
+ * real engine would.
+ *
+ * Also useful for operators: `"driver": "mock"` in a project config gives a
+ * safe way to verify the whole supervision pipeline (status.json, logs,
+ * notifications, resume flow) before pointing it at a real mission.
+ */
+
+import { AIDriver, AgentRun } from './aiDriver.js';
+
+/** Default script: one run that immediately completes the mission. */
+const DEFAULT_RUNS = [
+  {
+    output: 'mock agent did some work\nMISSION COMPLETE\n',
+    result: 'MISSION COMPLETE',
+    exitCode: 0,
+    delayMs: 50,
+  },
+];
+
+export class MockDriver extends AIDriver {
+  constructor({ logger }) {
+    super({ logger });
+    this.id = 'mock';
+    this.name = 'Mock Engine';
+    this.launchCount = 0;
+
+    this.exitPatterns = {
+      usageLimit: [/usage limit reached/i],
+      network: [/network failure/i],
+    };
+  }
+
+  /** @inheritdoc */
+  async checkInstallation() {
+    return { ok: true, version: 'mock-1.0.0' };
+  }
+
+  /** @inheritdoc */
+  async launch({ project, engineSessionId }) {
+    const runs = project.mock?.runs?.length ? project.mock.runs : DEFAULT_RUNS;
+    // Replay the last scripted entry if launches outnumber script entries.
+    const script = runs[Math.min(this.launchCount, runs.length - 1)];
+    this.launchCount += 1;
+
+    const run = new MockRun({ script, engineSessionId, launchIndex: this.launchCount });
+    run.begin();
+    return run;
+  }
+
+  /** @inheritdoc */
+  extractLimitResetTime(outputTail) {
+    // Mock format: "usage limit reached|<epoch-ms>"
+    const match = outputTail.match(/usage limit reached\|(\d+)/i);
+    return match ? new Date(Number(match[1])) : null;
+  }
+}
+
+class MockRun extends AgentRun {
+  constructor({ script, engineSessionId, launchIndex }) {
+    super();
+    this.script = script;
+    this.engineSessionId = engineSessionId;
+    this.launchIndex = launchIndex;
+    this.pid = 100_000 + launchIndex; // fake but unique
+    this.stopped = false;
+  }
+
+  begin() {
+    const {
+      output = '',
+      result = null,
+      exitCode = 0,
+      signal = null,
+      delayMs = 10,
+    } = this.script;
+
+    // Emit asynchronously so callers can attach listeners first.
+    setTimeout(() => {
+      // Mock keeps the session id stable across resumes for simplicity.
+      this.emit('engine-session-id', this.engineSessionId ?? `mock-session-${this.pid}`);
+      if (output) this.emit('output', output);
+      this.emit('activity', 'mock work in progress');
+      if (result !== null) this.emit('result', { text: result, isError: exitCode !== 0 });
+
+      if (!this.stopped) {
+        this.finish({
+          code: exitCode,
+          signal,
+          outputTail: output,
+          resultText: result,
+          resultIsError: exitCode !== 0,
+        });
+      }
+    }, delayMs);
+  }
+
+  /** @inheritdoc */
+  async requestStop() {
+    this.stopped = true;
+    this.finish({
+      code: null,
+      signal: 'SIGTERM',
+      outputTail: '',
+      resultText: null,
+      resultIsError: false,
+    });
+  }
+}
+
+export default MockDriver;

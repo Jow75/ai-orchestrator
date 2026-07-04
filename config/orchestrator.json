@@ -1,0 +1,34 @@
+{
+  "$comment": "Global AI-Orchestrator settings. Every key is optional — anything omitted falls back to the documented default (see CONFIGURATION.md). Edit this file, never the code.",
+
+  "logging": {
+    "level": "info",
+    "console": true,
+    "file": true,
+    "maxFiles": "14d",
+    "maxSize": "10m"
+  },
+
+  "api": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 4711
+  },
+
+  "notifications": {
+    "events": [
+      "session:rate-limited",
+      "session:crashed",
+      "session:gave-up",
+      "mission:complete",
+      "orchestrator:recovered-after-reboot"
+    ],
+    "desktop": { "enabled": true },
+    "webhook": { "enabled": false, "url": "" },
+    "discord": { "enabled": false, "webhookUrl": "" },
+    "telegram": { "enabled": false, "botToken": "", "chatId": "" },
+    "email": { "enabled": false }
+  },
+
+  "defaultProject": ""
+}
