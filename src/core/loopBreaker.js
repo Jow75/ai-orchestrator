@@ -6,7 +6,7 @@
  * measurable progress, and decides whether the orchestrator may continue.
  *
  * A run "made progress" when the workspace signature changed
- * (see workspaceSignature.js). When enough runs in a row change nothing —
+ * (see progress/progressEngine.js). When enough runs in a row change nothing —
  * or when the agent explicitly reports it is blocked — the breaker trips:
  * the orchestrator stops launching, preserves state, and emits a diagnostic
  * report instead of burning quota.

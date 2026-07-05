@@ -11,7 +11,7 @@ points:
 | Snapshot | Milestone |
 | --- | --- |
 | `v2.0.0-alpha.1` | **P0 complete** — progress awareness & loop prevention (locked) |
-| `v2.0.0-alpha.2` | P1 — progress engine (files/git/build/test/verification signals) |
+| `v2.0.0-alpha.2` | **P1 complete** — structured progress engine (files/git change facts) |
 | `v2.0.0-alpha.3` | P2 — mission system (ordered tasks with budgets & checkpoints) |
 | `v2.0.0-beta.1` | P3 — persistent prompt queue |
 | `v2.0.0-beta.2` | P4 — intelligent briefing (Continuation Builder) + P5 memory |
@@ -39,13 +39,18 @@ not the agent, and blocked-state patterns are driver-extensible.)
 - **Mission timeline** (CLI `timeline`, `/api/timeline/:project`)
 - Inter-run delay; confirmed-bug fixes (temp leak, `plugins.enabled`)
 
-## P1 — Progress engine (`v2.0.0-alpha.2`, next)
+## P1 — Progress engine ✅ (`v2.0.0-alpha.2`, complete)
 
-- Promote the P0 progress *signal* into a first-class engine: explicit
-  git-diff analysis, new/modified file inspection, and pluggable progress
-  checks — all producing structured, confidence-scored progress facts.
-- Per-project `progress` config overrides (P0 is global-only).
-- Feed richer signals into the confidence scorer (tests/build in P6).
+- Promoted the P0 progress *signal* into a first-class engine
+  (`progressEngine.js`): structured `created`/`modified`/`deleted` file
+  facts and git-commit detection, replacing the git-status-based signature.
+- **Fixed a real gap**: work inside a git-ignored directory now correctly
+  registers as progress (P0's `git status`-based approach could not see it).
+- Per-project `progress` config overrides (P0 was global-only).
+- Caught and fixed a confidence-scoring bug in the same pass (method-name
+  mismatch between the old and new progress signal shapes) — see CHANGELOG.
+- Tests/build signals for the confidence scorer still arrive with P6
+  verification, which reuses `assessConfidence()` rather than a parallel path.
 
 ## P2 — Mission system (`v2.0.0-alpha.3`)
 

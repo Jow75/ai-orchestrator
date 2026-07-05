@@ -39,6 +39,39 @@ dashboard, equally useful for curl and monitoring.
 }
 ```
 
+### `/api/timeline/:project` shape
+
+An array of sparse, human-readable events (not every run — see
+`state/ledger/<project>.jsonl` for the complete per-run audit trail, which
+is not yet exposed over the API):
+
+```jsonc
+[
+  { "at": "…", "event": "mission-started", "label": "Mission started" },
+  { "at": "…", "event": "progress", "label": "Progress made (confidence: high)" },
+  { "at": "…", "event": "rate-limit", "label": "Rate limit — waiting until …" },
+  { "at": "…", "event": "resumed", "label": "Usage limit reset; resuming" },
+  { "at": "…", "event": "complete", "label": "Mission complete" }
+]
+```
+
+### Progress ledger record shape (`state/ledger/<project>.jsonl`)
+
+One line per run, the complete audit trail behind the timeline:
+
+```jsonc
+{
+  "at": "…", "project": "…", "sessionId": "…", "run": 3,
+  "cause": "completed", "exitReason": "progress",
+  "progressed": true, "confidence": "high", "confidenceScore": 0.85,
+  "confidenceSignals": ["git", "workspace-changed", "files-created"],
+  "changes": { "created": 2, "modified": 1, "deleted": 0 },
+  "changedFiles": { "created": ["a.txt", "b.txt"], "modified": ["c.txt"], "deleted": [] },
+  "signature": "…", "signatureMethod": "git+scan",
+  "consecutiveNoProgress": 0, "resultText": "…"
+}
+```
+
 ---
 
 ## 2. Plugin API
@@ -71,12 +104,12 @@ can never take the supervisor down.
 | --- | --- |
 | `session:launched` | `{ project, session, pid, resumed }` |
 | `session:exit` | `{ project, session, verdict: {cause, detail}, exitInfo, exitReason }` |
-| `session:progress` | `{ project, session, progressed, method, confidence, exitReason }` |
+| `session:progress` | `{ project, session, progressed, method, confidence, changes, exitReason }` |
 | `mission:blocked` | `{ project, session, reason, category, reportPath }` |
 | `session:rate-limited` | `{ project, session, resumeAt, waitMs }` |
 | `session:network-error` | `{ project, session, retryInMs }` |
 | `session:crashed` | `{ project, session, consecutiveCrashes, restartInMs }` |
-| `session:resumed` | `{ project, session }` |
+| `session:resumed` | `{ project, session, note }` |
 | `session:gave-up` | `{ project, session, reason }` |
 | `session:recovered` | `{ project, session, after }` |
 | `mission:complete` | `{ project, session, summary }` |

@@ -66,14 +66,25 @@ write-blocked or stuck agent from silently burning your usage overnight.
 | `interRunDelayMs` | `15000` | Pause between continue-relaunches (abortable by stop); paces quota spend |
 | `blockedDetection` | `true` | Treat an explicit "agent is blocked" message (e.g. permission denied) plus no progress as an immediate stop |
 
-How progress is measured: after each run the orchestrator computes a
-signature of the working directory — git HEAD + `git status` + the contents
-of changed files when the workspace is a git repo, otherwise a scan of file
-paths/sizes/mtimes (ignoring `node_modules`, `.git`, build/state/log dirs).
-The signature changing = progress. If it genuinely cannot be measured, the
-run is counted as **no progress** (fail closed), so problems pause for review
-rather than loop. A tripped breaker archives the session as `blocked` (a
-terminal, non-resumable state) and writes `state/diagnostics/<project>-<ts>.md`.
+How progress is measured: after each run the orchestrator scans the working
+directory (ignoring `node_modules`, `.git`, build/state/log dirs) and records
+each file's size and modification time, plus the git HEAD when the directory
+is a repo. Comparing this scan to the previous run's produces structured
+change facts — files created, modified, deleted, and whether a git commit
+was made — persisted at `state/progress/<project>.snapshot.json`. Any change
+= progress. Unlike relying on `git status` alone, this also catches work
+done inside a **git-ignored** directory (build output, scratch files) — it
+is not fooled by `.gitignore`. If the workspace genuinely cannot be measured
+(missing directory, permission error), the run is counted as **no progress**
+(fail closed), so environment problems pause for review rather than loop.
+A tripped breaker archives the session as `blocked` (a terminal,
+non-resumable state) and writes `state/diagnostics/<project>-<ts>.md`.
+
+Per-project override: set a `progress` block in a project's own
+`config/projects/<name>.json` (e.g. `{"progress": {"maxConsecutiveNoProgress": 6}}`)
+to raise the threshold for a project whose agent legitimately goes several
+runs between observable file changes (long research/reading phases). Any
+key you omit falls back to the global setting above.
 
 ### rateLimit
 
@@ -136,6 +147,17 @@ Minimal working example:
 | `completionMarker` | `"MISSION COMPLETE"` | Text whose appearance in the agent's final output ends the mission. **Instruct the agent in your prompt to print it only when everything is done.** Set `""` to disable (then supervision runs until `maxRuns` or manual stop) |
 | `continuePrompt` | *"Continue from where you left off…"* | Prompt for resumed/continued runs |
 | `maxRuns` | `0` | Safety valve: max launches per mission (0 = unlimited) |
+
+### progress (optional, per-project override)
+
+Empty by default (`{}`) — every key you omit falls back to the global
+`progress` block (see above). Same keys: `enabled`, `maxConsecutiveNoProgress`,
+`interRunDelayMs`, `blockedDetection`. Example — a project whose agent does
+long research phases between file writes:
+
+```json
+"progress": { "maxConsecutiveNoProgress": 8 }
+```
 
 ### claude (used when `driver` is `"claude"`)
 

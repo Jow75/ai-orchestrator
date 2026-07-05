@@ -31,8 +31,7 @@ import { ProcessSupervisor } from './processSupervisor.js';
 import { LoopBreaker, BreakerAction } from './loopBreaker.js';
 import { detectBlockedState } from './blockedPatterns.js';
 import { deriveExitReason } from './exitReason.js';
-import { computeWorkspaceSignature } from '../progress/workspaceSignature.js';
-import { assessConfidence } from '../progress/progressConfidence.js';
+import { ProgressEngine } from '../progress/progressEngine.js';
 import { ProgressLedger } from '../progress/progressLedger.js';
 import { writeDiagnosticReport } from '../report/diagnosticReport.js';
 import { SessionState } from '../state/sessionManager.js';
@@ -93,18 +92,28 @@ export class Orchestrator extends EventEmitter {
     });
     this.networkRetryDelayMs = config.recovery.networkRetryDelayMs;
 
-    // Progress awareness & loop prevention (P0). progress may be absent in
+    // Progress awareness & loop prevention. `progress` may be absent in
     // hand-built test configs; fall back to safe, effectively-off values.
-    this.progressConfig = config.progress ?? {
+    // The effective config is re-derived per project in runProject() so a
+    // project can override the global progress settings (P1).
+    this.globalProgressConfig = config.progress ?? {
       enabled: false,
       maxConsecutiveNoProgress: Infinity,
       interRunDelayMs: 0,
       blockedDetection: false,
     };
+    this.progressConfig = this.globalProgressConfig;
     this.loopBreaker = new LoopBreaker({ config: this.progressConfig, logger });
     this.progressLedger = new ProgressLedger({
       ledgerDir: this.paths.ledgerDir,
       logger,
+    });
+    this.progressEngine = new ProgressEngine({
+      progressDir: this.paths.progressDir,
+      logger,
+      ...(this.globalProgressConfig.ignoreDirs
+        ? { ignoreDirs: this.globalProgressConfig.ignoreDirs }
+        : {}),
     });
 
     this.stopRequested = false;
@@ -124,6 +133,11 @@ export class Orchestrator extends EventEmitter {
   async runProject(projectName, { recoveredAfter } = {}) {
     const project = this.configManager.getProject(projectName);
     const driver = this.driverRegistry.getDriver(project.driver);
+
+    // Effective progress config: a project may override the global settings
+    // (P1). Re-init the loop breaker with the merged threshold.
+    this.progressConfig = { ...this.globalProgressConfig, ...(project.progress ?? {}) };
+    this.loopBreaker = new LoopBreaker({ config: this.progressConfig, logger: this.logger });
 
     // Fail fast, before touching any session state, if the engine is absent.
     const installation = await driver.checkInstallation(
@@ -164,11 +178,9 @@ export class Orchestrator extends EventEmitter {
     // free "progress" pass for merely establishing a baseline). Only when the
     // session has no prior signature — a resumed session keeps its own.
     if (this.progressConfig.enabled && session.lastSignature == null) {
-      const baseline = computeWorkspaceSignature(project.workingDirectory, {
-        logger: this.logger,
-      });
-      if (baseline.hash !== null) {
-        this.sessionManager.update(session, { lastSignature: baseline.hash });
+      const baselineHash = this.progressEngine.baseline(project);
+      if (baselineHash !== null) {
+        this.sessionManager.update(session, { lastSignature: baselineHash });
       }
     }
 
@@ -456,26 +468,22 @@ export class Orchestrator extends EventEmitter {
       : { blocked: false };
 
     let progressed = true;
-    let signature = { hash: session.lastSignature, method: 'skipped', detail: {} };
+    let report = { hash: session.lastSignature, method: 'skipped', changes: null,
+      confidence: { level: 'medium', score: 0.5, signals: [] } };
 
     if (this.progressConfig.enabled) {
-      signature = computeWorkspaceSignature(project.workingDirectory, { logger: this.logger });
+      report = this.progressEngine.analyze(project);
       // FAIL CLOSED: a workspace we cannot measure counts as "no progress",
       // so an environment problem pauses for review instead of looping.
-      progressed = signature.hash !== null && signature.hash !== session.lastSignature;
+      progressed = report.hash !== null && report.hash !== session.lastSignature;
 
       const patch = {};
-      if (signature.hash !== null) patch.lastSignature = signature.hash;
+      if (report.hash !== null) patch.lastSignature = report.hash;
       if (progressed) patch.consecutiveNoProgress = 0; // any progress resets the streak
       if (Object.keys(patch).length) this.sessionManager.update(session, patch);
     }
 
-    // Confidence in the progress verdict, and the standardized outcome.
-    const confidence = assessConfidence({
-      progressed,
-      method: signature.method,
-      detail: signature.detail,
-    });
+    const confidence = report.confidence;
     const marker = project.mission.completionMarker;
     const exitReason = deriveExitReason({
       cause: verdict.cause,
@@ -495,8 +503,12 @@ export class Orchestrator extends EventEmitter {
       confidence: confidence.level,
       confidenceScore: confidence.score,
       confidenceSignals: confidence.signals,
-      signature: signature.hash,
-      signatureMethod: signature.method,
+      changes: report.changes ? report.changes.counts : undefined,
+      changedFiles: report.changes
+        ? { created: report.changes.created, modified: report.changes.modified, deleted: report.changes.deleted }
+        : undefined,
+      signature: report.hash,
+      signatureMethod: report.method,
       consecutiveNoProgress: session.consecutiveNoProgress,
       resultText: exitInfo.resultText ?? '',
       blocked: blocked.blocked ? { category: blocked.category } : undefined,
@@ -509,7 +521,8 @@ export class Orchestrator extends EventEmitter {
       exitReason,
       progressed,
       confidence: confidence.level,
-      method: signature.method,
+      method: report.method,
+      changes: report.changes ? report.changes.counts : undefined,
       consecutiveNoProgress: session.consecutiveNoProgress,
       blocked: blocked.blocked ? blocked.category : false,
     });
@@ -517,14 +530,15 @@ export class Orchestrator extends EventEmitter {
       project: project.name,
       session,
       progressed,
-      method: signature.method,
+      method: report.method,
       confidence: confidence.level,
+      changes: report.changes,
       exitReason,
     });
 
     return {
-      progressed, signature: signature.hash, method: signature.method,
-      blocked, confidence, exitReason,
+      progressed, signature: report.hash, method: report.method,
+      changes: report.changes, blocked, confidence, exitReason,
     };
   }
 

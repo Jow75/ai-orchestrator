@@ -18,7 +18,7 @@ export { ProcessSupervisor } from './core/processSupervisor.js';
 export { LoopBreaker, BreakerAction } from './core/loopBreaker.js';
 export { detectBlockedState, BLOCKED_PATTERNS } from './core/blockedPatterns.js';
 export { ExitReason, deriveExitReason, BLOCKED_REASONS } from './core/exitReason.js';
-export { computeWorkspaceSignature } from './progress/workspaceSignature.js';
+export { ProgressEngine, diffSnapshots } from './progress/progressEngine.js';
 export { assessConfidence, Confidence } from './progress/progressConfidence.js';
 export { ProgressLedger } from './progress/progressLedger.js';
 export { MissionTimeline } from './state/missionTimeline.js';

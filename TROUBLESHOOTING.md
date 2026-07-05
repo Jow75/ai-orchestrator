@@ -82,9 +82,13 @@ unattended runs).
 
 If a mission does real work that does not touch files for several runs
 (long research/reading phases), raise `progress.maxConsecutiveNoProgress` or
-increase `progress.interRunDelayMs`. Committing intermediate work (git) or
-writing scratch notes also registers as progress. Blocked sessions are
-always preserved, so nothing is lost.
+increase `progress.interRunDelayMs` — either globally in
+`config/orchestrator.json`, or scoped to just this project via a `progress`
+block in its own `config/projects/<name>.json` (see CONFIGURATION.md).
+Committing intermediate work (git) or writing scratch notes also registers
+as progress — including inside a `.gitignore`d directory, which v2's
+progress engine detects (v1.1 relied on `git status` alone and missed this).
+Blocked sessions are always preserved, so nothing is lost.
 
 ### It declared mission complete too early
 

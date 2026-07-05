@@ -3,6 +3,61 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.0.0-alpha.2] — 2026-07-06 — Phase P1: Progress Engine
+
+Promotes P0's yes/no workspace signature into a first-class, structured
+progress engine, and fixes a real correctness gap discovered while building
+it.
+
+### Added
+
+- **`src/progress/progressEngine.js`**: replaces P0's git-status-based
+  signature with a bounded full-tree scan (`size:mtime` per file, skipping
+  only noise directories) plus git HEAD tracking. Snapshots persist at
+  `state/progress/<project>.snapshot.json` and diff against the previous
+  run to produce **structured change facts**: `created`/`modified`/`deleted`
+  file lists and counts, and whether a git commit was made.
+- **Per-project `progress` config override**: a project's own
+  `config/projects/<name>.json` may set a `progress` block (e.g. a higher
+  `maxConsecutiveNoProgress` for a project with long research phases);
+  omitted keys fall back to the global setting. `PROJECT_DEFAULTS.progress`
+  documents this as an empty object.
+- Ledger records now include `changes` (counts) and `changedFiles` (sampled
+  lists, capped at 25 entries each) alongside the existing progress fields.
+
+### Fixed
+
+- **The P0→P1 gap**: P0's signature relied on `git status`, which is blind
+  to anything matched by `.gitignore`. Agent work inside a git-ignored
+  directory (a common case — build output, scratch files) registered as "no
+  progress" and could trip the circuit breaker incorrectly. P1's full-tree
+  scan sees those files; verified end-to-end (`test/progressEngine.test.js`,
+  *"THE P0 GAP FIX"*) and via a live CLI run against a real git repo with a
+  `.gitignore`d directory.
+- **A confidence-scoring bug caught during this phase's own smoke testing**:
+  `progressConfidence.js` matched method names (`'git'`/`'filescan'`)
+  belonging to the module P1 just replaced. `progressEngine.js` reports
+  `'git+scan'`/`'scan'`, which matched neither branch, so every P1 progress
+  verdict silently scored as the lowest tier regardless of actual evidence
+  — confidence would have read "low" even for a clean git commit. Fixed by
+  matching method *tiers* (substring match) instead of exact P0-era strings;
+  regression-tested (`test/progressConfidence.test.js`).
+- Removed `src/progress/workspaceSignature.js` (fully superseded — kept it
+  would have meant two overlapping, subtly different implementations of the
+  same concept; see ARCHITECTURE.md for the `size:mtime` vs. content-hash
+  trade-off this makes explicit).
+
+### Known limitations (documented, not hidden)
+
+- Change detection uses file `size:mtime`, not content hashing — chosen
+  deliberately since P1 scans the *whole* tree (necessary to catch
+  git-ignored work) and hashing every file's content on every run would not
+  scale. A file touched without content changes could register a false
+  "modified" — harmless in this system's fail-safe direction (see
+  ARCHITECTURE.md's "Progress awareness" section for the full reasoning).
+- `progress` config remains per-project or global only; there is no
+  per-task granularity yet (arrives with the P2 mission system).
+
 ## [2.0.0-alpha.1] — 2026-07-05 — Phase P0 complete & locked
 
 Finalizes Phase P0 of the v2 "Autonomous AI Project Manager" line and marks

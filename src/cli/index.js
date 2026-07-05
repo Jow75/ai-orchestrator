@@ -61,7 +61,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('2.0.0-alpha.1');
+    .version('2.0.0-alpha.2');
 
   program
     .command('start')

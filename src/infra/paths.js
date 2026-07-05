@@ -46,6 +46,7 @@ export function resolvePaths(overrides = {}) {
   resolved.sessionsDir = path.join(resolved.stateDir, 'sessions');
   resolved.ledgerDir = path.join(resolved.stateDir, 'ledger');
   resolved.timelineDir = path.join(resolved.stateDir, 'timeline');
+  resolved.progressDir = path.join(resolved.stateDir, 'progress');
   resolved.diagnosticsDir = path.join(resolved.stateDir, 'diagnostics');
   resolved.heartbeatFile = path.join(resolved.stateDir, 'heartbeat.json');
   resolved.runtimeHistoryFile = path.join(resolved.stateDir, 'runtime_history.json');
@@ -66,6 +67,7 @@ export function ensureRuntimeDirs(paths) {
     paths.sessionsDir,
     paths.ledgerDir,
     paths.timelineDir,
+    paths.progressDir,
     paths.diagnosticsDir,
     paths.pluginsDir,
   ]) {

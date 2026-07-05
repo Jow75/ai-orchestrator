@@ -29,8 +29,10 @@ details) and from mechanism (process handling, persistence) throughout.
 │  blockedPatterns.js       detect permission-denied / blocked output  │
 │  exitReason.js            standardized per-run outcome vocabulary    │
 ├──────────────────────────────────────────────────────────────────────┤
-│  Progress awareness (P0)                   src/progress/, src/report/│
-│  workspaceSignature.js    git/filescan signature — did work happen?  │
+│  Progress engine (P0/P1)                   src/progress/, src/report/│
+│  progressEngine.js        structured change facts: created/modified/ │
+│                           deleted files, git-commit detection —      │
+│                           did work happen, and what happened?        │
 │  progressConfidence.js    how much to trust the progress verdict     │
 │  progressLedger.js        per-run audit trail (state/ledger/*.jsonl) │
 │  diagnosticReport.js      "why did we stop?" report on a block       │
@@ -105,18 +107,50 @@ One `Orchestrator` instance supervises one project's **mission** — a
 ### Progress awareness (why the loop can't run away)
 
 The v1.0 loop would relaunch after every clean-but-unfinished run forever.
-v1.1 inserts a gate before each relaunch:
+v1.1 inserted a gate before each relaunch; P1 (`ProgressEngine`, in
+`src/progress/progressEngine.js`) replaced the original gate with a
+structured one that also fixed a real correctness gap:
 
-- `computeWorkspaceSignature()` reduces the working directory to a hash
-  (git HEAD + status + dirty-file contents, else a file path/size/mtime
-  scan). Same hash across runs ⇒ no progress. It **fails closed**: an
-  unmeasurable workspace counts as no progress.
-- `detectBlockedState()` scans the agent's final output for distress signals
-  (permission denied, no access, cannot proceed, awaiting input).
+- **How it measures**: a bounded scan of the working directory (skipping
+  `node_modules`, `.git`, build/state/log dirs) mapping each file to
+  `size:mtime`, plus the git HEAD when the directory is a repo. The scan is
+  persisted per project (`state/progress/<project>.snapshot.json`) and
+  diffed against the previous run to produce **structured change facts** —
+  which files were created, modified, or deleted, and whether a git commit
+  was made — not just a yes/no hash comparison.
+- **The P0→P1 fix**: P0's first signature implementation used `git status`,
+  which is blind to anything matched by `.gitignore`. Work the agent did
+  inside a git-ignored directory (a common case: build output, scratch
+  files) registered as "no progress" and could still trip the breaker
+  incorrectly. P1's full-tree scan sees those files; only genuine noise
+  directories are skipped, never `.gitignore` rules.
+- **Known trade-off, documented deliberately**: change detection uses
+  `size:mtime`, not file content hashing. Content hashing every file on
+  every run does defend against "same content, touched mtime" false
+  positives, but at real cost when workspaces are large; P0 used it only
+  for git-tracked dirty files, a bounded set. Since P1 scans the *whole*
+  tree (to catch git-ignored work), content-hashing all of it would not
+  scale. The chosen bias is deliberate: an occasional false "progress" from
+  a touched-but-unchanged file is harmless (worst case, one extra relaunch
+  before the breaker would otherwise trip); a false "no progress" is what
+  causes the failure this system exists to prevent. If this trade-off ever
+  matters for a specific project, a future `progress.hashContent: true`
+  project-level option would be the natural extension point.
+- It **fails closed** either way: an unmeasurable workspace (permissions
+  error, deleted directory) counts as no progress, so an environment
+  problem pauses for review instead of looping silently.
+- `detectBlockedState()` scans the agent's final output for distress
+  signals (permission denied, no access, cannot proceed, awaiting input,
+  missing file); driver-supplied patterns are checked first, keeping
+  detection engine-agnostic.
 - `LoopBreaker.decide()` trips when the workspace has not changed for
   `progress.maxConsecutiveNoProgress` runs, or immediately when a blocked
   state coincides with no progress. Tripping routes to `block()`, which
   writes a diagnostic report and archives the session as `blocked`.
+- `progressConfidence.assessConfidence()` scores every verdict
+  (`git-commit` > `git` > `filescan` > `unmeasurable`, raised further by
+  created/modified file counts); P6's verification signals will raise it
+  through the same function rather than a parallel one.
 
 ## Crash-anywhere durability
 

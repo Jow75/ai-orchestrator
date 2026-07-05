@@ -50,7 +50,7 @@ export const ORCHESTRATOR_DEFAULTS = {
 
   /**
    * Progress awareness & loop prevention (see src/core/loopBreaker.js,
-   * src/progress/workspaceSignature.js). This is the safeguard that makes
+   * src/progress/progressEngine.js). This is the safeguard that makes
    * an unbounded no-progress relaunch loop impossible.
    */
   progress: {
@@ -138,6 +138,16 @@ export const PROJECT_DEFAULTS = {
     /** Safety valve: max launches per mission. 0 = unlimited. */
     maxRuns: 0,
   },
+
+  /**
+   * Per-project override of the global `progress` block (see
+   * ORCHESTRATOR_DEFAULTS.progress and src/core/loopBreaker.js). Empty by
+   * default — every key you omit falls back to the global setting. Useful
+   * for a project whose agent legitimately goes several runs between
+   * observable file changes (e.g. long research/reading phases): raise
+   * `maxConsecutiveNoProgress` for that project alone rather than globally.
+   */
+  progress: {},
 
   /** Claude Code driver settings (see src/drivers/claudeDriver.js). */
   claude: {

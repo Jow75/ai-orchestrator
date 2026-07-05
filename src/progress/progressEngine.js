@@ -1,0 +1,229 @@
+/**
+ * progressEngine.js — Phase P1: a first-class progress engine.
+ *
+ * P0 answered a yes/no question ("did the workspace change?"). P1 promotes
+ * that signal into structured, engine-agnostic *progress facts*: which files
+ * were created, modified, or deleted, whether a git commit was made, and how
+ * much confidence to place in the verdict — all derived independently of the
+ * AI engine that produced the work.
+ *
+ * How it measures: a bounded snapshot of the working directory (each relevant
+ * file → `size:mtime`), plus the git HEAD when the directory is a repo. The
+ * snapshot is persisted per project (`state/progress/<project>.snapshot.json`,
+ * latest only) and diffed against the previous run to produce the change
+ * facts. Comparing snapshots — rather than trusting git's ignore rules —
+ * closes the P0 gap where work inside a git-ignored directory registered as
+ * "no progress" (only genuine noise dirs like node_modules are skipped).
+ *
+ * The engine still fails closed: if the workspace cannot be read at all, the
+ * run is treated as no-progress so problems pause for review, never loop.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { writeJsonAtomic, readJsonSafe } from '../state/statePersistence.js';
+import { assessConfidence } from './progressConfidence.js';
+
+/** Directories that are never meaningful progress (build output, deps, our own state). */
+export const DEFAULT_IGNORE_DIRS = [
+  'node_modules', '.git', 'dist', 'build', 'out', 'coverage',
+  '.next', '.cache', '.venv', 'venv', '__pycache__', 'logs', 'state',
+];
+
+/** Bounds so a snapshot can never take unbounded time/memory. */
+const MAX_FILES = 20_000;
+const MAX_SAMPLE = 25; // cap the created/modified/deleted sample lists
+const GIT_TIMEOUT_MS = 15_000;
+
+export class ProgressEngine {
+  /**
+   * @param {object} options
+   * @param {string} options.progressDir - Directory for per-project snapshots.
+   * @param {object} options.logger - Module logger.
+   * @param {string[]} [options.ignoreDirs] - Directory names to skip.
+   */
+  constructor({ progressDir, logger, ignoreDirs = DEFAULT_IGNORE_DIRS }) {
+    this.progressDir = progressDir;
+    this.logger = logger;
+    this.ignoreDirs = new Set(ignoreDirs);
+  }
+
+  snapshotFile(project) {
+    return path.join(this.progressDir, `${project}.snapshot.json`);
+  }
+
+  /**
+   * Establish the pre-mission baseline: snapshot the workspace and persist it
+   * so the first run's changes are measured against the true starting state.
+   *
+   * @param {object} project - Validated project config.
+   * @returns {string|null} The baseline signature hash (null if unmeasurable).
+   */
+  baseline(project) {
+    const snapshot = this.buildSnapshot(project.workingDirectory);
+    if (snapshot.hash === null) return null;
+    this.saveSnapshot(project.name, snapshot);
+    return snapshot.hash;
+  }
+
+  /**
+   * Analyze the workspace after a run: build a fresh snapshot, diff it against
+   * the stored one, persist the new snapshot, and return structured facts.
+   *
+   * @param {object} project - Validated project config.
+   * @returns {{
+   *   hash: string|null, method: string,
+   *   changes: {created: string[], modified: string[], deleted: string[],
+   *             counts: object, committed: boolean}|null,
+   *   confidence: {level: string, score: number, signals: string[]}
+   * }}
+   */
+  analyze(project) {
+    const previous = this.loadSnapshot(project.name);
+    const snapshot = this.buildSnapshot(project.workingDirectory);
+
+    const changes = previous && snapshot.hash !== null
+      ? diffSnapshots(previous, snapshot)
+      : null;
+
+    if (snapshot.hash !== null) this.saveSnapshot(project.name, snapshot);
+
+    const progressed = snapshot.hash !== null && (!previous || snapshot.hash !== previous.hash);
+    const confidence = assessConfidence({
+      progressed,
+      method: snapshot.method,
+      extraSignals: signalsFromChanges(changes),
+    });
+
+    return { hash: snapshot.hash, method: snapshot.method, changes, confidence };
+  }
+
+  /**
+   * Build a snapshot of the working directory.
+   * @param {string} dir
+   * @returns {{hash: string|null, method: string, head: string|null, files: object}}
+   */
+  buildSnapshot(dir) {
+    if (!dir || !fs.existsSync(dir)) {
+      return { hash: null, method: 'none', head: null, files: {} };
+    }
+
+    let files;
+    try {
+      files = this.scanFiles(dir);
+    } catch (error) {
+      this.logger.warn('Progress snapshot failed', { dir, error: error.message });
+      return { hash: null, method: 'none', head: null, files: {} };
+    }
+
+    const head = gitHead(dir);
+    const hash = crypto.createHash('sha256');
+    hash.update(`head:${head ?? 'none'}\n`);
+    for (const key of Object.keys(files).sort()) hash.update(`${key}=${files[key]}\n`);
+
+    return {
+      hash: hash.digest('hex'),
+      method: head ? 'git+scan' : 'scan',
+      head,
+      files,
+    };
+  }
+
+  /** Walk the directory into a {relPath: "size:mtime"} map, skipping noise. */
+  scanFiles(dir) {
+    const files = {};
+    let count = 0;
+
+    const walk = (current) => {
+      if (count >= MAX_FILES) return;
+      const entries = fs.readdirSync(current, { withFileTypes: true });
+      for (const entry of entries) {
+        if (count >= MAX_FILES) return;
+        if (entry.isDirectory()) {
+          if (this.ignoreDirs.has(entry.name)) continue;
+          walk(path.join(current, entry.name));
+        } else if (entry.isFile()) {
+          const abs = path.join(current, entry.name);
+          try {
+            const stat = fs.statSync(abs);
+            files[path.relative(dir, abs).replaceAll('\\', '/')] = `${stat.size}:${Math.round(stat.mtimeMs)}`;
+            count += 1;
+          } catch {
+            // racing deletion — skip
+          }
+        }
+      }
+    };
+
+    walk(dir);
+    return files;
+  }
+
+  loadSnapshot(project) {
+    return readJsonSafe(this.snapshotFile(project), { logger: this.logger });
+  }
+
+  saveSnapshot(project, snapshot) {
+    try {
+      writeJsonAtomic(this.snapshotFile(project), snapshot);
+    } catch (error) {
+      // Snapshot persistence is best-effort; never disrupt supervision.
+      this.logger.warn('Failed to persist progress snapshot', {
+        project, error: error.message,
+      });
+    }
+  }
+}
+
+/** Compute created/modified/deleted between two snapshots. */
+export function diffSnapshots(prev, curr) {
+  const prevFiles = prev.files ?? {};
+  const currFiles = curr.files ?? {};
+  const created = [];
+  const modified = [];
+  const deleted = [];
+
+  for (const [key, sig] of Object.entries(currFiles)) {
+    if (!(key in prevFiles)) created.push(key);
+    else if (prevFiles[key] !== sig) modified.push(key);
+  }
+  for (const key of Object.keys(prevFiles)) {
+    if (!(key in currFiles)) deleted.push(key);
+  }
+
+  return {
+    created: created.slice(0, MAX_SAMPLE),
+    modified: modified.slice(0, MAX_SAMPLE),
+    deleted: deleted.slice(0, MAX_SAMPLE),
+    counts: { created: created.length, modified: modified.length, deleted: deleted.length },
+    committed: Boolean(prev.head && curr.head && prev.head !== curr.head),
+  };
+}
+
+/** Confidence signals derived from the change facts. */
+function signalsFromChanges(changes) {
+  if (!changes) return [];
+  const signals = [];
+  if (changes.committed) signals.push('git-commit');
+  if (changes.counts.created > 0) signals.push('files-created');
+  if (changes.counts.modified > 0) signals.push('files-modified');
+  return signals;
+}
+
+/** Return the current git HEAD for a directory, or null when not a repo. */
+function gitHead(dir) {
+  try {
+    return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      timeout: GIT_TIMEOUT_MS,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return null; // not a git work tree, or no commits yet
+  }
+}
+
+export default ProgressEngine;
