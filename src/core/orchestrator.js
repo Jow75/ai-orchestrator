@@ -30,7 +30,9 @@ import { CrashRecoveryEngine } from './crashRecoveryEngine.js';
 import { ProcessSupervisor } from './processSupervisor.js';
 import { LoopBreaker, BreakerAction } from './loopBreaker.js';
 import { detectBlockedState } from './blockedPatterns.js';
+import { deriveExitReason } from './exitReason.js';
 import { computeWorkspaceSignature } from '../progress/workspaceSignature.js';
+import { assessConfidence } from '../progress/progressConfidence.js';
 import { ProgressLedger } from '../progress/progressLedger.js';
 import { writeDiagnosticReport } from '../report/diagnosticReport.js';
 import { SessionState } from '../state/sessionManager.js';
@@ -240,23 +242,29 @@ export class Orchestrator extends EventEmitter {
         runtime: formatDuration(exitInfo.durationMs),
       });
 
+      // Measure objective progress and record the run — for EVERY exit, so
+      // the ledger is a complete audit trail and the loop breaker has data.
+      // Runs first so lastExit can carry the standardized outcome.
+      const finalText = `${exitInfo.resultText ?? ''}\n${exitInfo.outputTail ?? ''}`;
+      const progress = this.assessProgress({ project, session, verdict, exitInfo, finalText });
+
       this.sessionManager.update(session, {
         lastExit: {
           at: new Date().toISOString(),
           cause: verdict.cause,
+          exitReason: progress.exitReason,
           detail: verdict.detail,
           code: exitInfo.code,
           signal: exitInfo.signal,
           durationMs: exitInfo.durationMs,
+          progressed: progress.progressed,
+          confidence: progress.confidence.level,
         },
       });
       this.statusManager.set({ agent: { state: 'exited', pid: null, childPids: [] } });
-      this.emit('session:exit', { project: project.name, session, verdict, exitInfo });
-
-      // Measure objective progress and record the run — for EVERY exit, so
-      // the ledger is a complete audit trail and the loop breaker has data.
-      const finalText = `${exitInfo.resultText ?? ''}\n${exitInfo.outputTail ?? ''}`;
-      const progress = this.assessProgress({ project, session, verdict, exitInfo, finalText });
+      this.emit('session:exit', {
+        project: project.name, session, verdict, exitInfo, exitReason: progress.exitReason,
+      });
 
       // Operator stop wins over every recovery strategy; the session record
       // keeps its resumable state so the mission continues next start.
@@ -436,18 +444,19 @@ export class Orchestrator extends EventEmitter {
 
   /**
    * Measure whether this run advanced the workspace, update the session's
-   * progress counters, record the run in the ledger, and detect blocked
-   * states. Runs once per exit, for every cause.
+   * progress counters, detect blocked states, classify the run's outcome
+   * (exitReason) with a confidence score, and record it all in the ledger.
+   * Runs once per exit, for every cause.
    *
-   * @returns {{progressed: boolean, signature: string|null, method: string, blocked: object}}
+   * @returns {{progressed, signature, method, blocked, confidence, exitReason}}
    */
   assessProgress({ project, session, verdict, exitInfo, finalText }) {
     const blocked = this.progressConfig.blockedDetection
-      ? detectBlockedState(finalText)
+      ? detectBlockedState(finalText, this.blockedPatternsFor(project))
       : { blocked: false };
 
     let progressed = true;
-    let signature = { hash: session.lastSignature, method: 'skipped' };
+    let signature = { hash: session.lastSignature, method: 'skipped', detail: {} };
 
     if (this.progressConfig.enabled) {
       signature = computeWorkspaceSignature(project.workingDirectory, { logger: this.logger });
@@ -461,12 +470,31 @@ export class Orchestrator extends EventEmitter {
       if (Object.keys(patch).length) this.sessionManager.update(session, patch);
     }
 
+    // Confidence in the progress verdict, and the standardized outcome.
+    const confidence = assessConfidence({
+      progressed,
+      method: signature.method,
+      detail: signature.detail,
+    });
+    const marker = project.mission.completionMarker;
+    const exitReason = deriveExitReason({
+      cause: verdict.cause,
+      markerHit: Boolean(marker && finalText.includes(marker)),
+      progressed,
+      blocked,
+      stopRequested: this.stopRequested,
+    });
+
     this.progressLedger.record({
       project: project.name,
       sessionId: session.id,
       run: session.runs,
       cause: verdict.cause,
+      exitReason,
       progressed,
+      confidence: confidence.level,
+      confidenceScore: confidence.score,
+      confidenceSignals: confidence.signals,
       signature: signature.hash,
       signatureMethod: signature.method,
       consecutiveNoProgress: session.consecutiveNoProgress,
@@ -478,16 +506,35 @@ export class Orchestrator extends EventEmitter {
       project: project.name,
       run: session.runs,
       cause: verdict.cause,
+      exitReason,
       progressed,
+      confidence: confidence.level,
       method: signature.method,
       consecutiveNoProgress: session.consecutiveNoProgress,
       blocked: blocked.blocked ? blocked.category : false,
     });
     this.emit('session:progress', {
-      project: project.name, session, progressed, method: signature.method,
+      project: project.name,
+      session,
+      progressed,
+      method: signature.method,
+      confidence: confidence.level,
+      exitReason,
     });
 
-    return { progressed, signature: signature.hash, method: signature.method, blocked };
+    return {
+      progressed, signature: signature.hash, method: signature.method,
+      blocked, confidence, exitReason,
+    };
+  }
+
+  /** Optional engine-specific blocked-state patterns supplied by the driver. */
+  blockedPatternsFor(project) {
+    try {
+      return this.driverRegistry.getDriver(project.driver).blockedPatterns ?? [];
+    } catch {
+      return [];
+    }
   }
 
   /** Pause between continue-relaunches (abortable by an operator stop). */
@@ -550,7 +597,7 @@ export class Orchestrator extends EventEmitter {
     });
     this.statusManager.set({ activity: { lastResumeAt: new Date().toISOString() } });
     this.statusManager.syncSession(session);
-    this.emit('session:resumed', { project: session.project, session });
+    this.emit('session:resumed', { project: session.project, session, note });
     this.logger.info('Session resumed', { project: session.project, note });
   }
 

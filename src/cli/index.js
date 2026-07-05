@@ -26,6 +26,7 @@ import App, { STOP_REQUEST_FILENAME } from '../app.js';
 import ConfigManager, { ConfigError } from '../config/configManager.js';
 import { silentLogger } from '../infra/logger.js';
 import SessionManager from '../state/sessionManager.js';
+import MissionTimeline from '../state/missionTimeline.js';
 import DriverRegistry from '../drivers/driverRegistry.js';
 import { readJsonSafe } from '../state/statePersistence.js';
 import { isPidAlive } from '../state/heartbeat.js';
@@ -60,7 +61,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('1.1.0');
+    .version('2.0.0-alpha.1');
 
   program
     .command('start')
@@ -156,6 +157,36 @@ export function buildProgram() {
           }
           for (const record of active) printSession(record, 'ACTIVE');
         }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  program
+    .command('timeline')
+    .argument('<project>', 'project name')
+    .option('-n, --limit <n>', 'show only the last N entries', String)
+    .description('Show a project’s mission timeline (key events over time)')
+    .action((project, options) => {
+      try {
+        const { paths } = readOnlyContext();
+        const timeline = new MissionTimeline({
+          timelineDir: paths.timelineDir,
+          logger: silentLogger,
+        });
+        let entries = timeline.read(project);
+        if (!entries.length) {
+          console.log(`No timeline recorded for "${project}" yet.`);
+          return;
+        }
+        const limit = Number(options.limit);
+        if (Number.isInteger(limit) && limit > 0) entries = entries.slice(-limit);
+        console.log(chalk.bold(`\nMission timeline — ${project}\n`));
+        for (const entry of entries) {
+          const time = new Date(entry.at).toLocaleString();
+          console.log(`  ${chalk.dim(time)}  ${eventColor(entry.event)(entry.label)}`);
+        }
+        console.log('');
       } catch (error) {
         fail(error);
       }
@@ -316,6 +347,24 @@ function printStatus(status, statusFile) {
     );
   }
   console.log(chalk.dim(`  Updated:      ${status.updatedAt}\n`));
+}
+
+/** Colour a timeline entry by its event kind. */
+function eventColor(event) {
+  return (
+    {
+      'mission-started': chalk.cyan,
+      progress: chalk.green,
+      complete: chalk.green,
+      resumed: chalk.cyan,
+      recovered: chalk.cyan,
+      'rate-limit': chalk.yellow,
+      network: chalk.yellow,
+      crash: chalk.red,
+      blocked: chalk.red,
+      'gave-up': chalk.red,
+    }[event] ?? chalk.white
+  );
 }
 
 /** Render one session record. */

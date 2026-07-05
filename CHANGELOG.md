@@ -3,6 +3,42 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.0.0-alpha.1] — 2026-07-05 — Phase P0 complete & locked
+
+Finalizes Phase P0 of the v2 "Autonomous AI Project Manager" line and marks
+it as the locked foundation (see [ROADMAP.md](ROADMAP.md) for the phase plan
+and version-snapshot scheme). Builds on the 1.1.0 loop-prevention core with
+the classification and observability primitives every later phase consumes.
+
+### Added
+
+- **Standardized exit reasons** (`src/core/exitReason.js`): every run is
+  classified into a fixed, engine-agnostic vocabulary — `progress`,
+  `completed`, `no_progress`, `blocked_permission`, `blocked_tool`,
+  `blocked_missing_file`, `blocked_other`, `rate_limit`, `network`, `crash`,
+  `spawn_failure`, `user_stop`, plus `timeout`/`verification_failed`/
+  `orchestrator_stop` reserved for later phases. Recorded on the ledger,
+  the session's `lastExit`, and the `session:exit`/`session:progress` events.
+- **Progress confidence** (`src/progress/progressConfidence.js`): each
+  progress verdict carries a `high`/`medium`/`low` level, a 0–1 score, and
+  the corroborating signals (git-commit > git > filescan > unmeasurable).
+  Verification signals from P6 will raise it through the same function.
+- **Mission timeline** (`src/state/missionTimeline.js`): a sparse,
+  human-readable event stream per project (`state/timeline/<project>.jsonl`)
+  — mission started, progress, rate-limit, resumed, blocked, complete. New
+  `ai-orchestrator timeline <project>` command and `GET /api/timeline/:project`.
+- **Driver-extensible blocked detection**: `detectBlockedState()` now accepts
+  engine-specific patterns via an optional `driver.blockedPatterns`, keeping
+  detection AI-agnostic. Added a `missing-file` blocked category.
+- New library exports for all of the above.
+
+### Changed
+
+- Version line moved to the `v2.0.0-alpha.*` snapshot scheme; each completed
+  phase is now tagged for clean rollback points.
+- `assessProgress()` now also computes exit reason + confidence and records
+  them; `session.lastExit` carries `exitReason`, `progressed`, `confidence`.
+
 ## [1.1.0] — 2026-07-05 — Progress awareness (Phase P0)
 
 Emergency reliability fixes after the 2026-07-04/05 overnight incident, in

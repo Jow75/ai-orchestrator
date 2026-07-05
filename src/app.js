@@ -23,6 +23,7 @@ import { createLogger, childLogger } from './infra/logger.js';
 import { resolvePaths, ensureRuntimeDirs } from './infra/paths.js';
 import SessionManager from './state/sessionManager.js';
 import StatusManager from './state/statusManager.js';
+import MissionTimeline from './state/missionTimeline.js';
 import Heartbeat from './state/heartbeat.js';
 import DriverRegistry from './drivers/driverRegistry.js';
 import Orchestrator from './core/orchestrator.js';
@@ -86,6 +87,12 @@ export class App {
     });
     this.notifications.attach(this.orchestrator);
 
+    this.timeline = new MissionTimeline({
+      timelineDir: this.paths.timelineDir,
+      logger: childLogger(this.logger, 'timeline'),
+    });
+    this.timeline.attach(this.orchestrator);
+
     this.pluginManager = new PluginManager({
       pluginsDir: this.paths.pluginsDir,
       logger: childLogger(this.logger, 'plugins'),
@@ -97,6 +104,7 @@ export class App {
       statusManager: this.statusManager,
       sessionManager: this.sessionManager,
       configManager: this.configManager,
+      timeline: this.timeline,
     });
 
     this.stopFilePath = path.join(this.paths.stateDir, STOP_REQUEST_FILENAME);

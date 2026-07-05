@@ -22,13 +22,15 @@ export class DashboardServer {
    * @param {import('../state/statusManager.js').StatusManager} deps.statusManager
    * @param {import('../state/sessionManager.js').SessionManager} deps.sessionManager
    * @param {import('../config/configManager.js').ConfigManager} deps.configManager
+   * @param {import('../state/missionTimeline.js').MissionTimeline} [deps.timeline]
    */
-  constructor({ config, logger, statusManager, sessionManager, configManager }) {
+  constructor({ config, logger, statusManager, sessionManager, configManager, timeline }) {
     this.config = config;
     this.logger = logger;
     this.statusManager = statusManager;
     this.sessionManager = sessionManager;
     this.configManager = configManager;
+    this.timeline = timeline;
     this.server = null;
     this.app = this.buildApp();
   }
@@ -57,6 +59,11 @@ export class DashboardServer {
     // Finished-session history for one project.
     app.get('/api/sessions/:project/history', (req, res) => {
       res.json(this.sessionManager.getHistory(req.params.project));
+    });
+
+    // Mission timeline for one project (key events over time).
+    app.get('/api/timeline/:project', (req, res) => {
+      res.json(this.timeline ? this.timeline.read(req.params.project) : []);
     });
 
     // Defined projects and whether each currently has an active session.

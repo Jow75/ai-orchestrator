@@ -27,11 +27,14 @@ details) and from mechanism (process handling, persistence) throughout.
 │                           last-output tracking) — never intervenes   │
 │  loopBreaker.js           progress circuit breaker (loop prevention) │
 │  blockedPatterns.js       detect permission-denied / blocked output  │
+│  exitReason.js            standardized per-run outcome vocabulary    │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Progress awareness (P0)                   src/progress/, src/report/│
 │  workspaceSignature.js    git/filescan signature — did work happen?  │
+│  progressConfidence.js    how much to trust the progress verdict     │
 │  progressLedger.js        per-run audit trail (state/ledger/*.jsonl) │
 │  diagnosticReport.js      "why did we stop?" report on a block       │
+│  missionTimeline.js       human-facing event stream (state/timeline) │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Drivers (engine knowledge)                src/drivers/              │
 │  aiDriver.js              the interface every engine implements      │

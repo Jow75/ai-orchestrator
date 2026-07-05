@@ -52,6 +52,11 @@ export const BLOCKED_PATTERNS = [
     hint: 'The agent lacks access to a required resource. Check paths, credentials, and tool allow-lists.',
   },
   {
+    category: 'missing-file',
+    pattern: /\b(?:no such file or directory|file not found|could not find (?:the )?file|ENOENT)\b/i,
+    hint: 'A required file or path is missing. Check the mission prompt and the working directory contents.',
+  },
+  {
     category: 'cannot-proceed',
     pattern: /\b(?:cannot|can't|unable to) (?:proceed|continue|complete)(?: this)?(?: without| until| because)\b/i,
     hint: 'The agent reported it is blocked. Read its explanation in the run output and remove the blocker.',
@@ -68,12 +73,19 @@ export const BLOCKED_PATTERNS = [
 /**
  * Detect whether an agent's final output indicates a blocked state.
  *
+ * The built-in patterns are generic English distress signals, so this works
+ * for any engine. A driver may contribute engine-specific patterns via its
+ * optional `blockedPatterns` property — keeping the detector AI-agnostic
+ * while still allowing per-engine precision.
+ *
  * @param {string} outputTail - Recent combined agent output (and/or result text).
+ * @param {{category: string, pattern: RegExp, hint?: string}[]} [extraPatterns]
+ *   Driver-supplied patterns, checked before the built-ins.
  * @returns {{blocked: boolean, category?: string, hint?: string, evidence?: string}}
  */
-export function detectBlockedState(outputTail) {
+export function detectBlockedState(outputTail, extraPatterns = []) {
   const text = outputTail ?? '';
-  for (const { category, pattern, hint } of BLOCKED_PATTERNS) {
+  for (const { category, pattern, hint } of [...extraPatterns, ...BLOCKED_PATTERNS]) {
     const match = text.match(pattern);
     if (match) {
       return {

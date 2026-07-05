@@ -17,6 +17,7 @@ dashboard, equally useful for curl and monitoring.
 | `GET /api/status` | Live status (same data as `status.json`) |
 | `GET /api/sessions` | All active session records |
 | `GET /api/sessions/:project/history` | Finished sessions for a project |
+| `GET /api/timeline/:project` | Mission timeline — key events over time |
 | `GET /api/projects` | Defined projects + `hasActiveSession` flag |
 
 ### `/api/status` shape
@@ -69,7 +70,9 @@ can never take the supervisor down.
 | Event | Payload highlights |
 | --- | --- |
 | `session:launched` | `{ project, session, pid, resumed }` |
-| `session:exit` | `{ project, session, verdict: {cause, detail}, exitInfo }` |
+| `session:exit` | `{ project, session, verdict: {cause, detail}, exitInfo, exitReason }` |
+| `session:progress` | `{ project, session, progressed, method, confidence, exitReason }` |
+| `mission:blocked` | `{ project, session, reason, category, reportPath }` |
 | `session:rate-limited` | `{ project, session, resumeAt, waitMs }` |
 | `session:network-error` | `{ project, session, retryInMs }` |
 | `session:crashed` | `{ project, session, consecutiveCrashes, restartInMs }` |
