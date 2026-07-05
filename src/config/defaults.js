@@ -140,6 +140,19 @@ export const PROJECT_DEFAULTS = {
   },
 
   /**
+   * Phase P2: an ordered list of tasks turns a project from a single-prompt
+   * mission into a multi-step plan (see src/mission/missionPlan.js). Empty
+   * by default — a project with no tasks runs in legacy single-prompt mode
+   * exactly as in v1/P0/P1 (uses promptFile + mission.completionMarker).
+   *
+   * Each task: { id, objective?, prompt, continuePrompt?, verify?, maxRuns? }
+   * — see CONFIGURATION.md for the full per-task field reference. Tasks are
+   * an array, so this default cannot be deep-merged per-field like other
+   * settings; normalizeAndValidateTasks() applies per-task defaults instead.
+   */
+  tasks: [],
+
+  /**
    * Per-project override of the global `progress` block (see
    * ORCHESTRATOR_DEFAULTS.progress and src/core/loopBreaker.js). Empty by
    * default — every key you omit falls back to the global setting. Useful

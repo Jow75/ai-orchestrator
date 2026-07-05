@@ -3,6 +3,81 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.0.0-alpha.3] — 2026-07-06 — Phase P2: Mission System
+
+Converts the orchestrator from a single-prompt supervisor into a true
+mission engine: a project may now define an ordered plan of **tasks**,
+each independently verified — "Claude does not determine success;
+verification determines success" — while every existing single-prompt
+project keeps running exactly as before.
+
+### Added
+
+- **Mission plan** (`src/mission/missionPlan.js`): validates and normalizes
+  a project's `tasks` array at config-load time (fail fast, actionable
+  errors); `isLegacyMission()` is the single switch between v1 behaviour
+  and mission mode.
+- **Task queue** (`src/mission/taskQueue.js`): persistent progress through
+  the plan — current task, attempts, state, checkpoint — at
+  `state/tasks/<project>.json`. Scoped to the session id, so a crash,
+  usage limit, or reboot resumes the *same task*, not the mission from
+  task 1 (verified with a dedicated reboot-survival integration test).
+- **Task lifecycle** (`src/mission/taskState.js`): PENDING → ACTIVE → DONE,
+  with FAILED/BLOCKED terminal states on exhausted retries or a detected loop.
+- **Verification engine (core)** (`src/verify/`): `file-exists`, `command`,
+  `output-contains`, `files-changed` verifiers plus a registry that runs
+  them in isolation (one failing/throwing verifier fails only itself).
+  `files-changed` deliberately reuses the P1 progress engine's change facts
+  rather than re-invoking git — one source of truth for "what changed".
+  This is P6's foundation, not a placeholder to be replaced.
+- **Checkpoints** (`src/mission/checkpoint.js`): structured, data-only
+  record of a task's outcome (files touched, verify results, summary) —
+  scoped deliberately to data; turning it into a Claude-facing briefing is
+  Phase P4, not pulled forward here.
+- **Orchestrator integration**: `handleTaskCompletion()` runs a task's
+  verifiers (or the marker fallback) instead of the legacy marker-only
+  check; passing advances to the next task's own prompt (same engine
+  conversation); failing retries with `continuePrompt` up to the task's
+  `maxRuns`, then **blocks** with a diagnostic report — exhausted
+  verification is never silently skipped, mirroring P0's stagnation
+  breaker (which still runs in parallel as an extra net).
+- **Observability**: `status.mission` (current task, position, state,
+  attempts) surfaced in `status.json`/`/api/status`; new `ai-orchestrator
+  tasks <project>` CLI command and `GET /api/tasks/:project`; `task:done`
+  event recorded on the mission timeline and available to plugins.
+- 66 new tests (missionPlan, taskQueue, checkpoint, verifiers, StatusManager
+  — previously untested directly — and a 9-scenario orchestrator
+  integration suite covering multi-task completion, retry, exhaustion,
+  usage-limit/crash-mid-task resume, and reboot survival). 109 → 175 total,
+  all passing.
+
+### Fixed
+
+- **Mock driver fidelity bug, caught by writing these tests**: scripted
+  `writeFile`/`appendFile` effects silently failed (swallowed by a bare
+  `catch`) when the target's parent directory didn't exist yet (e.g.
+  `src/index.js` when `src/` isn't created), unlike real agents which
+  create parent directories automatically. Now mirrors that behaviour.
+
+### Changed
+
+- `configManager.validateProject()`: `promptFile` is required only in
+  legacy mode; a mission-mode project (non-empty `tasks`) validates each
+  task's own prompt instead, and surfaces every task problem (missing id,
+  duplicate id, missing prompt file, unknown verifier type) in one error.
+- `PROJECT_DEFAULTS` gained `tasks: []` and `progress: {}` documented as
+  first-class, empty-by-default fields.
+
+### Known limitations (documented, not hidden)
+
+- Editing a project's `tasks` mid-mission (same session, different task
+  ids) reinitializes the queue rather than reconciling the diff — logged
+  clearly, not silently guessed at.
+- A brand-new session after a `blocked` mission always restarts task 1;
+  cross-session task memory arrives with Phase P5.
+- The verifier registry is a fixed, known set (not plugin-extensible) by
+  deliberate choice this phase — revisit if a real need emerges.
+
 ## [2.0.0-alpha.2] — 2026-07-06 — Phase P1: Progress Engine
 
 Promotes P0's yes/no workspace signature into a first-class, structured

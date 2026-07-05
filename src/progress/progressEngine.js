@@ -177,7 +177,15 @@ export class ProgressEngine {
   }
 }
 
-/** Compute created/modified/deleted between two snapshots. */
+/**
+ * Compute created/modified/deleted between two snapshots.
+ *
+ * Returns COMPLETE, untruncated file lists — this is the fact-of-record
+ * consumed by verification (`files-changed`) as well as display, and a
+ * verifier silently missing a file past some display cap would be a real
+ * correctness bug, not a cosmetic one. Truncate only at display boundaries
+ * (see `sampleChanges()`), never here.
+ */
 export function diffSnapshots(prev, curr) {
   const prevFiles = prev.files ?? {};
   const currFiles = curr.files ?? {};
@@ -194,11 +202,30 @@ export function diffSnapshots(prev, curr) {
   }
 
   return {
-    created: created.slice(0, MAX_SAMPLE),
-    modified: modified.slice(0, MAX_SAMPLE),
-    deleted: deleted.slice(0, MAX_SAMPLE),
+    created,
+    modified,
+    deleted,
     counts: { created: created.length, modified: modified.length, deleted: deleted.length },
     committed: Boolean(prev.head && curr.head && prev.head !== curr.head),
+  };
+}
+
+/**
+ * Sample a `diffSnapshots()` result down to a bounded number of entries per
+ * list, for compact human-facing display (ledger records, diagnostic
+ * reports). Never use this for verification — verifiers need the complete
+ * lists from `diffSnapshots()`/`analyze()` directly.
+ *
+ * @param {object} changes - A `diffSnapshots()` result (or null).
+ * @param {number} [max] - Max entries kept per list.
+ */
+export function sampleChanges(changes, max = MAX_SAMPLE) {
+  if (!changes) return changes;
+  return {
+    ...changes,
+    created: changes.created.slice(0, max),
+    modified: changes.modified.slice(0, max),
+    deleted: changes.deleted.slice(0, max),
   };
 }
 

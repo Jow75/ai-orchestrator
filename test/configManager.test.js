@@ -95,6 +95,44 @@ test('getProject merges project defaults and resolves the prompt path', () => {
   assert.equal(project.resolvedPromptFile, path.join(workDir, 'prompt.md'));
 });
 
+test('a mission-mode project (non-empty tasks) does not require promptFile', () => {
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-work-'));
+  fs.writeFileSync(path.join(workDir, 'task1.md'), '# task 1');
+
+  const root = scaffold({
+    projects: {
+      mission: {
+        workingDirectory: workDir,
+        tasks: [{ id: 'T1', prompt: 'task1.md' }],
+      },
+    },
+  });
+  const project = new ConfigManager({ rootDir: root }).getProject('mission');
+  assert.equal(project.tasks.length, 1);
+  assert.equal(project.tasks[0].resolvedPromptFile, path.join(workDir, 'task1.md'));
+  assert.equal(project.resolvedPromptFile, undefined); // never required/resolved
+});
+
+test('a mission-mode project surfaces per-task validation problems', () => {
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-work-'));
+  const root = scaffold({
+    projects: {
+      broken: { workingDirectory: workDir, tasks: [{ id: 'T1', prompt: 'missing.md' }] },
+    },
+  });
+  const config = new ConfigManager({ rootDir: root });
+  assert.throws(() => config.getProject('broken'), /missing\.md/);
+});
+
+test('an empty tasks array still requires promptFile (legacy mode)', () => {
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-work-'));
+  const root = scaffold({
+    projects: { legacy: { workingDirectory: workDir, tasks: [] } },
+  });
+  const config = new ConfigManager({ rootDir: root });
+  assert.throws(() => config.getProject('legacy'), /promptFile/);
+});
+
 test('listProjects returns defined project names sorted', () => {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-work-'));
   fs.writeFileSync(path.join(workDir, 'p.md'), 'x');

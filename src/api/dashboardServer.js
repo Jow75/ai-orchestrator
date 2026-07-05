@@ -23,14 +23,16 @@ export class DashboardServer {
    * @param {import('../state/sessionManager.js').SessionManager} deps.sessionManager
    * @param {import('../config/configManager.js').ConfigManager} deps.configManager
    * @param {import('../state/missionTimeline.js').MissionTimeline} [deps.timeline]
+   * @param {import('../mission/taskQueue.js').TaskQueue} [deps.taskQueue]
    */
-  constructor({ config, logger, statusManager, sessionManager, configManager, timeline }) {
+  constructor({ config, logger, statusManager, sessionManager, configManager, timeline, taskQueue }) {
     this.config = config;
     this.logger = logger;
     this.statusManager = statusManager;
     this.sessionManager = sessionManager;
     this.configManager = configManager;
     this.timeline = timeline;
+    this.taskQueue = taskQueue;
     this.server = null;
     this.app = this.buildApp();
   }
@@ -64,6 +66,12 @@ export class DashboardServer {
     // Mission timeline for one project (key events over time).
     app.get('/api/timeline/:project', (req, res) => {
       res.json(this.timeline ? this.timeline.read(req.params.project) : []);
+    });
+
+    // Task queue for one project (Phase P2 mission mode; null for legacy
+    // single-prompt projects or a project that hasn't run yet).
+    app.get('/api/tasks/:project', (req, res) => {
+      res.json(this.taskQueue ? this.taskQueue.load(req.params.project) : null);
     });
 
     // Defined projects and whether each currently has an active session.

@@ -12,6 +12,12 @@
  *     → resume the same engine conversation
  *   ... until the mission's completion marker appears, or the operator stops it.
  *
+ * Phase P2: a project may define `tasks` — an ordered plan instead of one
+ * implicit task. In that mode, "the mission's completion marker" above
+ * becomes "the current task's verifiers", and completing a task advances to
+ * the next one (same engine conversation) rather than ending the mission.
+ * A project with no `tasks` runs exactly as before (see missionPlan.js).
+ *
  * Policy lives in the engines it composes (rate-limit, crash-recovery,
  * classifier); engine-specific knowledge lives in the driver. This class is
  * pure coordination, and everything it decides is logged and persisted so a
@@ -31,11 +37,15 @@ import { ProcessSupervisor } from './processSupervisor.js';
 import { LoopBreaker, BreakerAction } from './loopBreaker.js';
 import { detectBlockedState } from './blockedPatterns.js';
 import { deriveExitReason } from './exitReason.js';
-import { ProgressEngine } from '../progress/progressEngine.js';
+import { ProgressEngine, sampleChanges } from '../progress/progressEngine.js';
 import { ProgressLedger } from '../progress/progressLedger.js';
 import { writeDiagnosticReport } from '../report/diagnosticReport.js';
 import { SessionState } from '../state/sessionManager.js';
 import { sleep, formatDuration } from '../infra/time.js';
+import { isLegacyMission, getTaskById } from '../mission/missionPlan.js';
+import { TaskQueue } from '../mission/taskQueue.js';
+import { buildCheckpoint } from '../mission/checkpoint.js';
+import { runVerifiers } from '../verify/verifierRegistry.js';
 
 /**
  * Domain events emitted by the orchestrator.
@@ -53,6 +63,7 @@ export const EVENTS = Object.freeze([
   'session:progress', //  { project, session, progressed, method }
   'mission:blocked', //   { project, session, reason, category, reportPath }
   'mission:complete', //  { project, session, summary }
+  'task:done', //         { project, session, taskId, checkpoint }
 ]);
 
 export class Orchestrator extends EventEmitter {
@@ -115,6 +126,12 @@ export class Orchestrator extends EventEmitter {
         ? { ignoreDirs: this.globalProgressConfig.ignoreDirs }
         : {}),
     });
+
+    // Phase P2: mission mode (ordered tasks). Unused (missionMode stays
+    // false, taskQueueState stays null) for legacy single-prompt projects.
+    this.taskQueueStore = new TaskQueue({ tasksDir: this.paths.tasksDir, logger });
+    this.missionMode = false;
+    this.taskQueueState = null;
 
     this.stopRequested = false;
     this.stopController = new AbortController();
@@ -184,6 +201,28 @@ export class Orchestrator extends EventEmitter {
       }
     }
 
+    // Phase P2: mission mode. A project with `tasks` walks an ordered plan;
+    // a project without one behaves exactly as v1/P0/P1 (isLegacyMission).
+    this.missionMode = !isLegacyMission(project);
+    this.taskQueueState = this.missionMode
+      ? this.taskQueueStore.getOrInitialize(project.name, project.tasks, session.id)
+      : null;
+    this.statusManager.syncTaskQueue(this.taskQueueState);
+
+    // Defensive: a fully-advanced queue with a still-open session means the
+    // mission finished but the session was never closed out (e.g. a crash
+    // between the last task's completion and session close). Treat it as
+    // complete rather than looping with no current task.
+    if (this.missionMode && this.taskQueueStore.isComplete(this.taskQueueState)) {
+      this.sessionManager.closeSession(session, SessionState.COMPLETED);
+      this.statusManager.syncSession(session);
+      this.statusManager.set({ orchestrator: { state: 'mission-complete' } });
+      this.emit('mission:complete', {
+        project: project.name, session, summary: 'All tasks were already complete.',
+      });
+      return { complete: true, session, reason: 'all tasks already completed' };
+    }
+
     // Crash counting is per-process-lifetime: a reboot or manual restart
     // grants a fresh set of attempts (the human/scheduler chose to retry).
     let consecutiveCrashes = 0;
@@ -201,11 +240,28 @@ export class Orchestrator extends EventEmitter {
       }
 
       // Fresh sessions get the mission prompt; resumed conversations get the
-      // continue prompt (the engine already holds the full history).
-      const isFresh = !session.engineSessionId;
-      const prompt = isFresh
-        ? fs.readFileSync(project.resolvedPromptFile, 'utf8')
-        : project.mission.continuePrompt;
+      // continue prompt (the engine already holds the full history). In
+      // mission mode, "fresh" is decided per TASK (attempts === 0), not per
+      // session — a later task's first launch still resumes the same engine
+      // conversation, but introduces ITS OWN prompt rather than "continue".
+      const engineIsFresh = !session.engineSessionId;
+      let prompt;
+      let activeTaskId = null;
+      if (this.missionMode) {
+        const taskEntry = this.taskQueueStore.current(this.taskQueueState);
+        const taskDef = getTaskById(project, taskEntry.id);
+        activeTaskId = taskDef.id;
+        const taskIsFresh = taskEntry.attempts === 0;
+        prompt = taskIsFresh
+          ? fs.readFileSync(taskDef.resolvedPromptFile, 'utf8')
+          : (taskDef.continuePrompt ?? project.mission.continuePrompt);
+        this.taskQueueStore.recordAttempt(this.taskQueueState);
+        this.statusManager.syncTaskQueue(this.taskQueueState);
+      } else {
+        prompt = engineIsFresh
+          ? fs.readFileSync(project.resolvedPromptFile, 'utf8')
+          : project.mission.continuePrompt;
+      }
 
       this.sessionManager.update(session, {
         state: SessionState.RUNNING,
@@ -231,7 +287,8 @@ export class Orchestrator extends EventEmitter {
         project: project.name,
         session,
         pid: run.pid,
-        resumed: !isFresh,
+        resumed: !engineIsFresh,
+        taskId: activeTaskId,
       });
 
       // ── The heart of the safety rules ─────────────────────────────────
@@ -319,6 +376,12 @@ export class Orchestrator extends EventEmitter {
 
     switch (verdict.cause) {
       case ExitCause.COMPLETED: {
+        // Mission mode: completion is per-TASK (verified, not marker-only)
+        // and finishing a task advances the plan rather than ending the run.
+        if (this.missionMode) {
+          return this.handleTaskCompletion({ project, session, exitInfo, finalText, progress, signal });
+        }
+
         // Did the agent declare the whole MISSION finished (not just this run)?
         const marker = project.mission.completionMarker;
         if (marker && finalText.includes(marker)) {
@@ -455,6 +518,128 @@ export class Orchestrator extends EventEmitter {
   }
 
   /**
+   * Phase P2: handle a COMPLETED exit while in mission mode. The current
+   * task's verifiers — not the agent's say-so — decide whether the task is
+   * done. A task with no verifiers falls back to the mission completion
+   * marker as a lightweight per-task signal (documented, not accidental).
+   *
+   * Passing verification advances to the next task (or ends the mission,
+   * mirroring the legacy marker-hit ending, once every task is done).
+   * Failing verification retries the SAME task up to its own `maxRuns`
+   * budget; exhausting it — like a detected stagnation loop — routes to
+   * `block()` rather than silently skipping unverified work.
+   */
+  async handleTaskCompletion({ project, session, exitInfo, finalText, progress, signal }) {
+    const queue = this.taskQueueState;
+    const taskEntry = this.taskQueueStore.current(queue);
+    const taskDef = getTaskById(project, taskEntry.id);
+
+    const verifyResult = taskDef.verify.length > 0
+      ? runVerifiers(taskDef.verify, {
+        workingDirectory: project.workingDirectory,
+        resultText: exitInfo.resultText,
+        outputTail: exitInfo.outputTail,
+        changes: progress.changes,
+      })
+      : markerFallbackVerify(project.mission.completionMarker, finalText);
+
+    if (verifyResult.passed) {
+      const checkpoint = buildCheckpoint({
+        task: taskDef, attempts: taskEntry.attempts, changes: progress.changes,
+        verifyResult, resultText: exitInfo.resultText, outcome: 'done',
+      });
+      this.taskQueueStore.markDone(queue, checkpoint);
+      this.logger.info('Task completed and verified', {
+        project: project.name, taskId: taskDef.id, attempts: taskEntry.attempts,
+      });
+      this.emit('task:done', { project: project.name, session, taskId: taskDef.id, checkpoint });
+
+      this.taskQueueStore.advance(queue);
+      this.statusManager.syncTaskQueue(queue);
+
+      if (this.taskQueueStore.isComplete(queue)) {
+        this.sessionManager.closeSession(session, SessionState.COMPLETED);
+        this.statusManager.syncSession(session);
+        this.statusManager.set({ orchestrator: { state: 'mission-complete' } });
+        const summary = exitInfo.resultText ?? 'Mission complete.';
+        this.logger.info('Mission complete (all tasks done)', { project: project.name });
+        this.emit('mission:complete', { project: project.name, session, summary });
+        return {
+          done: true,
+          result: { complete: true, session, reason: 'all tasks completed and verified' },
+        };
+      }
+
+      await this.interRunDelay(signal);
+      if (this.stopRequested) return this.stoppedMidWait(session);
+
+      const nextTask = this.taskQueueStore.current(queue);
+      this.resumeSession(session, `task "${taskDef.id}" done; starting task "${nextTask.id}"`);
+      return { done: false, consecutiveCrashes: 0, lastActivity: `starting task ${nextTask.id}` };
+    }
+
+    // Verification failed. The workspace-stagnation breaker still applies
+    // as an extra safety net (task-agnostic; see assessProgress()) —
+    // repeatedly failing verification with zero workspace change is exactly
+    // the "spinning, not working" pattern P0 was built to catch.
+    if (this.progressConfig.enabled) {
+      if (!progress.progressed) {
+        this.sessionManager.update(session, {
+          consecutiveNoProgress: session.consecutiveNoProgress + 1,
+        });
+      }
+      const decision = this.loopBreaker.decide({
+        progressed: progress.progressed,
+        consecutiveNoProgress: session.consecutiveNoProgress,
+        blocked: progress.blocked,
+      });
+      if (decision.action === BreakerAction.TRIP) {
+        const checkpoint = buildCheckpoint({
+          task: taskDef, attempts: taskEntry.attempts, changes: progress.changes,
+          verifyResult, resultText: exitInfo.resultText, outcome: 'blocked',
+        });
+        this.taskQueueStore.markBlocked(queue, checkpoint);
+        this.statusManager.syncTaskQueue(queue);
+        return this.block(project, session, {
+          reason: decision.reason,
+          category: decision.category,
+          hint: decision.hint ?? progress.blocked?.hint,
+          evidence: progress.blocked?.evidence,
+        });
+      }
+    }
+
+    if (taskEntry.attempts < taskDef.maxRuns) {
+      await this.interRunDelay(signal);
+      if (this.stopRequested) return this.stoppedMidWait(session);
+
+      this.resumeSession(
+        session,
+        `task "${taskDef.id}" verification failed ` +
+        `(attempt ${taskEntry.attempts}/${taskDef.maxRuns}); retrying`
+      );
+      return { done: false, consecutiveCrashes: 0, lastActivity: `retrying task ${taskDef.id}` };
+    }
+
+    // Retries exhausted: never silently move on from unverified work.
+    const checkpoint = buildCheckpoint({
+      task: taskDef, attempts: taskEntry.attempts, changes: progress.changes,
+      verifyResult, resultText: exitInfo.resultText, outcome: 'failed',
+    });
+    this.taskQueueStore.markFailed(queue, checkpoint);
+    this.statusManager.syncTaskQueue(queue);
+    const failedChecks = verifyResult.results.filter((r) => !r.passed)
+      .map((r) => `${r.type}: ${r.detail}`).join('; ');
+    return this.block(project, session, {
+      reason: `Task "${taskDef.id}" failed verification after ${taskEntry.attempts} ` +
+        `attempts (max ${taskDef.maxRuns}).`,
+      category: 'verification-failed',
+      hint: `Review the task's objective and verifiers. Failed checks: ${failedChecks}`,
+      evidence: failedChecks,
+    });
+  }
+
+  /**
    * Measure whether this run advanced the workspace, update the session's
    * progress counters, detect blocked states, classify the run's outcome
    * (exitReason) with a confidence score, and record it all in the ledger.
@@ -504,9 +689,10 @@ export class Orchestrator extends EventEmitter {
       confidenceScore: confidence.score,
       confidenceSignals: confidence.signals,
       changes: report.changes ? report.changes.counts : undefined,
-      changedFiles: report.changes
-        ? { created: report.changes.created, modified: report.changes.modified, deleted: report.changes.deleted }
-        : undefined,
+      // Sampled for compact, human-readable ledger records — verification
+      // (files-changed) reads the COMPLETE lists from `report.changes`
+      // directly, never this truncated copy.
+      changedFiles: report.changes ? sampleChanges(report.changes) : undefined,
       signature: report.hash,
       signatureMethod: report.method,
       consecutiveNoProgress: session.consecutiveNoProgress,
@@ -693,6 +879,23 @@ export class Orchestrator extends EventEmitter {
       await this.activeRun.requestStop(reason);
     }
   }
+}
+
+/**
+ * A task with no `verify` entries falls back to the mission completion
+ * marker as a lightweight per-task signal, in the same shape a real
+ * verifier result takes (so callers never need to special-case it).
+ */
+function markerFallbackVerify(marker, finalText) {
+  const markerHit = Boolean(marker && finalText.includes(marker));
+  return {
+    passed: markerHit,
+    results: [{
+      type: 'marker',
+      passed: markerHit,
+      detail: markerHit ? 'Completion marker found' : 'Completion marker not found',
+    }],
+  };
 }
 
 export default Orchestrator;

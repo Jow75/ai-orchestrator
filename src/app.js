@@ -24,6 +24,7 @@ import { resolvePaths, ensureRuntimeDirs } from './infra/paths.js';
 import SessionManager from './state/sessionManager.js';
 import StatusManager from './state/statusManager.js';
 import MissionTimeline from './state/missionTimeline.js';
+import TaskQueue from './mission/taskQueue.js';
 import Heartbeat from './state/heartbeat.js';
 import DriverRegistry from './drivers/driverRegistry.js';
 import Orchestrator from './core/orchestrator.js';
@@ -93,6 +94,13 @@ export class App {
     });
     this.timeline.attach(this.orchestrator);
 
+    // Read-only view for the dashboard API; the orchestrator owns its own
+    // TaskQueue instance for actually driving mission-mode supervision.
+    this.taskQueue = new TaskQueue({
+      tasksDir: this.paths.tasksDir,
+      logger: childLogger(this.logger, 'tasks'),
+    });
+
     this.pluginManager = new PluginManager({
       pluginsDir: this.paths.pluginsDir,
       logger: childLogger(this.logger, 'plugins'),
@@ -105,6 +113,7 @@ export class App {
       sessionManager: this.sessionManager,
       configManager: this.configManager,
       timeline: this.timeline,
+      taskQueue: this.taskQueue,
     });
 
     this.stopFilePath = path.join(this.paths.stateDir, STOP_REQUEST_FILENAME);

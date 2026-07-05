@@ -59,6 +59,18 @@ test('records blocked with its reason', () => {
   assert.match(entries[0].label, /permission denied/);
 });
 
+test('records task:done with the task id (Phase P2)', () => {
+  const t = timeline();
+  const orch = new EventEmitter();
+  t.attach(orch);
+
+  orch.emit('task:done', { project: 'p', taskId: 'T1' });
+  const entries = t.read('p');
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].event, 'task-done');
+  assert.match(entries[0].label, /"T1"/);
+});
+
 test('timelines are isolated per project', () => {
   const t = timeline();
   const orch = new EventEmitter();

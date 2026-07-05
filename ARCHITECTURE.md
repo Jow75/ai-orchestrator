@@ -38,6 +38,21 @@ details) and from mechanism (process handling, persistence) throughout.
 │  diagnosticReport.js      "why did we stop?" report on a block       │
 │  missionTimeline.js       human-facing event stream (state/timeline) │
 ├──────────────────────────────────────────────────────────────────────┤
+│  Mission engine (P2)                        src/mission/             │
+│  missionPlan.js           validates/normalizes a project's `tasks`;  │
+│                           legacy (no tasks) vs mission-mode lookup   │
+│  taskQueue.js             persistent progress through the task plan │
+│                           (state/tasks/*.json) — attempts, state,    │
+│                           checkpoints; survives crash/limit/reboot   │
+│  taskState.js             per-task lifecycle states                 │
+│  checkpoint.js            structured "what happened on this task"   │
+│                           data (seeds the P4 Continuation Builder)  │
+├──────────────────────────────────────────────────────────────────────┤
+│  Verification engine (P2 core / P6 target) src/verify/               │
+│  verifierRegistry.js      known verifier types; runs them, isolated  │
+│  verifiers/*.js           file-exists, command, output-contains,     │
+│                           files-changed (reuses progress engine facts)│
+├──────────────────────────────────────────────────────────────────────┤
 │  Drivers (engine knowledge)                src/drivers/              │
 │  aiDriver.js              the interface every engine implements      │
 │  claudeDriver.js          Claude Code: headless stream-json launch,  │
@@ -88,8 +103,9 @@ One `Orchestrator` instance supervises one project's **mission** — a
 
    | Cause | Strategy |
    | --- | --- |
-   | completed + marker | archive session, emit `mission:complete`, stop |
-   | completed, no marker | **loop breaker checks progress** → block, or inter-run delay → relaunch (same conversation) |
+   | completed + marker (legacy) | archive session, emit `mission:complete`, stop |
+   | completed, no marker (legacy) | **loop breaker checks progress** → block, or inter-run delay → relaunch (same conversation) |
+   | completed (mission mode) | **current task's verifiers decide** — see "Mission mode" below |
    | usage-limit | parse reset time (driver) → clamp (policy) → wait → resume |
    | network | short fixed delay → resume |
    | crash / external kill | exponential backoff; give up after N consecutive |
@@ -152,6 +168,61 @@ structured one that also fixed a real correctness gap:
   created/modified file counts); P6's verification signals will raise it
   through the same function rather than a parallel one.
 
+## Mission mode: tasks instead of one prompt (Phase P2)
+
+A project with a non-empty `tasks` array (`missionPlan.isLegacyMission()`
+returns false) replaces "one prompt, marker-based completion" with an
+ordered plan. This is additive, not a fork of the loop: the same
+launch→observe→classify→assess-progress cycle runs unchanged; only what
+happens on a `COMPLETED` exit differs.
+
+**Per-task state machine** (`src/mission/taskState.js`):
+
+```text
+PENDING ──► ACTIVE ──► DONE
+              │  ▲
+              ▼  │ (verification failed, attempts < maxRuns)
+           (retry)
+              │
+              ▼ (attempts exhausted, or the P0/P1 breaker trips)
+       FAILED / BLOCKED
+```
+
+**Verification-first, always**: `handleTaskCompletion()` never trusts the
+agent's word. A task with `verify` entries runs them through
+`verifierRegistry.runVerifiers()`; a task with none falls back to the
+mission completion marker as a lightweight per-task signal (documented,
+not accidental — see `markerFallbackVerify()`). Passing:
+
+- **not the last task** → advance to the next task, same engine
+  conversation, but that task's *own* prompt (not a bare "continue") —
+  `TaskQueue.recordAttempt()` marks whether this is the task's first
+  launch (`attempts === 0`), which is what selects prompt vs. continuePrompt.
+- **the last task** → mission complete, identical ending to a legacy
+  marker hit (archive session, emit `mission:complete`).
+
+Failing retries the same task (`continuePrompt`) until its own `maxRuns`
+is spent, then routes to `block()` — the same diagnostic-report machinery
+P0 built for loop prevention, now also guarding "an unverified task never
+gets silently skipped." The P0/P1 stagnation breaker still runs in
+parallel as an extra net: repeatedly failing verification with zero
+workspace change is exactly the "spinning, not working" pattern it exists
+to catch, regardless of which subsystem is doing the spinning.
+
+**Persistence** (`TaskQueue`, `state/tasks/<project>.json`): current task
+index, each task's state/attempts/checkpoint. Scoped to the session id —
+resuming after a crash, rate limit, or reboot reuses the persisted queue
+(same task, same attempt count); a genuinely new session (not a resume)
+starts the plan over. A project edited mid-mission (different task ids)
+reinitializes the queue rather than trying to reconcile an arbitrary diff
+— documented as a known limitation, not silently guessed at.
+
+**Checkpoints** (`src/mission/checkpoint.js`) capture *data only* — files
+touched, verification results, a truncated summary — deliberately stopping
+short of generating a Claude-facing prompt from that data. Turning
+checkpoints into a structured briefing is Phase P4, the Continuation
+Builder; P2's job is making sure the history exists to build from.
+
 ## Crash-anywhere durability
 
 Every state transition is written before the action it describes takes
@@ -172,9 +243,9 @@ never fatal.
 
 The orchestrator emits domain events (`session:launched`,
 `session:rate-limited`, `session:crashed`, `session:resumed`,
-`session:gave-up`, `session:recovered`, `mission:complete`, …). The
-notification engine, plugins, and any future dashboard subscribe to these.
-Integrations can fail freely without touching supervision.
+`session:gave-up`, `session:recovered`, `mission:complete`, `task:done`, …).
+The notification engine, plugins, and any future dashboard subscribe to
+these. Integrations can fail freely without touching supervision.
 
 ## Adding an engine (driver contract)
 
@@ -203,3 +274,8 @@ in a project config — done. No supervision code changes.
    and swallowed.
 5. **The process is the truth** — supervision decisions key off actual
    process exit, never off output silence or heuristics about "stuck".
+6. **Verification over trust** — a task (or, in legacy mode, the mission)
+   is complete when an independent check says so, never merely because
+   the agent claims it. This is why `handleTaskCompletion()` always runs
+   `verifierRegistry.runVerifiers()` (or the marker fallback) before
+   advancing, and why "attempts exhausted" blocks rather than moves on.

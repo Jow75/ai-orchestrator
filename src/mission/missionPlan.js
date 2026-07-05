@@ -1,0 +1,149 @@
+/**
+ * missionPlan.js — Phase P2: mission = ordered tasks.
+ *
+ * A project is either:
+ *  - **legacy** (no `tasks` defined): the whole mission is one implicit
+ *    task, driven by `promptFile`/`mission.completionMarker` exactly as in
+ *    v1/P0/P1. Every existing project and test keeps working unchanged.
+ *  - **mission mode** (`tasks: [...]` non-empty): an ordered plan. Each task
+ *    has its own prompt, objective, verification, and per-task run budget.
+ *    The orchestrator advances to the next task only once the current one
+ *    is verified — never on the agent's say-so alone.
+ *
+ * This module validates and normalizes the raw `tasks` array from project
+ * JSON (called from configManager during project validation, so problems
+ * surface at config-load time, not mid-mission) and provides pure,
+ * side-effect-free lookups the orchestrator and task queue consume.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { isKnownVerifierType, listVerifierTypes } from '../verify/verifierRegistry.js';
+
+/** Default launches allowed for a single task before it is marked FAILED. */
+export const DEFAULT_TASK_MAX_RUNS = 5;
+
+/**
+ * True when the project has no task list (single-prompt / v1 behaviour).
+ * @param {object} project
+ * @returns {boolean}
+ */
+export function isLegacyMission(project) {
+  return !Array.isArray(project.tasks) || project.tasks.length === 0;
+}
+
+/**
+ * Validate and normalize a project's raw `tasks` array. Called during
+ * project config validation; returns problems rather than throwing so the
+ * caller can report every issue in the project at once (matching
+ * configManager's existing "collect all problems, throw once" style).
+ *
+ * @param {object} project - The project config (workingDirectory, mission, ...).
+ * @returns {{tasks: object[], problems: string[]}}
+ */
+export function normalizeAndValidateTasks(project) {
+  const raw = project.tasks;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { tasks: [], problems: [] };
+  }
+
+  const problems = [];
+  const seenIds = new Set();
+  const tasks = raw.map((entry, index) => {
+    const label = `tasks[${index}]`;
+
+    if (!entry || typeof entry !== 'object') {
+      problems.push(`${label} must be an object.`);
+      return null;
+    }
+
+    const id = typeof entry.id === 'string' && entry.id ? entry.id : null;
+    if (!id) {
+      problems.push(`${label}.id is required (a short unique string, e.g. "T1").`);
+    } else if (seenIds.has(id)) {
+      problems.push(`${label}.id "${id}" is not unique — task ids must be distinct.`);
+    } else {
+      seenIds.add(id);
+    }
+
+    let resolvedPromptFile = null;
+    if (!entry.prompt) {
+      problems.push(`${label}.prompt is required (the task's prompt file).`);
+    } else {
+      const promptPath = path.isAbsolute(entry.prompt)
+        ? entry.prompt
+        : path.join(project.workingDirectory ?? '', entry.prompt);
+      if (!fs.existsSync(promptPath)) {
+        problems.push(`${label}.prompt not found: ${promptPath}`);
+      } else {
+        resolvedPromptFile = promptPath;
+      }
+    }
+
+    const verify = Array.isArray(entry.verify) ? entry.verify : [];
+    for (const [vIndex, verifier] of verify.entries()) {
+      if (!verifier?.type) {
+        problems.push(`${label}.verify[${vIndex}] is missing "type".`);
+      } else if (!isKnownVerifierType(verifier.type)) {
+        problems.push(
+          `${label}.verify[${vIndex}].type "${verifier.type}" is unknown. ` +
+          `Known verifier types: ${listVerifierTypes().join(', ')}.`
+        );
+      }
+    }
+
+    return {
+      id: id ?? `tasks[${index}]`,
+      objective: entry.objective ?? id ?? `Task ${index + 1}`,
+      prompt: entry.prompt,
+      resolvedPromptFile,
+      continuePrompt: entry.continuePrompt ?? null, // null = fall back to mission.continuePrompt
+      verify,
+      maxRuns: Number.isInteger(entry.maxRuns) && entry.maxRuns > 0
+        ? entry.maxRuns
+        : DEFAULT_TASK_MAX_RUNS,
+    };
+  }).filter(Boolean);
+
+  return { tasks, problems };
+}
+
+/**
+ * The task at a given index, or null past the end of the plan.
+ * @param {object} project
+ * @param {number} index
+ * @returns {object|null}
+ */
+export function getTaskAt(project, index) {
+  return project.tasks?.[index] ?? null;
+}
+
+/**
+ * Look up a task by id.
+ * @param {object} project
+ * @param {string} id
+ * @returns {object|null}
+ */
+export function getTaskById(project, id) {
+  return project.tasks?.find((t) => t.id === id) ?? null;
+}
+
+/**
+ * The index of a task by id, or -1 if not found.
+ * @param {object} project
+ * @param {string} id
+ * @returns {number}
+ */
+export function getTaskIndex(project, id) {
+  return project.tasks?.findIndex((t) => t.id === id) ?? -1;
+}
+
+/** Total number of tasks in the plan (0 for legacy missions). */
+export function taskCount(project) {
+  return project.tasks?.length ?? 0;
+}
+
+export default {
+  isLegacyMission, normalizeAndValidateTasks, getTaskAt, getTaskById,
+  getTaskIndex, taskCount, DEFAULT_TASK_MAX_RUNS,
+};

@@ -12,10 +12,10 @@ points:
 | --- | --- |
 | `v2.0.0-alpha.1` | **P0 complete** — progress awareness & loop prevention (locked) |
 | `v2.0.0-alpha.2` | **P1 complete** — structured progress engine (files/git change facts) |
-| `v2.0.0-alpha.3` | P2 — mission system (ordered tasks with budgets & checkpoints) |
+| `v2.0.0-alpha.3` | **P2 complete** — mission system: ordered tasks, verification engine, checkpoints |
 | `v2.0.0-beta.1` | P3 — persistent prompt queue |
 | `v2.0.0-beta.2` | P4 — intelligent briefing (Continuation Builder) + P5 memory |
-| `v2.0.0-rc.1` | P6 — verification engine |
+| `v2.0.0-rc.1` | P6 — verification engine expansion (JSON schema, lint, dependency checks) |
 | `v2.0.0` | P7 — desktop application; stable release |
 
 ### Architectural principle for every phase: **engine-agnostic**
@@ -26,7 +26,9 @@ never depend on which engine produced the work. Engine-specific knowledge
 lives *only* behind the `AIDriver` interface. The target is a platform where
 Claude, Gemini, OpenAI, DeepSeek, or a local LLM plug in as interchangeable
 drivers. (P0 already honors this: progress is measured from the workspace,
-not the agent, and blocked-state patterns are driver-extensible.)
+not the agent, and blocked-state patterns are driver-extensible. P2's
+verification engine follows suit: verifiers check the workspace/output/exit
+code, never the engine that produced them.)
 
 ---
 
@@ -52,12 +54,27 @@ not the agent, and blocked-state patterns are driver-extensible.)
 - Tests/build signals for the confidence scorer still arrive with P6
   verification, which reuses `assessConfidence()` rather than a parallel path.
 
-## P2 — Mission system (`v2.0.0-alpha.3`)
+## P2 — Mission system ✅ (`v2.0.0-alpha.3`, complete)
 
-- A mission = ordered tasks, each with objective, prompt, verification,
-  completion criteria, retry policy, budget, and checkpoint.
-- The orchestrator always knows current / completed / remaining / failed /
-  blocked tasks. Usage-limit mid-task → wait → resume the *same task*.
+- A mission = ordered tasks (`src/mission/`), each with objective, prompt,
+  verification, per-task retry budget (`maxRuns`), and a checkpoint on
+  completion. Legacy single-prompt projects are entirely unaffected
+  (`tasks` absent/empty ⇒ v1/P0/P1 behaviour, byte-for-byte).
+- **Verification engine (core)** shipped as part of P2, not deferred to P6:
+  `file-exists`, `command`, `output-contains`, `files-changed` (the last
+  reuses the P1 progress engine's change facts rather than re-deriving
+  them). A task with no verifiers falls back to the mission marker as a
+  lightweight per-task signal. P6 extends this same registry — never a
+  parallel one.
+- The orchestrator always knows the current task, its attempt count, and
+  its checkpoint (`ai-orchestrator tasks <project>`,
+  `GET /api/tasks/:project`); `status`/`/api/status` show task position.
+- Usage-limit / crash / network mid-task → resume the *same task*, not the
+  mission from the start (verified with a reboot-survival integration test).
+- Exhausting a task's retry budget **blocks** (diagnostic report), same as
+  P0's stagnation breaker — never silently skips unverified work.
+- Checkpoints (`src/mission/checkpoint.js`) capture structured data only;
+  turning them into a Claude-facing prompt is P4, not pulled forward here.
 
 ## P3 — Persistent prompt queue (`v2.0.0-beta.1`)
 
@@ -93,12 +110,16 @@ The agent never rediscovers what the orchestrator already knows.
   architecture memory. Learn from past runs instead of repeating mistakes.
   (P0's ledger + timeline are the seed of execution memory.)
 
-## P6 — Verification engine (`v2.0.0-rc.1`)
+## P6 — Verification engine expansion (`v2.0.0-rc.1`)
 
-- Verification — not the agent's word — decides success: file/dir checks,
-  git checks, build, tests, JSON validation, custom shell commands. A task
-  is complete only when verification passes. Verified signals raise the
-  confidence score introduced in P0.
+- P2 already shipped the core principle ("verification decides success,
+  not the agent") and four verifier types. P6 extends the same
+  `verifierRegistry.js` — not a rewrite — with JSON schema validation,
+  linting, dependency/build-graph checks, and whatever else real missions
+  need. Verified signals continue to raise the confidence score via the
+  same `assessConfidence()` extension point P0/P1 established.
+- Revisit plugin-extensible verifier types here if a real need emerges
+  (deliberately deferred in P2 — see ARCHITECTURE.md).
 
 ## P7 — Desktop application (`v2.0.0`)
 

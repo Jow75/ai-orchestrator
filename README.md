@@ -18,10 +18,16 @@ and handles everything that would normally require a human at the keyboard:
   the orchestrator does nothing.** Six silent hours waiting on a training
   run is healthy work, not failure. Recovery logic only ever runs after the
   process has actually exited.
-- 🛑 **Loop prevention** (v1.1) — measures real progress after every run
-  (git/file changes) and **stops with a diagnostic report** if the agent
-  spins without accomplishing anything or reports it is blocked (e.g. a
-  permission it lacks). No more overnight quota burn on a stuck mission.
+- 🛑 **Loop prevention** — measures real progress after every run (files
+  created/modified, git commits) and **stops with a diagnostic report** if
+  the agent spins without accomplishing anything or reports it is blocked
+  (e.g. a permission it lacks). No more overnight quota burn on a stuck
+  mission.
+- 🧩 **Multi-task missions** — a project can define an ordered plan of
+  **tasks** instead of one prompt, each with its own objective and
+  **verification** (file/command/output checks) — a task is done when its
+  checks pass, never merely because the agent said so. Usage limits and
+  crashes mid-task resume that exact task, not the mission from scratch.
 
 ## Quick start
 
@@ -82,6 +88,12 @@ printing a **completion marker** (default `MISSION COMPLETE`) — until it
 appears, every clean-but-unfinished exit is automatically continued with a
 resume prompt against the same engine conversation.
 
+For more structured work, define `tasks` instead of one prompt: an ordered
+plan where each task has its own prompt and verification, and the "mission
+complete" box above becomes "current task's checks pass → next task's own
+prompt (same conversation) → … → mission complete." See
+[CONFIGURATION.md](CONFIGURATION.md).
+
 ## Commands
 
 | Command | Purpose |
@@ -91,6 +103,8 @@ resume prompt against the same engine conversation.
 | `stop` | Gracefully stop the running orchestrator (session stays resumable) |
 | `status` | Live status snapshot |
 | `sessions [project]` | Active sessions / per-project history |
+| `timeline <project>` | Key events over the mission's lifetime |
+| `tasks <project>` | Task queue for a multi-task mission |
 | `projects list` / `projects add` | Manage project definitions |
 | `drivers` | List available AI engine drivers |
 | `scheduler install/uninstall/status` | Windows auto-resume task |

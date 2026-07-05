@@ -127,6 +127,60 @@ warning in [CONFIGURATION.md](CONFIGURATION.md).
 
 ---
 
+## Mission mode (Phase P2 — task-based projects)
+
+### "Task X failed verification after N attempts" — blocked
+
+A task's `maxRuns` was reached without its verifiers passing. Read the
+diagnostic report (`state/diagnostics/<project>-<ts>.md`) — it lists exactly
+which checks failed and why. Common causes:
+
+- **The verifier checks the wrong thing.** A `file-exists` path or
+  `command` typo, or an `output-contains` pattern that doesn't match what
+  the agent actually prints. Fix the verifier in the project config.
+- **The agent misunderstood the objective.** Reread the task's `prompt`
+  file; make the objective and success criteria more explicit.
+- **The task genuinely needs more attempts.** Raise that task's `maxRuns`
+  in `config/projects/<name>.json`.
+
+Like a blocked legacy mission, the session is archived (not auto-resumable)
+so a restart cannot re-enter the same failing loop. Fix the cause, then
+`ai-orchestrator start <project>` begins a fresh session — task 1 restarts,
+since a new session doesn't carry over completed-task history within the
+old session. (Cross-session task memory is planned for Phase P5.)
+
+### `ai-orchestrator tasks <project>` shows nothing / "No task queue"
+
+Either the project hasn't been run yet, or it has no `tasks` array (legacy
+single-prompt mode has no task queue by design — use `sessions`/`timeline`
+instead).
+
+### Unknown verifier type error at startup
+
+`ai-orchestrator doctor` (or any command that loads the project) reports
+this immediately, with the full list of known types — see "Verifier types"
+in [CONFIGURATION.md](CONFIGURATION.md). Typo in `verify[].type` is the
+usual cause.
+
+### "Task plan changed mid-mission; restarting the task queue" (log warning)
+
+The project's `tasks` array was edited (ids added/removed/reordered) while
+a session for it was still active. Reconciling an arbitrary edit against
+in-progress work isn't attempted — the task queue reinitializes from task 1
+under the existing session. Avoid editing `tasks` while a mission is
+running; if you must, expect to restart that mission's task progress.
+
+### A task with no `verify` never seems to finish
+
+A task with an empty (or omitted) `verify` list falls back to
+`mission.completionMarker` as its completion signal — the agent must print
+that exact marker for the task (not just the whole mission) to be
+considered done. Either add real verifiers or ensure the task's prompt
+instructs the agent to print the marker when that task specifically is
+finished.
+
+---
+
 ## Reboot recovery
 
 ### Nothing resumed after a reboot

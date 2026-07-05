@@ -1,7 +1,8 @@
 # API Reference
 
-Three integration surfaces: the HTTP dashboard API, the plugin API, and the
-driver interface. (Programmatic library usage is a fourth — see the bottom.)
+Integration surfaces: the HTTP dashboard API, the plugin API, the driver
+interface, and the verifier interface. (Programmatic library usage is
+covered last.)
 
 ---
 
@@ -18,6 +19,7 @@ dashboard, equally useful for curl and monitoring.
 | `GET /api/sessions` | All active session records |
 | `GET /api/sessions/:project/history` | Finished sessions for a project |
 | `GET /api/timeline/:project` | Mission timeline — key events over time |
+| `GET /api/tasks/:project` | Phase P2: task queue (`null` for legacy/not-yet-run projects) |
 | `GET /api/projects` | Defined projects + `hasActiveSession` flag |
 
 ### `/api/status` shape
@@ -53,6 +55,21 @@ is not yet exposed over the API):
   { "at": "…", "event": "resumed", "label": "Usage limit reset; resuming" },
   { "at": "…", "event": "complete", "label": "Mission complete" }
 ]
+```
+
+### `/api/tasks/:project` shape (Phase P2 — mission mode)
+
+`null` for a legacy (single-prompt) project or one that hasn't run yet;
+otherwise the persisted task queue:
+
+```jsonc
+{
+  "project": "my-project", "sessionId": "…", "currentIndex": 1,
+  "tasks": [
+    { "id": "T1", "state": "done", "attempts": 1, "checkpoint": { "taskId": "T1", "outcome": "done", "filesTouched": ["src/index.js"], "verify": { "passed": true, "results": [...] }, "summary": "…" } },
+    { "id": "T2", "state": "active", "attempts": 1, "checkpoint": null }
+  ]
+}
 ```
 
 ### Progress ledger record shape (`state/ledger/<project>.jsonl`)
@@ -113,6 +130,7 @@ can never take the supervisor down.
 | `session:gave-up` | `{ project, session, reason }` |
 | `session:recovered` | `{ project, session, after }` |
 | `mission:complete` | `{ project, session, summary }` |
+| `task:done` | Phase P2: `{ project, session, taskId, checkpoint }` |
 | `orchestrator:recovered-after-reboot` | `{ project }` |
 
 ---
@@ -133,6 +151,12 @@ class MyEngineDriver extends AIDriver {
       usageLimit: [/quota exhausted/i],   // engine's limit messages
       network:    [/connection lost/i],   // engine's network failures
     };
+    // Optional: engine-specific "the agent is blocked" phrasings, checked
+    // before the built-in generic patterns (src/core/blockedPatterns.js).
+    this.blockedPatterns = [
+      { category: 'permission-denied', pattern: /my-engine: permission refused/i,
+        hint: 'Grant the permission this engine needs.' },
+    ];
   }
 
   async checkInstallation(executable) { /* → {ok, version?|error?} */ }
@@ -161,7 +185,32 @@ Contract rules:
 
 ---
 
-## 4. Library usage
+## 4. Verifier interface (Phase P2 core; extended in P6)
+
+Not plugin-extensible today — a task's `verify` entries must use one of
+the built-in types (`file-exists`, `command`, `output-contains`,
+`files-changed`; see [CONFIGURATION.md](CONFIGURATION.md)). Documented here
+because P6 extends this exact registry rather than replacing it:
+
+```js
+// src/verify/verifiers/*.js — the shape every verifier implements
+export const type = 'my-check';
+export function run(config, context) {
+  // config:  the verifier's own JSON config, e.g. { type: 'my-check', ... }
+  // context: { workingDirectory, resultText, outputTail, changes }
+  //          `changes` is the progress engine's full (untruncated) change
+  //          facts for this run, or null on a mission's first run.
+  return { passed: true, detail: 'Human-readable explanation' };
+}
+```
+
+Registered in `src/verify/verifierRegistry.js`. A verifier that throws
+fails only itself (`passed: false`, the thrown message as `detail`) —
+never the orchestrator.
+
+---
+
+## 5. Library usage
 
 ```js
 import { App } from 'ai-orchestrator';
@@ -174,4 +223,7 @@ const result = await app.start({ projectName: 'my-project' });
 Lower-level building blocks (`Orchestrator`, `ClaudeDriver`,
 `SessionManager`, `classifyExit`, …) are exported from `src/index.js` and
 are all constructor-injected — see `test/orchestrator.test.js` for a
-complete example of composing them with fakes.
+complete example of composing them with fakes. Phase P2's mission engine
+is exported the same way: `TaskQueue`, `TaskState`, `isLegacyMission`,
+`normalizeAndValidateTasks`, `buildCheckpoint`, `runVerifiers` — see
+`test/orchestrator.p2.test.js` for a full mission-mode composition example.

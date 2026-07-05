@@ -121,6 +121,14 @@ function causeForCategory(category) {
         'cannot ask interactively, so it exits without doing the work. Grant the ' +
         'permission via claude.permissionMode / claude.allowedTools.'
       );
+    case 'verification-failed':
+      return (
+        'The current task ran out of retry attempts without its verifiers passing. ' +
+        'The agent may have misunderstood the objective, or a verifier may be checking ' +
+        'the wrong thing (wrong path, wrong command, wrong pattern). Review the failed ' +
+        'checks below and either fix the mission/task, adjust the verifier, or raise ' +
+        'the task\'s "maxRuns".'
+      );
     default:
       return 'See the reason and evidence above.';
   }

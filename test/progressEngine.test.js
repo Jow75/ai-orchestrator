@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ProgressEngine, diffSnapshots } from '../src/progress/progressEngine.js';
+import { ProgressEngine, diffSnapshots, sampleChanges } from '../src/progress/progressEngine.js';
 import { silentLogger } from '../src/infra/logger.js';
 
 function tempDir(prefix = 'aio-pe-') {
@@ -69,6 +69,30 @@ test('analyze(): detects created, modified, and deleted files across two runs', 
   assert.deepEqual(report.changes.modified, ['keep.txt']);
   assert.deepEqual(report.changes.deleted, ['remove.txt']);
   assert.deepEqual(report.changes.counts, { created: 1, modified: 1, deleted: 1 });
+});
+
+test('diffSnapshots() returns COMPLETE, untruncated lists even for >25 changed files', () => {
+  // Regression guard: verification (files-changed) reads these lists
+  // directly, so silently truncating here would be a correctness bug, not
+  // a cosmetic one (see sampleChanges() for the display-only cap).
+  const prevFiles = {};
+  const currFiles = {};
+  for (let i = 0; i < 40; i += 1) currFiles[`file${i}.txt`] = '1:100';
+  const diff = diffSnapshots({ files: prevFiles }, { files: currFiles });
+  assert.equal(diff.created.length, 40);
+  assert.equal(diff.counts.created, 40);
+});
+
+test('sampleChanges() caps each list for display without touching counts', () => {
+  const full = { created: Array.from({ length: 40 }, (_, i) => `f${i}`), modified: [], deleted: [],
+    counts: { created: 40, modified: 0, deleted: 0 }, committed: false };
+  const sampled = sampleChanges(full, 25);
+  assert.equal(sampled.created.length, 25);
+  assert.equal(sampled.counts.created, 40); // counts stay accurate
+});
+
+test('sampleChanges(null) is a safe no-op', () => {
+  assert.equal(sampleChanges(null), null);
 });
 
 test('analyze(): identical workspace across two calls yields no changes', () => {

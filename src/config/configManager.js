@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ORCHESTRATOR_DEFAULTS, PROJECT_DEFAULTS } from './defaults.js';
 import { resolvePaths } from '../infra/paths.js';
+import { isLegacyMission, normalizeAndValidateTasks } from '../mission/missionPlan.js';
 
 /** Error type thrown for any user-fixable configuration problem. */
 export class ConfigError extends Error {
@@ -168,21 +169,32 @@ export class ConfigManager {
       problems.push(`"workingDirectory" does not exist: ${project.workingDirectory}`);
     }
 
-    if (!project.promptFile) {
-      problems.push('"promptFile" is required (the mission prompt for fresh sessions).');
-    } else {
-      const promptPath = path.isAbsolute(project.promptFile)
-        ? project.promptFile
-        : path.join(project.workingDirectory ?? '', project.promptFile);
-      if (!fs.existsSync(promptPath)) {
-        problems.push(`"promptFile" not found: ${promptPath}`);
+    // A mission-mode project (non-empty "tasks") supplies its own per-task
+    // prompts and does not need a single top-level promptFile.
+    const missionMode = !isLegacyMission(project);
+    if (!missionMode) {
+      if (!project.promptFile) {
+        problems.push('"promptFile" is required (the mission prompt for fresh sessions).');
       } else {
-        project.resolvedPromptFile = promptPath;
+        const promptPath = path.isAbsolute(project.promptFile)
+          ? project.promptFile
+          : path.join(project.workingDirectory ?? '', project.promptFile);
+        if (!fs.existsSync(promptPath)) {
+          problems.push(`"promptFile" not found: ${promptPath}`);
+        } else {
+          project.resolvedPromptFile = promptPath;
+        }
       }
     }
 
     if (typeof project.driver !== 'string' || !project.driver) {
       problems.push('"driver" must be a driver id string (e.g. "claude").');
+    }
+
+    if (missionMode) {
+      const { tasks, problems: taskProblems } = normalizeAndValidateTasks(project);
+      project.tasks = tasks; // replace raw entries with normalized, resolved ones
+      problems.push(...taskProblems);
     }
 
     if (problems.length) {

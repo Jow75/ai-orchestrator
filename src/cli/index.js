@@ -8,6 +8,7 @@
  *   stop                   Ask the running orchestrator to stop gracefully
  *   status                 Show live status (from status.json)
  *   sessions [project]     Show active sessions / a project's history
+ *   tasks <project>        Show a mission-mode project's task queue
  *   projects list|add      Manage project definitions
  *   drivers                List available AI engine drivers
  *   scheduler ...          Install/inspect the Windows auto-start task
@@ -27,6 +28,7 @@ import ConfigManager, { ConfigError } from '../config/configManager.js';
 import { silentLogger } from '../infra/logger.js';
 import SessionManager from '../state/sessionManager.js';
 import MissionTimeline from '../state/missionTimeline.js';
+import TaskQueue from '../mission/taskQueue.js';
 import DriverRegistry from '../drivers/driverRegistry.js';
 import { readJsonSafe } from '../state/statePersistence.js';
 import { isPidAlive } from '../state/heartbeat.js';
@@ -61,7 +63,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('2.0.0-alpha.2');
+    .version('2.0.0-alpha.3');
 
   program
     .command('start')
@@ -186,6 +188,39 @@ export function buildProgram() {
           const time = new Date(entry.at).toLocaleString();
           console.log(`  ${chalk.dim(time)}  ${eventColor(entry.event)(entry.label)}`);
         }
+        console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  program
+    .command('tasks')
+    .argument('<project>', 'project name')
+    .description('Show a mission-mode project’s task queue (Phase P2)')
+    .action((project) => {
+      try {
+        const { paths } = readOnlyContext();
+        const taskQueue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger });
+        const queue = taskQueue.load(project);
+        if (!queue) {
+          console.log(
+            `No task queue for "${project}" — either it hasn't run yet, or it is a ` +
+            'legacy (single-prompt) project with no "tasks" defined.'
+          );
+          return;
+        }
+        console.log(chalk.bold(`\nTask queue — ${project}\n`));
+        queue.tasks.forEach((task, index) => {
+          const marker = index === queue.currentIndex ? chalk.cyan('→') : ' ';
+          console.log(
+            `  ${marker} ${chalk.bold(task.id)} — ${taskStateColor(task.state)(task.state)} ` +
+            `(attempts: ${task.attempts})`
+          );
+          if (task.checkpoint?.summary) {
+            console.log(chalk.dim(`      ${truncateLine(task.checkpoint.summary, 100)}`));
+          }
+        });
         console.log('');
       } catch (error) {
         fail(error);
@@ -327,6 +362,15 @@ function printStatus(status, statusFile) {
       : '';
     console.log(`  Agent PID:    ${status.agent.pid}${children}`);
   }
+  if (status.mission?.mode === 'tasks') {
+    const m = status.mission;
+    const position = m.currentTaskId ? `${m.taskIndex + 1}/${m.totalTasks}` : `${m.totalTasks}/${m.totalTasks}`;
+    console.log(
+      `  Task:         ${m.currentTaskId ?? '(all done)'} ` +
+      `[${position}] ${taskStateColor(m.taskState)(m.taskState ?? '')} ` +
+      `(attempts: ${m.taskAttempts})`
+    );
+  }
   if (status.activity?.currentTask) {
     console.log(`  Current task: ${status.activity.currentTask}`);
   }
@@ -355,6 +399,7 @@ function eventColor(event) {
     {
       'mission-started': chalk.cyan,
       progress: chalk.green,
+      'task-done': chalk.green,
       complete: chalk.green,
       resumed: chalk.cyan,
       recovered: chalk.cyan,
@@ -365,6 +410,24 @@ function eventColor(event) {
       'gave-up': chalk.red,
     }[event] ?? chalk.white
   );
+}
+
+/** Colour a task-queue entry by its lifecycle state. */
+function taskStateColor(state) {
+  return (
+    {
+      done: chalk.green,
+      active: chalk.cyan,
+      pending: chalk.white,
+      failed: chalk.red,
+      blocked: chalk.red,
+    }[state] ?? chalk.white
+  );
+}
+
+function truncateLine(text, maxChars) {
+  const line = text.split('\n')[0];
+  return line.length > maxChars ? `${line.slice(0, maxChars - 1)}…` : line;
 }
 
 /** Render one session record. */

@@ -11,8 +11,8 @@
  * notifications, resume flow) before pointing it at a real mission.
  */
 
-import { writeFileSync, appendFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { AIDriver, AgentRun } from './aiDriver.js';
 
 /** Default script: one run that immediately completes the mission. */
@@ -118,14 +118,19 @@ class MockRun extends AgentRun {
   applyWorkspaceEffect(writeFile, appendFile) {
     if (!this.workingDirectory) return;
     try {
+      // Real agents create parent directories automatically when writing a
+      // nested path (e.g. Claude Code's Write tool) — mirror that here so
+      // scripted `writeFile: { path: "src/index.js" }` behaves realistically
+      // rather than silently failing when "src/" doesn't exist yet.
       if (writeFile) {
-        writeFileSync(join(this.workingDirectory, writeFile.path), writeFile.content ?? '');
+        const target = join(this.workingDirectory, writeFile.path);
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, writeFile.content ?? '');
       }
       if (appendFile) {
-        appendFileSync(
-          join(this.workingDirectory, appendFile.path),
-          appendFile.content ?? `run ${this.launchIndex}\n`
-        );
+        const target = join(this.workingDirectory, appendFile.path);
+        mkdirSync(dirname(target), { recursive: true });
+        appendFileSync(target, appendFile.content ?? `run ${this.launchIndex}\n`);
       }
     } catch {
       // A missing working directory in a test is not the mock's concern.

@@ -137,7 +137,8 @@ Minimal working example:
 | --- | --- | --- | --- |
 | `driver` | no | `"claude"` | Which engine driver runs this project |
 | `workingDirectory` | **yes** | — | Folder the agent works in |
-| `promptFile` | **yes** | — | Mission prompt (relative to `workingDirectory` or absolute). Used for the FIRST launch; resumed runs use `mission.continuePrompt` |
+| `promptFile` | conditional | — | Mission prompt (relative to `workingDirectory` or absolute). **Required unless `tasks` is defined** (see below) — used for the FIRST launch; resumed runs use `mission.continuePrompt` |
+| `tasks` | no | `[]` | Phase P2: an ordered task plan instead of one prompt — see "tasks" below |
 | `enabled` | no | `true` | Reserved for multi-project scheduling |
 
 ### mission
@@ -158,6 +159,85 @@ long research phases between file writes:
 ```json
 "progress": { "maxConsecutiveNoProgress": 8 }
 ```
+
+### tasks (Phase P2 — mission mode)
+
+A project with no `tasks` (or an empty array) runs in **legacy mode**:
+one prompt, marker-based completion — exactly as v1/P0/P1. Defining a
+non-empty `tasks` array switches the project to **mission mode**: an
+ordered plan of tasks, each with its own prompt and (crucially) its own
+**verification** — a task is done only when its verifiers pass, never
+merely because the agent said so.
+
+```json
+{
+  "driver": "claude",
+  "workingDirectory": "C:/Users/Admin/Music/MyProject",
+  "tasks": [
+    {
+      "id": "T1",
+      "objective": "Scaffold the project skeleton",
+      "prompt": "tasks/01-scaffold.md",
+      "verify": [
+        { "type": "file-exists", "path": "src/index.js" },
+        { "type": "command", "run": "npm install", "expectExit": 0 }
+      ],
+      "maxRuns": 5
+    },
+    {
+      "id": "T2",
+      "objective": "Implement the core feature and pass its tests",
+      "prompt": "tasks/02-feature.md",
+      "verify": [
+        { "type": "command", "run": "npm test", "expectExit": 0 }
+      ]
+    }
+  ]
+}
+```
+
+Note `promptFile` is omitted entirely — mission mode does not use a
+single top-level prompt.
+
+Per-task fields:
+
+| Key | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `id` | **yes** | — | Short, unique string (e.g. `"T1"`). Used in logs, checkpoints, the `tasks` CLI command, and diagnostic reports |
+| `prompt` | **yes** | — | This task's prompt file (relative to `workingDirectory` or absolute) |
+| `objective` | no | `id` | Human-readable description, shown in logs/CLI |
+| `verify` | no | `[]` | List of verifier configs (see below). **Empty means the task falls back to `mission.completionMarker`** as a lightweight per-task signal |
+| `continuePrompt` | no | `mission.continuePrompt` | Prompt sent on a retry of this task (after a failed verification, usage limit, or crash) |
+| `maxRuns` | no | `5` | Launches allowed on this task before it is marked failed and supervision **blocks** (never silently skips unverified work) |
+
+How a mission-mode run proceeds: the current task's prompt is sent on its
+first launch; if the run exits cleanly, its verifiers run against the
+result. Passing advances to the next task (same engine conversation — no
+new session, just a new prompt) or, on the last task, completes the
+mission exactly like a legacy marker hit. Failing retries the *same* task
+with its `continuePrompt` until `maxRuns` is reached, at which point
+supervision stops with a diagnostic report explaining which check failed
+and why (`state/diagnostics/<project>-<ts>.md`). Usage limits, crashes, and
+network errors are handled identically to legacy mode — they resume the
+task that was running, not the mission from the start.
+
+Inspect a mission's progress: `ai-orchestrator tasks <project>` (task
+states/attempts) and `ai-orchestrator timeline <project>` (task-done
+events alongside the rest of the mission's story). `ai-orchestrator
+status` also shows the current task and its position (e.g. `T2 [2/3]`).
+
+#### Verifier types
+
+| Type | Config keys | Passes when |
+| --- | --- | --- |
+| `file-exists` | `path` | The file (or directory) exists |
+| `command` | `run`, `expectExit` (default `0`), `timeoutMs` (default `60000`) | The shell command exits with the expected code. The command is trusted config — same trust model as the mission prompt |
+| `output-contains` | `pattern`, `regex` (bool), `flags` | The agent's final output contains the substring, or matches the regex when `regex: true` |
+| `files-changed` | `paths` (array; entries ending in `/` match any file under that directory) | Every listed path was created or modified **this run** — reuses the same change facts the progress engine already computed, so it never re-invokes git |
+
+A task can list multiple verifiers; **all** must pass. An unknown verifier
+`type` is caught at config-load time (`ai-orchestrator doctor` / any
+command that loads the project) with the list of known types in the error.
 
 ### claude (used when `driver` is `"claude"`)
 
@@ -199,7 +279,11 @@ Scriptable fake engine for testing your setup end-to-end:
 
 Each entry is one launch: `output` (emitted text), `result` (final result
 payload), `exitCode`, optional `signal`, `delayMs` (how long the fake run
-"works"). Launches beyond the script replay the last entry.
+"works"). Launches beyond the script replay the last entry. To simulate the
+agent actually doing work (exercising the progress engine and verifiers),
+add `writeFile: { path, content }` (creates/overwrites a file, creating
+parent directories as needed — just like a real agent's write tool) or
+`appendFile: { path, content }` (grows a file across runs).
 
 ---
 
