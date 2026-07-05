@@ -11,6 +11,8 @@
  * notifications, resume flow) before pointing it at a real mission.
  */
 
+import { writeFileSync, appendFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { AIDriver, AgentRun } from './aiDriver.js';
 
 /** Default script: one run that immediately completes the mission. */
@@ -48,7 +50,12 @@ export class MockDriver extends AIDriver {
     const script = runs[Math.min(this.launchCount, runs.length - 1)];
     this.launchCount += 1;
 
-    const run = new MockRun({ script, engineSessionId, launchIndex: this.launchCount });
+    const run = new MockRun({
+      script,
+      engineSessionId,
+      launchIndex: this.launchCount,
+      workingDirectory: project.workingDirectory,
+    });
     run.begin();
     return run;
   }
@@ -62,11 +69,12 @@ export class MockDriver extends AIDriver {
 }
 
 class MockRun extends AgentRun {
-  constructor({ script, engineSessionId, launchIndex }) {
+  constructor({ script, engineSessionId, launchIndex, workingDirectory }) {
     super();
     this.script = script;
     this.engineSessionId = engineSessionId;
     this.launchIndex = launchIndex;
+    this.workingDirectory = workingDirectory;
     this.pid = 100_000 + launchIndex; // fake but unique
     this.stopped = false;
   }
@@ -78,10 +86,16 @@ class MockRun extends AgentRun {
       exitCode = 0,
       signal = null,
       delayMs = 10,
+      // Optional: simulate an agent that actually changes the workspace, so
+      // the progress engine can be exercised end-to-end. `writeFile` uses a
+      // fixed name (overwrites); `appendFile` grows a file each run.
+      writeFile = null,
+      appendFile = null,
     } = this.script;
 
     // Emit asynchronously so callers can attach listeners first.
     setTimeout(() => {
+      this.applyWorkspaceEffect(writeFile, appendFile);
       // Mock keeps the session id stable across resumes for simplicity.
       this.emit('engine-session-id', this.engineSessionId ?? `mock-session-${this.pid}`);
       if (output) this.emit('output', output);
@@ -98,6 +112,24 @@ class MockRun extends AgentRun {
         });
       }
     }, delayMs);
+  }
+
+  /** Simulate the agent changing the workspace (drives the progress engine). */
+  applyWorkspaceEffect(writeFile, appendFile) {
+    if (!this.workingDirectory) return;
+    try {
+      if (writeFile) {
+        writeFileSync(join(this.workingDirectory, writeFile.path), writeFile.content ?? '');
+      }
+      if (appendFile) {
+        appendFileSync(
+          join(this.workingDirectory, appendFile.path),
+          appendFile.content ?? `run ${this.launchIndex}\n`
+        );
+      }
+    } catch {
+      // A missing working directory in a test is not the mock's concern.
+    }
   }
 
   /** @inheritdoc */

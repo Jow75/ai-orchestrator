@@ -28,6 +28,11 @@ import { classifyExit, ExitCause } from './exitClassifier.js';
 import { RateLimitEngine } from './rateLimitEngine.js';
 import { CrashRecoveryEngine } from './crashRecoveryEngine.js';
 import { ProcessSupervisor } from './processSupervisor.js';
+import { LoopBreaker, BreakerAction } from './loopBreaker.js';
+import { detectBlockedState } from './blockedPatterns.js';
+import { computeWorkspaceSignature } from '../progress/workspaceSignature.js';
+import { ProgressLedger } from '../progress/progressLedger.js';
+import { writeDiagnosticReport } from '../report/diagnosticReport.js';
 import { SessionState } from '../state/sessionManager.js';
 import { sleep, formatDuration } from '../infra/time.js';
 
@@ -44,6 +49,8 @@ export const EVENTS = Object.freeze([
   'session:resumed', //   { project, session }
   'session:gave-up', //   { project, session, reason }
   'session:recovered', // { project, session, after }
+  'session:progress', //  { project, session, progressed, method }
+  'mission:blocked', //   { project, session, reason, category, reportPath }
   'mission:complete', //  { project, session, summary }
 ]);
 
@@ -57,14 +64,16 @@ export class Orchestrator extends EventEmitter {
    * @param {import('../drivers/driverRegistry.js').DriverRegistry} deps.driverRegistry
    * @param {import('../state/sessionManager.js').SessionManager} deps.sessionManager
    * @param {import('../state/statusManager.js').StatusManager} deps.statusManager
+   * @param {object} deps.paths - Resolved runtime paths (ledgerDir, diagnosticsDir).
    * @param {object} deps.logger - Module logger.
    */
-  constructor({ configManager, driverRegistry, sessionManager, statusManager, logger }) {
+  constructor({ configManager, driverRegistry, sessionManager, statusManager, paths, logger }) {
     super();
     this.configManager = configManager;
     this.driverRegistry = driverRegistry;
     this.sessionManager = sessionManager;
     this.statusManager = statusManager;
+    this.paths = paths ?? configManager.getPaths?.() ?? {};
     this.logger = logger;
 
     const config = configManager.getAll();
@@ -81,6 +90,20 @@ export class Orchestrator extends EventEmitter {
       childScanIntervalMs: config.supervision.childProcessScanIntervalMs,
     });
     this.networkRetryDelayMs = config.recovery.networkRetryDelayMs;
+
+    // Progress awareness & loop prevention (P0). progress may be absent in
+    // hand-built test configs; fall back to safe, effectively-off values.
+    this.progressConfig = config.progress ?? {
+      enabled: false,
+      maxConsecutiveNoProgress: Infinity,
+      interRunDelayMs: 0,
+      blockedDetection: false,
+    };
+    this.loopBreaker = new LoopBreaker({ config: this.progressConfig, logger });
+    this.progressLedger = new ProgressLedger({
+      ledgerDir: this.paths.ledgerDir,
+      logger,
+    });
 
     this.stopRequested = false;
     this.stopController = new AbortController();
@@ -133,6 +156,19 @@ export class Orchestrator extends EventEmitter {
 
     this.statusManager.set({ orchestrator: { state: 'supervising' } });
     this.statusManager.syncSession(session);
+
+    // Baseline the workspace BEFORE the first launch so that a first run which
+    // changes nothing counts as no-progress immediately (rather than getting a
+    // free "progress" pass for merely establishing a baseline). Only when the
+    // session has no prior signature — a resumed session keeps its own.
+    if (this.progressConfig.enabled && session.lastSignature == null) {
+      const baseline = computeWorkspaceSignature(project.workingDirectory, {
+        logger: this.logger,
+      });
+      if (baseline.hash !== null) {
+        this.sessionManager.update(session, { lastSignature: baseline.hash });
+      }
+    }
 
     // Crash counting is per-process-lifetime: a reboot or manual restart
     // grants a fresh set of attempts (the human/scheduler chose to retry).
@@ -217,6 +253,11 @@ export class Orchestrator extends EventEmitter {
       this.statusManager.set({ agent: { state: 'exited', pid: null, childPids: [] } });
       this.emit('session:exit', { project: project.name, session, verdict, exitInfo });
 
+      // Measure objective progress and record the run — for EVERY exit, so
+      // the ledger is a complete audit trail and the loop breaker has data.
+      const finalText = `${exitInfo.resultText ?? ''}\n${exitInfo.outputTail ?? ''}`;
+      const progress = this.assessProgress({ project, session, verdict, exitInfo, finalText });
+
       // Operator stop wins over every recovery strategy; the session record
       // keeps its resumable state so the mission continues next start.
       if (this.stopRequested) break;
@@ -227,6 +268,8 @@ export class Orchestrator extends EventEmitter {
         driver,
         verdict,
         exitInfo,
+        finalText,
+        progress,
         consecutiveCrashes,
       });
 
@@ -249,14 +292,15 @@ export class Orchestrator extends EventEmitter {
    * Returns { done, result? } when supervision should end, otherwise the
    * updated crash counter (and the loop launches again).
    */
-  async applyRecoveryStrategy({ project, session, driver, verdict, exitInfo, consecutiveCrashes }) {
+  async applyRecoveryStrategy({
+    project, session, driver, verdict, exitInfo, finalText, progress, consecutiveCrashes,
+  }) {
     const signal = this.stopController.signal;
 
     switch (verdict.cause) {
       case ExitCause.COMPLETED: {
         // Did the agent declare the whole MISSION finished (not just this run)?
         const marker = project.mission.completionMarker;
-        const finalText = `${exitInfo.resultText ?? ''}\n${exitInfo.outputTail ?? ''}`;
         if (marker && finalText.includes(marker)) {
           this.sessionManager.closeSession(session, SessionState.COMPLETED);
           this.statusManager.syncSession(session);
@@ -270,8 +314,43 @@ export class Orchestrator extends EventEmitter {
           };
         }
 
-        // Run ended cleanly but the mission is unfinished → continue it.
-        this.resumeSession(session, 'run finished; mission not complete — continuing');
+        // Run ended cleanly but the mission is unfinished. Before relaunching,
+        // the loop breaker decides whether continuing is worthwhile — this is
+        // the guard that makes an unbounded no-progress loop impossible.
+        if (this.progressConfig.enabled) {
+          if (!progress.progressed) {
+            this.sessionManager.update(session, {
+              consecutiveNoProgress: session.consecutiveNoProgress + 1,
+            });
+          }
+          const decision = this.loopBreaker.decide({
+            progressed: progress.progressed,
+            consecutiveNoProgress: session.consecutiveNoProgress,
+            blocked: progress.blocked,
+          });
+          if (decision.action === BreakerAction.TRIP) {
+            // Return the { done, result } shape applyRecoveryStrategy owes its
+            // caller — NOT .result, or runProject won't see done and will loop.
+            return this.block(project, session, {
+              reason: decision.reason,
+              category: decision.category,
+              hint: decision.hint ?? progress.blocked?.hint,
+              evidence: progress.blocked?.evidence,
+            });
+          }
+        }
+
+        // Cleared the breaker: pause (inter-run delay), then continue the
+        // same conversation. The delay is abortable by an operator stop.
+        await this.interRunDelay(signal);
+        if (this.stopRequested) return this.stoppedMidWait(session);
+
+        this.resumeSession(
+          session,
+          progress.progressed
+            ? 'progress made; continuing mission'
+            : 'run finished; mission not complete — continuing'
+        );
         return { done: false, consecutiveCrashes: 0, lastActivity: 'continuing mission' };
       }
 
@@ -353,6 +432,112 @@ export class Orchestrator extends EventEmitter {
         return { done: false, consecutiveCrashes: crashes, lastActivity: 'restarting after crash' };
       }
     }
+  }
+
+  /**
+   * Measure whether this run advanced the workspace, update the session's
+   * progress counters, record the run in the ledger, and detect blocked
+   * states. Runs once per exit, for every cause.
+   *
+   * @returns {{progressed: boolean, signature: string|null, method: string, blocked: object}}
+   */
+  assessProgress({ project, session, verdict, exitInfo, finalText }) {
+    const blocked = this.progressConfig.blockedDetection
+      ? detectBlockedState(finalText)
+      : { blocked: false };
+
+    let progressed = true;
+    let signature = { hash: session.lastSignature, method: 'skipped' };
+
+    if (this.progressConfig.enabled) {
+      signature = computeWorkspaceSignature(project.workingDirectory, { logger: this.logger });
+      // FAIL CLOSED: a workspace we cannot measure counts as "no progress",
+      // so an environment problem pauses for review instead of looping.
+      progressed = signature.hash !== null && signature.hash !== session.lastSignature;
+
+      const patch = {};
+      if (signature.hash !== null) patch.lastSignature = signature.hash;
+      if (progressed) patch.consecutiveNoProgress = 0; // any progress resets the streak
+      if (Object.keys(patch).length) this.sessionManager.update(session, patch);
+    }
+
+    this.progressLedger.record({
+      project: project.name,
+      sessionId: session.id,
+      run: session.runs,
+      cause: verdict.cause,
+      progressed,
+      signature: signature.hash,
+      signatureMethod: signature.method,
+      consecutiveNoProgress: session.consecutiveNoProgress,
+      resultText: exitInfo.resultText ?? '',
+      blocked: blocked.blocked ? { category: blocked.category } : undefined,
+    });
+
+    this.logger.info('Run progress assessed', {
+      project: project.name,
+      run: session.runs,
+      cause: verdict.cause,
+      progressed,
+      method: signature.method,
+      consecutiveNoProgress: session.consecutiveNoProgress,
+      blocked: blocked.blocked ? blocked.category : false,
+    });
+    this.emit('session:progress', {
+      project: project.name, session, progressed, method: signature.method,
+    });
+
+    return { progressed, signature: signature.hash, method: signature.method, blocked };
+  }
+
+  /** Pause between continue-relaunches (abortable by an operator stop). */
+  async interRunDelay(signal) {
+    const ms = this.progressConfig.interRunDelayMs ?? 0;
+    if (ms > 0) {
+      this.logger.info('Inter-run delay before relaunch', { ms });
+      await sleep(ms, signal);
+    }
+  }
+
+  /**
+   * Stop the mission because it cannot make progress (a detected loop or an
+   * explicit blocked state). Unlike {@link giveUp}, BLOCKED is terminal and
+   * NOT auto-resumable: continuing would re-enter the same futile loop.
+   * The session is archived and a diagnostic report is written so the
+   * operator can fix the blocker and start a clean run. This is precisely
+   * what turns a 13-hour overnight quota fire into a one-minute stop.
+   */
+  block(project, session, { reason, category, hint, evidence }) {
+    const recentRuns = this.progressLedger.recent(project.name, 8);
+    const reportPath = writeDiagnosticReport({
+      diagnosticsDir: this.paths.diagnosticsDir,
+      project,
+      session,
+      reason,
+      category,
+      hint,
+      evidence,
+      recentRuns,
+      logger: this.logger,
+    });
+
+    this.sessionManager.update(session, { lastActivity: `blocked: ${reason}` });
+    this.sessionManager.closeSession(session, SessionState.BLOCKED);
+    this.statusManager.syncSession(session);
+    this.statusManager.set({ orchestrator: { state: 'blocked' } });
+    this.logger.error('Mission blocked — stopping to avoid wasting usage', {
+      project: project.name,
+      reason,
+      category,
+      reportPath,
+    });
+    this.emit('mission:blocked', {
+      project: project.name, session, reason, category, reportPath,
+    });
+    return {
+      done: true,
+      result: { complete: false, session, reason, blocked: true, reportPath },
+    };
   }
 
   /** Mark a session as resumed and refresh counters/status. */

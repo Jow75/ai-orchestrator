@@ -39,6 +39,19 @@ test('readJsonSafe returns null for a missing file', () => {
   assert.equal(readJsonSafe(path.join(tempDir(), 'nope.json')), null);
 });
 
+test('writeJsonAtomic cleans up its temp file when the rename fails', () => {
+  // Reproduce the incident bug: a failing rename must not orphan a .tmp file.
+  // Renaming a file over an EXISTING directory reliably throws (EPERM/EISDIR).
+  const dir = tempDir();
+  const target = path.join(dir, 'target'); // a directory, so rename-over fails
+  fs.mkdirSync(target);
+
+  assert.throws(() => writeJsonAtomic(target, { hello: 'world' }));
+
+  const strays = fs.readdirSync(dir).filter((f) => f.endsWith('.tmp'));
+  assert.equal(strays.length, 0, 'no temp file should be left behind');
+});
+
 test('readJsonSafe quarantines a corrupt file instead of throwing', () => {
   const dir = tempDir();
   const file = path.join(dir, 'broken.json');

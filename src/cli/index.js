@@ -60,7 +60,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('1.0.0');
+    .version('1.1.0');
 
   program
     .command('start')
@@ -278,6 +278,7 @@ function printStatus(status, statusFile) {
       supervising: chalk.green,
       'mission-complete': chalk.green,
       'gave-up': chalk.red,
+      blocked: chalk.red,
       stopped: chalk.yellow,
     }[status.orchestrator?.state] ?? chalk.white;
 

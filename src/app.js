@@ -76,6 +76,7 @@ export class App {
       driverRegistry: this.driverRegistry,
       sessionManager: this.sessionManager,
       statusManager: this.statusManager,
+      paths: this.paths,
       logger: childLogger(this.logger, 'orchestrator'),
     });
 
@@ -165,12 +166,16 @@ export class App {
     }
 
     // Bring the platform up around the orchestrator.
-    await this.pluginManager.loadAll({
-      orchestrator: this.orchestrator,
-      driverRegistry: this.driverRegistry,
-      config: this.config,
-      logger: this.logger,
-    });
+    if (this.config.plugins?.enabled !== false) {
+      await this.pluginManager.loadAll({
+        orchestrator: this.orchestrator,
+        driverRegistry: this.driverRegistry,
+        config: this.config,
+        logger: this.logger,
+      });
+    } else {
+      this.logger.info('Plugin system disabled by configuration');
+    }
     await this.dashboard.start();
     this.statusManager.startUpdates();
     this.heartbeat.start({ project: resolved });

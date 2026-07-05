@@ -48,6 +48,35 @@ export const ORCHESTRATOR_DEFAULTS = {
     networkRetryDelayMs: 60_000,
   },
 
+  /**
+   * Progress awareness & loop prevention (see src/core/loopBreaker.js,
+   * src/progress/workspaceSignature.js). This is the safeguard that makes
+   * an unbounded no-progress relaunch loop impossible.
+   */
+  progress: {
+    /** Master switch. When false, the orchestrator reverts to marker-only
+     *  completion (the v1 behaviour) — not recommended for unattended runs. */
+    enabled: true,
+    /**
+     * Consecutive completed-but-unfinished runs that change nothing in the
+     * workspace before the circuit breaker trips and stops (with a
+     * diagnostic report). This is the primary guard against quota burn.
+     */
+    maxConsecutiveNoProgress: 3,
+    /**
+     * Pause between continue-relaunches. Gives long child work time to
+     * settle and caps how fast a growing conversation can spend quota.
+     * Abortable by an operator stop. 0 disables the delay.
+     */
+    interRunDelayMs: 15_000,
+    /**
+     * Treat a specific "agent is blocked" message (e.g. permission denied)
+     * combined with no progress as an immediate stop, rather than waiting
+     * for the consecutive-no-progress threshold.
+     */
+    blockedDetection: true,
+  },
+
   /** Usage-limit handling (see src/core/rateLimitEngine.js). */
   rateLimit: {
     /** Shortest allowed wait (guards against hot-looping on bad parses). */
@@ -67,6 +96,7 @@ export const ORCHESTRATOR_DEFAULTS = {
       'session:rate-limited',
       'session:crashed',
       'session:gave-up',
+      'mission:blocked',
       'mission:complete',
       'orchestrator:recovered-after-reboot',
     ],

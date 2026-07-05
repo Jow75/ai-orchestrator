@@ -53,6 +53,28 @@ Files: `logs/orchestrator-YYYY-MM-DD.log` (everything) and
 | `crashBackoffMaxMs` | `900000` | Backoff ceiling (15 min) |
 | `networkRetryDelayMs` | `60000` | Delay before retrying a network failure |
 
+### progress
+
+Loop prevention and progress awareness — the safeguard that makes an
+unbounded no-progress relaunch loop impossible. This is what stops a
+write-blocked or stuck agent from silently burning your usage overnight.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Master switch. `false` reverts to v1 marker-only completion (not recommended for unattended runs) |
+| `maxConsecutiveNoProgress` | `3` | Completed-but-unfinished runs that change **nothing** in the workspace before the circuit breaker trips, stops, and writes a diagnostic report |
+| `interRunDelayMs` | `15000` | Pause between continue-relaunches (abortable by stop); paces quota spend |
+| `blockedDetection` | `true` | Treat an explicit "agent is blocked" message (e.g. permission denied) plus no progress as an immediate stop |
+
+How progress is measured: after each run the orchestrator computes a
+signature of the working directory — git HEAD + `git status` + the contents
+of changed files when the workspace is a git repo, otherwise a scan of file
+paths/sizes/mtimes (ignoring `node_modules`, `.git`, build/state/log dirs).
+The signature changing = progress. If it genuinely cannot be measured, the
+run is counted as **no progress** (fail closed), so problems pause for review
+rather than loop. A tripped breaker archives the session as `blocked` (a
+terminal, non-resumable state) and writes `state/diagnostics/<project>-<ts>.md`.
+
 ### rateLimit
 
 | Key | Default | Meaning |

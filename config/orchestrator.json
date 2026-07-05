@@ -15,11 +15,20 @@
     "port": 4711
   },
 
+  "progress": {
+    "$comment": "Loop prevention. maxConsecutiveNoProgress runs that change nothing trip the circuit breaker and stop with a diagnostic report. This is what prevents overnight quota burn.",
+    "enabled": true,
+    "maxConsecutiveNoProgress": 3,
+    "interRunDelayMs": 15000,
+    "blockedDetection": true
+  },
+
   "notifications": {
     "events": [
       "session:rate-limited",
       "session:crashed",
       "session:gave-up",
+      "mission:blocked",
       "mission:complete",
       "orchestrator:recovered-after-reboot"
     ],

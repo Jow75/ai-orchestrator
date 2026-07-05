@@ -42,6 +42,12 @@ const EVENT_MESSAGES = {
     title: `Needs attention — ${project}`,
     message: `Supervision stopped: ${reason}`,
   }),
+  'mission:blocked': ({ project, reason, reportPath }) => ({
+    title: `⛔ Blocked — ${project}`,
+    message:
+      `Stopped to avoid wasting usage: ${reason}` +
+      (reportPath ? `\nDiagnostic report: ${reportPath}` : ''),
+  }),
   'session:recovered': ({ project, after }) => ({
     title: `Recovered — ${project}`,
     message: `Interrupted session found (${after}); resuming automatically.`,

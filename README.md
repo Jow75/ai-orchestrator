@@ -18,6 +18,10 @@ and handles everything that would normally require a human at the keyboard:
   the orchestrator does nothing.** Six silent hours waiting on a training
   run is healthy work, not failure. Recovery logic only ever runs after the
   process has actually exited.
+- 🛑 **Loop prevention** (v1.1) — measures real progress after every run
+  (git/file changes) and **stops with a diagnostic report** if the agent
+  spins without accomplishing anything or reports it is blocked (e.g. a
+  permission it lacks). No more overnight quota burn on a stuck mission.
 
 ## Quick start
 

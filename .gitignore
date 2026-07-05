@@ -8,6 +8,10 @@ sessions/
 status.json
 *.log
 
+# Atomic-write temp files (should be cleaned up automatically; ignore any strays)
+.status.json.*.tmp
+*.tmp
+
 # Environment / local overrides
 .env
 config/local.json

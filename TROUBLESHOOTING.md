@@ -52,7 +52,39 @@ the next `start` resumes the conversation.
 That is the design: a clean exit **without** the completion marker means
 "unfinished mission — continue". Ensure your prompt instructs the agent to
 print the exact marker (`MISSION COMPLETE` by default) only when everything
-is done, and that `mission.completionMarker` matches it exactly.
+is done, and that `mission.completionMarker` matches it exactly. As of v1.1
+this can no longer loop forever — see "Mission blocked" below.
+
+### "Mission blocked" — supervision stopped itself
+
+The progress circuit breaker (v1.1) stopped the mission because it detected
+no real progress. Read the diagnostic report it wrote at
+`state/diagnostics/<project>-<timestamp>.md` — it names the likely cause and
+the fix. Two common cases:
+
+- **Permission denied / blocked agent.** In headless mode the agent cannot
+  ask for permission, so write tools are auto-denied and it accomplishes
+  nothing. Set `claude.permissionMode` (e.g. `"acceptEdits"`) or
+  `claude.allowedTools` in the project config. *(This was the cause of the
+  overnight incident that motivated the feature.)*
+- **Stagnation.** `maxConsecutiveNoProgress` runs changed nothing in the
+  workspace. The mission may be unclear, already effectively done, or stuck.
+  Inspect the recent runs in the report and `state/ledger/<project>.jsonl`.
+
+The blocked session is archived to history (it is *not* auto-resumed, so a
+restart cannot re-enter the loop). After fixing the cause, `ai-orchestrator
+start <project>` begins a clean session. To tune sensitivity, adjust the
+`progress` block (see [CONFIGURATION.md](CONFIGURATION.md)); to disable the
+guard entirely, set `progress.enabled: false` (not recommended for
+unattended runs).
+
+### A legitimately slow mission got blocked
+
+If a mission does real work that does not touch files for several runs
+(long research/reading phases), raise `progress.maxConsecutiveNoProgress` or
+increase `progress.interRunDelayMs`. Committing intermediate work (git) or
+writing scratch notes also registers as progress. Blocked sessions are
+always preserved, so nothing is lost.
 
 ### It declared mission complete too early
 

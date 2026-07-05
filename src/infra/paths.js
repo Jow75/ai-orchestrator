@@ -44,6 +44,8 @@ export function resolvePaths(overrides = {}) {
   };
 
   resolved.sessionsDir = path.join(resolved.stateDir, 'sessions');
+  resolved.ledgerDir = path.join(resolved.stateDir, 'ledger');
+  resolved.diagnosticsDir = path.join(resolved.stateDir, 'diagnostics');
   resolved.heartbeatFile = path.join(resolved.stateDir, 'heartbeat.json');
   resolved.runtimeHistoryFile = path.join(resolved.stateDir, 'runtime_history.json');
 
@@ -57,7 +59,14 @@ export function resolvePaths(overrides = {}) {
  * @param {object} paths - Result of {@link resolvePaths}.
  */
 export function ensureRuntimeDirs(paths) {
-  for (const dir of [paths.logsDir, paths.stateDir, paths.sessionsDir, paths.pluginsDir]) {
+  for (const dir of [
+    paths.logsDir,
+    paths.stateDir,
+    paths.sessionsDir,
+    paths.ledgerDir,
+    paths.diagnosticsDir,
+    paths.pluginsDir,
+  ]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }

@@ -13,9 +13,10 @@
   },
 
   "claude": {
+    "$comment": "permissionMode acceptEdits lets Claude edit files unattended. Headless runs with permissionMode \"\" auto-DENY writes, so the agent can do nothing and the orchestrator will block the mission (see the 2026-07-04 incident). For fully autonomous missions use \"acceptEdits\" or set allowedTools; understand the trust implications first (CONFIGURATION.md).",
     "executable": "claude",
     "model": "",
-    "permissionMode": "",
+    "permissionMode": "acceptEdits",
     "dangerouslySkipPermissions": false,
     "allowedTools": [],
     "disallowedTools": [],

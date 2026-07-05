@@ -25,6 +25,13 @@ details) and from mechanism (process handling, persistence) throughout.
 │  crashRecoveryEngine.js   backoff + give-up policy                   │
 │  processSupervisor.js     passive observation only (child PID scans, │
 │                           last-output tracking) — never intervenes   │
+│  loopBreaker.js           progress circuit breaker (loop prevention) │
+│  blockedPatterns.js       detect permission-denied / blocked output  │
+├──────────────────────────────────────────────────────────────────────┤
+│  Progress awareness (P0)                   src/progress/, src/report/│
+│  workspaceSignature.js    git/filescan signature — did work happen?  │
+│  progressLedger.js        per-run audit trail (state/ledger/*.jsonl) │
+│  diagnosticReport.js      "why did we stop?" report on a block       │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Drivers (engine knowledge)                src/drivers/              │
 │  aiDriver.js              the interface every engine implements      │
@@ -68,21 +75,45 @@ One `Orchestrator` instance supervises one project's **mission** — a
    `completed`, `usage-limit`, `network`, `interrupted`, `spawn-failure`,
    and `crash`, using generic rules plus the driver's engine-specific
    output patterns. Usage-limit evidence beats a clean exit code.
-4. **Recover** — each cause maps to a strategy:
+4. **Assess progress** *(P0)* — for every exit, `assessProgress()` computes a
+   workspace signature, decides whether the run advanced anything, records
+   the run (with the agent's final response) to the progress ledger, and
+   runs blocked-state detection on the output.
+5. **Recover** — each cause maps to a strategy:
 
    | Cause | Strategy |
    | --- | --- |
    | completed + marker | archive session, emit `mission:complete`, stop |
-   | completed, no marker | relaunch with the continue prompt (same conversation) |
+   | completed, no marker | **loop breaker checks progress** → block, or inter-run delay → relaunch (same conversation) |
    | usage-limit | parse reset time (driver) → clamp (policy) → wait → resume |
    | network | short fixed delay → resume |
    | crash / external kill | exponential backoff; give up after N consecutive |
    | spawn-failure | give up immediately (engine missing) |
 
    *Giving up never deletes anything* — the session stays on disk in a
-   resumable state and the next start continues the same conversation.
+   resumable state and the next start continues the same conversation. The
+   exception is **blocked** (a detected loop or blocked agent): that state is
+   terminal and NOT auto-resumable — the session is archived with a
+   diagnostic report so a restart cannot re-enter the futile loop.
 
-5. **Repeat** until the completion marker appears or the operator stops it.
+6. **Repeat** until the completion marker appears, the loop breaker trips, or
+   the operator stops it.
+
+### Progress awareness (why the loop can't run away)
+
+The v1.0 loop would relaunch after every clean-but-unfinished run forever.
+v1.1 inserts a gate before each relaunch:
+
+- `computeWorkspaceSignature()` reduces the working directory to a hash
+  (git HEAD + status + dirty-file contents, else a file path/size/mtime
+  scan). Same hash across runs ⇒ no progress. It **fails closed**: an
+  unmeasurable workspace counts as no progress.
+- `detectBlockedState()` scans the agent's final output for distress signals
+  (permission denied, no access, cannot proceed, awaiting input).
+- `LoopBreaker.decide()` trips when the workspace has not changed for
+  `progress.maxConsecutiveNoProgress` runs, or immediately when a blocked
+  state coincides with no progress. Tripping routes to `block()`, which
+  writes a diagnostic report and archives the session as `blocked`.
 
 ## Crash-anywhere durability
 
