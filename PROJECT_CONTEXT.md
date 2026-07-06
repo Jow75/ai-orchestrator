@@ -12,7 +12,7 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md. This file is the "what's true *right now*" layer on
 top of those.
 
-**Last updated:** 2026-07-06, after committing and tagging `v2.0.0-beta.2`.
+**Last updated:** 2026-07-06, after committing and tagging `v2.0.0-rc.1`.
 
 ## Where things stand
 
@@ -24,10 +24,10 @@ top of those.
 | P3 — Persistent, runtime-mutable prompt queue | ✅ done | `v2.0.0-beta.1` |
 | P4 — Continuation Builder (structured resume/retry briefings) | ✅ done | `v2.0.0-beta.2` |
 | P5 — Cross-session memory (notes/failures/task history) | ✅ done | `v2.0.0-beta.2` |
-| P6 — Verification engine expansion (schema/lint/deps) | ⬜ not started | `v2.0.0-rc.1` (planned) |
+| P6 — Verification engine expansion (schema/lint/deps) | ✅ done | `v2.0.0-rc.1` |
 | P7 — Desktop application backend | ⬜ not started | `v2.0.0` (planned) |
 
-**Test suite:** 235/235 passing (`node --test`), 0 known regressions.
+**Test suite:** 251/251 passing (`node --test`), 0 known regressions.
 
 ## Operating mandate (why I'm not stopping to ask after each phase)
 
@@ -76,16 +76,27 @@ root, and committed the previously-untracked files in the same commit as
 P4+P5 (`8d0bb84`). If anything in `src/state/` seems to have vanished
 after a future `git clone`, this is the first thing to check.
 
+## What P6 actually changed
+
+`src/verify/verifierRegistry.js` gained three verifier types, extending
+the same registry (not a rewrite): `json-schema` (small dependency-free
+validator — documented as a bounded subset, not full draft compliance),
+`lint` (parses ESLint's `-f json` output into a specific problem list on
+failure), `dependency` (checks `package.json` + `node_modules` agree).
+**Deliberately not done**: wiring verification outcomes into
+`assessConfidence()`'s `'verified'` signal — verification is already
+authoritative for task completion, and the ledger entry for a run is
+written before that run's verification executes, so this would need a
+pipeline reorder for a cosmetic score bump. ROADMAP.md's earlier language
+implying this was corrected rather than left standing as a stale promise.
+
 ## Next up
 
-1. **P6 — Verification engine expansion**: extend the existing
-   `verifierRegistry.js` (not a rewrite) with JSON schema validation,
-   linting, and dependency/build-graph checks. Tag `v2.0.0-rc.1`.
-2. **P7 — Desktop application backend**: mutating HTTP endpoints
+1. **P7 — Desktop application backend**: mutating HTTP endpoints
    (pause/resume/skip/approve) behind a local auth token; the actual
    Tauri/Electron UI is out of scope for the backend phase. Tag `v2.0.0`
    (stable).
-3. **Final engineering report** once P7 lands — see the operating mandate
+2. **Final engineering report** once P7 lands — see the operating mandate
    above for exactly what it must cover.
 
 ## Conventions to keep following
