@@ -13,7 +13,7 @@ points:
 | `v2.0.0-alpha.1` | **P0 complete** — progress awareness & loop prevention (locked) |
 | `v2.0.0-alpha.2` | **P1 complete** — structured progress engine (files/git change facts) |
 | `v2.0.0-alpha.3` | **P2 complete** — mission system: ordered tasks, verification engine, checkpoints |
-| `v2.0.0-beta.1` | P3 — persistent prompt queue |
+| `v2.0.0-beta.1` | **P3 complete** — runtime-mutable prompt queue (add/remove/reorder) |
 | `v2.0.0-beta.2` | P4 — intelligent briefing (Continuation Builder) + P5 memory |
 | `v2.0.0-rc.1` | P6 — verification engine expansion (JSON schema, lint, dependency checks) |
 | `v2.0.0` | P7 — desktop application; stable release |
@@ -76,11 +76,26 @@ code, never the engine that produced them.)
 - Checkpoints (`src/mission/checkpoint.js`) capture structured data only;
   turning them into a Claude-facing prompt is P4, not pulled forward here.
 
-## P3 — Persistent prompt queue (`v2.0.0-beta.1`)
+## P3 — Persistent prompt queue ✅ (`v2.0.0-beta.1`, complete)
 
-- Queue multiple prompts up front; advance to the next only after the
-  current one is verified complete. Survives crashes, restarts, power loss,
-  and rate limits.
+- Reused P2's `TaskQueue` rather than building a parallel structure: the
+  static `tasks` array and the runtime queue are the same underlying data.
+  New `tasks add/remove/reorder` CLI commands (and the underlying
+  `enqueue()`/`removeTask()`/`reorderTask()` methods) let an operator build
+  up or adjust a project's plan without editing JSON — including
+  bootstrapping mission mode on a project with no static `tasks` at all.
+- `removeTask`/`reorderTask` only ever touch a `PENDING` (never-launched)
+  task — refused outright on anything active, done, failed, or blocked.
+- `getOrInitialize()`'s adoption rule generalized from "same session only"
+  to "current task still idle, regardless of session lineage" — which is
+  what lets queued-but-never-run tasks, and tasks appended after a prior
+  mission completed, run on the next `start`. Preserves every P2 safety
+  property: a BLOCKED or FAILED current task is never re-adopted (checked
+  by task *state*, not merely queue position) — verified by a dedicated
+  regression test, since an earlier draft of this rule got it wrong.
+- Advances to the next prompt only after the current one is verified
+  (reuses P2's verification engine unchanged); survives crashes, restarts,
+  power loss, and rate limits (reuses P2's per-task persistence unchanged).
 
 ## P4 — Intelligent briefing / **Claude Continuation Builder** (`v2.0.0-beta.2`)
 

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  isLegacyMission, normalizeAndValidateTasks, getTaskAt, getTaskById,
+  isLegacyMission, normalizeAndValidateTasks, validateSingleTask, getTaskAt, getTaskById,
   getTaskIndex, taskCount, DEFAULT_TASK_MAX_RUNS,
 } from '../src/mission/missionPlan.js';
 
@@ -122,4 +122,53 @@ test('taskCount / lookups on a legacy (no-tasks) project are safe', () => {
   assert.equal(taskCount({}), 0);
   assert.equal(getTaskAt({}, 0), null);
   assert.equal(getTaskById({}, 'T1'), null);
+});
+
+// ---------------------------------------------------------------------------
+// validateSingleTask() — shared by normalizeAndValidateTasks() AND Phase P3's
+// `tasks add` CLI command (one validation path, not two).
+// ---------------------------------------------------------------------------
+
+test('validateSingleTask(): a valid entry normalizes with the same defaults', () => {
+  const dir = workDir();
+  const { task, problems } = validateSingleTask(
+    { id: 'T9', prompt: 'prompt.md' },
+    { label: 'the new task', workingDirectory: dir, seenIds: new Set() }
+  );
+  assert.deepEqual(problems, []);
+  assert.equal(task.id, 'T9');
+  assert.equal(task.maxRuns, DEFAULT_TASK_MAX_RUNS);
+  assert.equal(task.resolvedPromptFile, path.join(dir, 'prompt.md'));
+});
+
+test('validateSingleTask(): checks id uniqueness against a caller-supplied set', () => {
+  // A duplicate (but present) id still returns a task object alongside the
+  // problem — same pattern as normalizeAndValidateTasks(): the caller's
+  // `problems.length` check is what actually rejects it, not a null task.
+  const dir = workDir();
+  const seenIds = new Set(['T1', 'T2']);
+  const { task, problems } = validateSingleTask(
+    { id: 'T1', prompt: 'prompt.md' },
+    { label: 'the new task', workingDirectory: dir, seenIds }
+  );
+  assert.ok(task); // still constructed
+  assert.ok(problems.some((p) => p.includes('not unique')));
+});
+
+test('validateSingleTask(): missing id returns no task object (not even a fallback one)', () => {
+  const dir = workDir();
+  const { task, problems } = validateSingleTask(
+    { prompt: 'prompt.md' },
+    { label: 'the new task', workingDirectory: dir, seenIds: new Set() }
+  );
+  assert.equal(task, null);
+  assert.ok(problems.some((p) => p.includes('id is required')));
+});
+
+test('validateSingleTask(): a non-object entry is rejected cleanly', () => {
+  const { task, problems } = validateSingleTask('not an object', {
+    label: 'the new task', workingDirectory: '/x', seenIds: new Set(),
+  });
+  assert.equal(task, null);
+  assert.ok(problems.some((p) => p.includes('must be an object')));
 });

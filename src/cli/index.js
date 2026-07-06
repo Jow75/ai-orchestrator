@@ -8,7 +8,7 @@
  *   stop                   Ask the running orchestrator to stop gracefully
  *   status                 Show live status (from status.json)
  *   sessions [project]     Show active sessions / a project's history
- *   tasks <project>        Show a mission-mode project's task queue
+ *   tasks list|add|remove|reorder   Manage a project's task queue (Phase P2/P3)
  *   projects list|add      Manage project definitions
  *   drivers                List available AI engine drivers
  *   scheduler ...          Install/inspect the Windows auto-start task
@@ -29,6 +29,7 @@ import { silentLogger } from '../infra/logger.js';
 import SessionManager from '../state/sessionManager.js';
 import MissionTimeline from '../state/missionTimeline.js';
 import TaskQueue from '../mission/taskQueue.js';
+import { validateSingleTask } from '../mission/missionPlan.js';
 import DriverRegistry from '../drivers/driverRegistry.js';
 import { readJsonSafe } from '../state/statePersistence.js';
 import { isPidAlive } from '../state/heartbeat.js';
@@ -63,7 +64,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('2.0.0-alpha.3');
+    .version('2.0.0-beta.1');
 
   program
     .command('start')
@@ -194,10 +195,14 @@ export function buildProgram() {
       }
     });
 
-  program
+  const tasks = program
     .command('tasks')
+    .description('Manage a project’s task queue (Phase P2 mission mode / P3 runtime queue)');
+
+  tasks
+    .command('list')
     .argument('<project>', 'project name')
-    .description('Show a mission-mode project’s task queue (Phase P2)')
+    .description('Show a project’s task queue')
     .action((project) => {
       try {
         const { paths } = readOnlyContext();
@@ -206,7 +211,7 @@ export function buildProgram() {
         if (!queue) {
           console.log(
             `No task queue for "${project}" — either it hasn't run yet, or it is a ` +
-            'legacy (single-prompt) project with no "tasks" defined.'
+            'legacy (single-prompt) project with no tasks queued.'
           );
           return;
         }
@@ -215,13 +220,124 @@ export function buildProgram() {
           const marker = index === queue.currentIndex ? chalk.cyan('→') : ' ';
           console.log(
             `  ${marker} ${chalk.bold(task.id)} — ${taskStateColor(task.state)(task.state)} ` +
-            `(attempts: ${task.attempts})`
+            `(attempts: ${task.attempts})` +
+            (task.objective ? chalk.dim(` — ${task.objective}`) : '')
           );
           if (task.checkpoint?.summary) {
             console.log(chalk.dim(`      ${truncateLine(task.checkpoint.summary, 100)}`));
           }
         });
         console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  tasks
+    .command('add')
+    .argument('<project>', 'project name')
+    .requiredOption('--id <id>', 'unique task id (e.g. "T3")')
+    .requiredOption('--prompt <file>', 'this task’s prompt file (relative to the project’s working directory, or absolute)')
+    .option('--objective <text>', 'human-readable description (defaults to the id)')
+    .option('--max-runs <n>', 'launches allowed before this task blocks (default 5)', String)
+    .option('--verify-file <file>', 'a JSON file containing this task’s "verify" array')
+    .description('Queue a new task onto a project (Phase P3) — runs on the next start')
+    .action((project, options) => {
+      try {
+        const { configManager, paths } = readOnlyContext();
+        // Reuses full project validation (workingDirectory, driver, ...) —
+        // tasks add builds on top of an already-valid project, it does not
+        // replace the need for one.
+        const projectConfig = configManager.getProject(project);
+        const taskQueue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger });
+        const queue = taskQueue.ensure(project);
+
+        let verify = [];
+        if (options.verifyFile) {
+          verify = JSON.parse(fs.readFileSync(path.resolve(options.verifyFile), 'utf8'));
+        }
+        const { task, problems } = validateSingleTask(
+          {
+            id: options.id,
+            prompt: options.prompt,
+            objective: options.objective,
+            maxRuns: options.maxRuns ? Number(options.maxRuns) : undefined,
+            verify,
+          },
+          {
+            label: `task "${options.id}"`,
+            workingDirectory: projectConfig.workingDirectory,
+            seenIds: new Set(queue.tasks.map((t) => t.id)),
+          }
+        );
+        if (problems.length) {
+          console.error(chalk.red(`\nCannot add task:\n - ${problems.join('\n - ')}`));
+          process.exitCode = 1;
+          return;
+        }
+
+        taskQueue.enqueue(queue, task);
+        console.log(
+          chalk.green(`Task "${task.id}" queued for "${project}" (position ${queue.tasks.length}).`)
+        );
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  tasks
+    .command('remove')
+    .argument('<project>', 'project name')
+    .argument('<taskId>', 'id of the task to remove')
+    .description('Remove a not-yet-started task from the queue')
+    .action((project, taskId) => {
+      try {
+        const { paths } = readOnlyContext();
+        const taskQueue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger });
+        const queue = taskQueue.load(project);
+        if (!queue) {
+          console.log(`No task queue for "${project}".`);
+          return;
+        }
+        const result = taskQueue.removeTask(queue, taskId);
+        if (!result.ok) {
+          console.error(chalk.red(`\n${result.reason}`));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(chalk.green(`Removed task "${taskId}" from "${project}".`));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  tasks
+    .command('reorder')
+    .argument('<project>', 'project name')
+    .argument('<taskId>', 'id of the task to move')
+    .argument('<direction>', '"up" (earlier) or "down" (later)')
+    .description('Move a not-yet-started task earlier or later in the queue')
+    .action((project, taskId, direction) => {
+      try {
+        if (direction !== 'up' && direction !== 'down') {
+          console.error(chalk.red('\nDirection must be "up" or "down".'));
+          process.exitCode = 1;
+          return;
+        }
+        const { paths } = readOnlyContext();
+        const taskQueue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger });
+        const queue = taskQueue.load(project);
+        if (!queue) {
+          console.log(`No task queue for "${project}".`);
+          return;
+        }
+        const result = taskQueue.reorderTask(queue, taskId, direction);
+        if (!result.ok) {
+          console.error(chalk.red(`\n${result.reason}`));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(chalk.green(`Moved task "${taskId}" ${direction}.`));
       } catch (error) {
         fail(error);
       }

@@ -28,6 +28,9 @@ and handles everything that would normally require a human at the keyboard:
   **verification** (file/command/output checks) — a task is done when its
   checks pass, never merely because the agent said so. Usage limits and
   crashes mid-task resume that exact task, not the mission from scratch.
+- 📋 **Runtime prompt queue** — build up or adjust that task plan on the
+  fly with `tasks add/remove/reorder`, no JSON editing required. Queue a
+  follow-up task after a mission finishes and it runs on the next `start`.
 
 ## Quick start
 
@@ -104,7 +107,8 @@ prompt (same conversation) → … → mission complete." See
 | `status` | Live status snapshot |
 | `sessions [project]` | Active sessions / per-project history |
 | `timeline <project>` | Key events over the mission's lifetime |
-| `tasks <project>` | Task queue for a multi-task mission |
+| `tasks list <project>` | Task queue for a multi-task mission |
+| `tasks add/remove/reorder` | Build or adjust a project's task queue at runtime |
 | `projects list` / `projects add` | Manage project definitions |
 | `drivers` | List available AI engine drivers |
 | `scheduler install/uninstall/status` | Windows auto-resume task |

@@ -221,7 +221,7 @@ and why (`state/diagnostics/<project>-<ts>.md`). Usage limits, crashes, and
 network errors are handled identically to legacy mode — they resume the
 task that was running, not the mission from the start.
 
-Inspect a mission's progress: `ai-orchestrator tasks <project>` (task
+Inspect a mission's progress: `ai-orchestrator tasks list <project>` (task
 states/attempts) and `ai-orchestrator timeline <project>` (task-done
 events alongside the rest of the mission's story). `ai-orchestrator
 status` also shows the current task and its position (e.g. `T2 [2/3]`).
@@ -238,6 +238,62 @@ status` also shows the current task and its position (e.g. `T2 [2/3]`).
 A task can list multiple verifiers; **all** must pass. An unknown verifier
 `type` is caught at config-load time (`ai-orchestrator doctor` / any
 command that loads the project) with the list of known types in the error.
+
+#### Runtime task queue (Phase P3) — no JSON editing required
+
+The static `tasks` array above is one way to define a mission's plan. The
+`tasks add/remove/reorder` CLI commands are another — they operate on the
+same persisted queue (`state/tasks/<project>.json`) at runtime, without
+touching the project's JSON file at all. This is what "queue multiple
+prompts before execution" means in practice: build up (or adjust) a
+project's plan interactively instead of hand-writing a `tasks` array.
+
+```bat
+:: Queue two tasks on ANY existing project (even one with no static tasks —
+:: its promptFile/driver/workingDirectory still need to be valid).
+node bin\ai-orchestrator.js tasks add my-project ^
+    --id T1 --prompt tasks\01-scaffold.md --objective "Scaffold the project"
+
+node bin\ai-orchestrator.js tasks add my-project ^
+    --id T2 --prompt tasks\02-feature.md --verify-file tasks\02-verify.json
+
+:: Inspect, reorder, or remove before it runs
+node bin\ai-orchestrator.js tasks list my-project
+node bin\ai-orchestrator.js tasks reorder my-project T2 up
+node bin\ai-orchestrator.js tasks remove my-project T2
+
+:: Then run it
+node bin\ai-orchestrator.js start my-project
+```
+
+`tasks add` options:
+
+| Option | Required | Meaning |
+| --- | --- | --- |
+| `--id <id>` | yes | Unique task id |
+| `--prompt <file>` | yes | This task's prompt file (relative to the project's `workingDirectory`, or absolute) |
+| `--objective <text>` | no | Human-readable description (defaults to the id) |
+| `--max-runs <n>` | no | Launches allowed before this task blocks (default `5`) |
+| `--verify-file <file>` | no | Path to a JSON file containing this task's `verify` array (see the verifier types table above). Omit for marker-fallback completion |
+
+Rules worth knowing:
+
+- **`tasks remove`/`tasks reorder`** only operate on a task that has never
+  been launched (`PENDING`) — a task that is running, done, failed, or
+  blocked cannot be removed or moved, by design (removing in-flight or
+  historical work would corrupt supervision state or discard real history).
+- **Queuing more tasks after a mission already completed** picks them up
+  automatically on the next `start` — the orchestrator adopts any persisted
+  queue whose current task is still idle, regardless of which session last
+  touched it.
+- **A `blocked` or `failed` task is never silently re-run.** If the whole
+  queue's current task ended in one of those states, the next `start`
+  falls back to the project's static plan (or legacy `promptFile`) instead
+  of re-adopting the stuck task — fix the cause first (see
+  TROUBLESHOOTING.md), then queue fresh tasks or edit the static config.
+- Static `tasks` (JSON) and the runtime queue are the **same underlying
+  queue** — the JSON array only seeds it the first time a session runs;
+  after that, `tasks add/remove/reorder` is the way to adjust the plan.
 
 ### claude (used when `driver` is `"claude"`)
 

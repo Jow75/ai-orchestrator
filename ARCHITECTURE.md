@@ -38,12 +38,15 @@ details) and from mechanism (process handling, persistence) throughout.
 │  diagnosticReport.js      "why did we stop?" report on a block       │
 │  missionTimeline.js       human-facing event stream (state/timeline) │
 ├──────────────────────────────────────────────────────────────────────┤
-│  Mission engine (P2)                        src/mission/             │
+│  Mission engine (P2/P3)                     src/mission/             │
 │  missionPlan.js           validates/normalizes a project's `tasks`;  │
-│                           legacy (no tasks) vs mission-mode lookup   │
+│                           legacy (no tasks) vs mission-mode lookup;  │
+│                           validateSingleTask() shared with the CLI   │
 │  taskQueue.js             persistent progress through the task plan │
 │                           (state/tasks/*.json) — attempts, state,    │
-│                           checkpoints; survives crash/limit/reboot   │
+│                           checkpoints; survives crash/limit/reboot;  │
+│                           enqueue/removeTask/reorderTask (P3) mutate │
+│                           the SAME queue at runtime, no JSON needed  │
 │  taskState.js             per-task lifecycle states                 │
 │  checkpoint.js            structured "what happened on this task"   │
 │                           data (seeds the P4 Continuation Builder)  │
@@ -210,12 +213,37 @@ workspace change is exactly the "spinning, not working" pattern it exists
 to catch, regardless of which subsystem is doing the spinning.
 
 **Persistence** (`TaskQueue`, `state/tasks/<project>.json`): current task
-index, each task's state/attempts/checkpoint. Scoped to the session id —
-resuming after a crash, rate limit, or reboot reuses the persisted queue
-(same task, same attempt count); a genuinely new session (not a resume)
-starts the plan over. A project edited mid-mission (different task ids)
-reinitializes the queue rather than trying to reconcile an arbitrary diff
-— documented as a known limitation, not silently guessed at.
+index, and each task's *complete definition plus runtime state*
+(`toQueueEntry()` merges a normalized task with `{state, attempts,
+checkpoint}`) — the queue entry, not a lookup against static config, is
+what the orchestrator reads. `getOrInitialize()`'s adoption rule:
+
+1. Same session, same plan shape → resume as-is.
+2. Same session, static plan shape changed → the project config was edited
+   mid-mission; reconciling an arbitrary diff is out of scope, so the queue
+   reinitializes with a warning rather than guessing.
+3. **Different (or no) session, but the current task is still PENDING or
+   ACTIVE** (`currentIsResumable()`) → **adopt** it. This is deliberately a
+   check of the current task's own *state*, not merely that an index is in
+   bounds: a BLOCKED or FAILED current task is never adopted by a new
+   session, however the check were phrased — silently re-attaching to a
+   task that was blocked would defeat the entire reason blocking exists.
+4. Otherwise → seed fresh from the static plan.
+
+Rule 3 is what Phase P3 adds: it lets a queue built (or extended) via the
+`tasks add` CLI — with no session attached yet, or attached to a session
+that already completed — run on the next `start`, while rules 2 and 4
+preserve every P2 safety property unchanged.
+
+**Runtime queue mutation (Phase P3)**: `enqueue()`, `removeTask()`, and
+`reorderTask()` let the `tasks add/remove/reorder` CLI commands adjust a
+project's plan without touching its JSON file. `removeTask`/`reorderTask`
+only ever act on a `PENDING` task — one that has never been launched —
+refusing outright on anything active, done, failed, or blocked, so a
+mutation can never corrupt in-flight supervision or discard real history.
+Static `tasks` (JSON) and the runtime queue are the same underlying
+structure: the JSON array only seeds the queue the first time a session
+runs it; `tasks add` is how the plan grows after that.
 
 **Checkpoints** (`src/mission/checkpoint.js`) capture *data only* — files
 touched, verification results, a truncated summary — deliberately stopping

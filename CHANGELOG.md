@@ -3,6 +3,74 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.0.0-beta.1] — 2026-07-06 — Phase P3: Persistent Prompt Queue
+
+Makes P2's task plan runtime-mutable: `tasks add/remove/reorder` build up
+or adjust a project's mission without editing JSON, reusing the exact same
+`TaskQueue` rather than introducing a parallel structure.
+
+### Added
+
+- **`TaskQueue` mutation methods**: `enqueue()` (append a task, carrying
+  its full normalized definition), `removeTask()` and `reorderTask()`
+  (both refuse anything that isn't `PENDING` — never touch an active,
+  done, failed, or blocked task), `ensure()` (load-or-create an empty,
+  session-less queue for bootstrapping).
+- **`missionPlan.validateSingleTask()`**: extracted from
+  `normalizeAndValidateTasks()` so the CLI's `tasks add` validates a new
+  task through the exact same path as the static config array — one
+  validation path, not two that could quietly disagree.
+- **CLI**: `tasks` is now a command group — `list` (the P2 display, moved
+  here), `add --id --prompt [--objective] [--max-runs] [--verify-file]`,
+  `remove <taskId>`, `reorder <taskId> up|down`.
+- **Queue entries now carry their full task definition** (objective,
+  resolvedPromptFile, continuePrompt, verify, maxRuns), not just runtime
+  state — the orchestrator reads a task's definition straight off its
+  queue entry instead of looking it up in static config by id. This is
+  what lets a CLI-enqueued task (never declared in `project.tasks` at all)
+  run with zero special-casing anywhere in the orchestrator.
+- **`getOrInitialize()` adoption generalized**: previously only a queue
+  belonging to the *same* session was reused; now any queue whose current
+  task is still `PENDING`/`ACTIVE` is adopted regardless of session
+  lineage. This is what makes queued-but-never-run tasks, and tasks
+  appended after a prior mission already completed, actually run on the
+  next `start`.
+- 21 new tests: `TaskQueue` mutations, `validateSingleTask()`, and a
+  5-scenario orchestrator integration suite proving a project with **no
+  static `tasks` at all** can be driven end-to-end by the CLI queue
+  (including reordered execution order and removed tasks never running).
+  Verified live via the real CLI: queue two tasks, reorder, `start`, and
+  confirm the reordered task ran first.
+
+### Fixed (caught while implementing the adoption-rule generalization)
+
+- The first draft of the generalized adoption rule checked only
+  `currentIndex < tasks.length` ("is there a task left") — which does NOT
+  distinguish a genuinely idle task from one sitting `BLOCKED` or `FAILED`
+  at the current position (`block()`/`markFailed()` never advance the
+  index). That draft would have let a brand-new session silently
+  re-attach to a **blocked** mission's stuck task — exactly the loop P0
+  exists to prevent. Caught by an existing P2 test whose expectations
+  the naive rule violated; fixed by checking the current task's own state
+  (`currentIsResumable()`) instead of the index alone, and added a
+  dedicated regression test (`getOrInitialize() NEVER re-adopts a BLOCKED
+  task under a new session`) so this cannot silently regress again.
+- Two old orchestrator test harnesses (`orchestrator.test.js`,
+  `orchestrator.p0.test.js`) predated `paths.tasksDir` and crashed once
+  mission-mode detection started checking for an existing queue
+  unconditionally; `TaskQueue.load()` now also guards against a missing
+  `tasksDir` directly (returns `null`, matching "no queue" semantics)
+  rather than relying solely on callers to supply a complete `paths` object.
+
+### Known limitations (documented, not hidden)
+
+- `tasks add` requires the target project to already pass full config
+  validation (`workingDirectory`, `driver`, and either `promptFile` or
+  existing `tasks`) — it layers mission content onto an already-valid
+  project rather than bootstrapping one from nothing.
+- Cross-session task memory (e.g. "T1 was already done in a previous,
+  now-abandoned attempt") is not tracked — Phase P5.
+
 ## [2.0.0-alpha.3] — 2026-07-06 — Phase P2: Mission System
 
 Converts the orchestrator from a single-prompt supervisor into a true

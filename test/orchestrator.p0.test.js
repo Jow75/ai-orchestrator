@@ -52,6 +52,7 @@ function harness({ mockRuns, progress = {}, mission = {} }) {
     ledgerDir: path.join(stateDir, 'ledger'),
     timelineDir: path.join(stateDir, 'timeline'),
     progressDir: path.join(stateDir, 'progress'),
+    tasksDir: path.join(stateDir, 'tasks'),
     diagnosticsDir: path.join(stateDir, 'diagnostics'),
   };
   const sessionManager = new SessionManager({

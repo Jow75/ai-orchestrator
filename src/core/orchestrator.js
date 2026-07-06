@@ -42,7 +42,7 @@ import { ProgressLedger } from '../progress/progressLedger.js';
 import { writeDiagnosticReport } from '../report/diagnosticReport.js';
 import { SessionState } from '../state/sessionManager.js';
 import { sleep, formatDuration } from '../infra/time.js';
-import { isLegacyMission, getTaskById } from '../mission/missionPlan.js';
+import { isLegacyMission } from '../mission/missionPlan.js';
 import { TaskQueue } from '../mission/taskQueue.js';
 import { buildCheckpoint } from '../mission/checkpoint.js';
 import { runVerifiers } from '../verify/verifierRegistry.js';
@@ -203,7 +203,14 @@ export class Orchestrator extends EventEmitter {
 
     // Phase P2: mission mode. A project with `tasks` walks an ordered plan;
     // a project without one behaves exactly as v1/P0/P1 (isLegacyMission).
-    this.missionMode = !isLegacyMission(project);
+    // Phase P3: OR a persisted queue whose current task is still PENDING/
+    // ACTIVE already exists — e.g. tasks queued via the `tasks add` CLI on
+    // an otherwise-legacy project, which never touches the static config
+    // file at all. A BLOCKED/FAILED/fully-complete queue does NOT count —
+    // only genuinely resumable work switches on mission mode by itself.
+    const existingQueue = this.taskQueueStore.load(project.name);
+    this.missionMode = !isLegacyMission(project)
+      || Boolean(existingQueue && this.taskQueueStore.currentIsResumable(existingQueue));
     this.taskQueueState = this.missionMode
       ? this.taskQueueStore.getOrInitialize(project.name, project.tasks, session.id)
       : null;
@@ -248,13 +255,15 @@ export class Orchestrator extends EventEmitter {
       let prompt;
       let activeTaskId = null;
       if (this.missionMode) {
+        // The queue entry IS the task's full definition + runtime state —
+        // no lookup against static config, so a CLI-enqueued task (never
+        // declared in project.tasks) works with no special-casing.
         const taskEntry = this.taskQueueStore.current(this.taskQueueState);
-        const taskDef = getTaskById(project, taskEntry.id);
-        activeTaskId = taskDef.id;
+        activeTaskId = taskEntry.id;
         const taskIsFresh = taskEntry.attempts === 0;
         prompt = taskIsFresh
-          ? fs.readFileSync(taskDef.resolvedPromptFile, 'utf8')
-          : (taskDef.continuePrompt ?? project.mission.continuePrompt);
+          ? fs.readFileSync(taskEntry.resolvedPromptFile, 'utf8')
+          : (taskEntry.continuePrompt ?? project.mission.continuePrompt);
         this.taskQueueStore.recordAttempt(this.taskQueueState);
         this.statusManager.syncTaskQueue(this.taskQueueState);
       } else {
@@ -531,8 +540,10 @@ export class Orchestrator extends EventEmitter {
    */
   async handleTaskCompletion({ project, session, exitInfo, finalText, progress, signal }) {
     const queue = this.taskQueueState;
+    // The queue entry carries the full task definition (see
+    // TaskQueue#toQueueEntry) — taskEntry and "the task" are the same thing.
     const taskEntry = this.taskQueueStore.current(queue);
-    const taskDef = getTaskById(project, taskEntry.id);
+    const taskDef = taskEntry;
 
     const verifyResult = taskDef.verify.length > 0
       ? runVerifiers(taskDef.verify, {

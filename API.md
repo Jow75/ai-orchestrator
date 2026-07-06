@@ -225,5 +225,29 @@ Lower-level building blocks (`Orchestrator`, `ClaudeDriver`,
 are all constructor-injected — see `test/orchestrator.test.js` for a
 complete example of composing them with fakes. Phase P2's mission engine
 is exported the same way: `TaskQueue`, `TaskState`, `isLegacyMission`,
-`normalizeAndValidateTasks`, `buildCheckpoint`, `runVerifiers` — see
-`test/orchestrator.p2.test.js` for a full mission-mode composition example.
+`normalizeAndValidateTasks`, `validateSingleTask`, `buildCheckpoint`,
+`runVerifiers` — see `test/orchestrator.p2.test.js` for a full mission-mode
+composition example.
+
+### `TaskQueue` runtime mutation (Phase P3)
+
+The same methods the `tasks add/remove/reorder` CLI commands call:
+
+```js
+import { TaskQueue, validateSingleTask } from 'ai-orchestrator';
+
+const taskQueue = new TaskQueue({ tasksDir, logger });
+const queue = taskQueue.ensure('my-project'); // loads or creates empty
+
+const { task, problems } = validateSingleTask(
+  { id: 'T3', prompt: 'tasks/03-cleanup.md' },
+  { label: 'task "T3"', workingDirectory, seenIds: new Set(queue.tasks.map(t => t.id)) }
+);
+if (problems.length === 0) taskQueue.enqueue(queue, task);
+
+taskQueue.removeTask(queue, 'T3');       // -> { ok, reason? } — PENDING only
+taskQueue.reorderTask(queue, 'T3', 'up'); // -> { ok, reason? } — PENDING only
+```
+
+See `test/orchestrator.p3.test.js` for a full example driving a real
+mission purely from queued tasks (no static `tasks` in the project config).

@@ -33,6 +33,83 @@ export function isLegacyMission(project) {
 }
 
 /**
+ * Validate and normalize ONE raw task entry. Shared by
+ * `normalizeAndValidateTasks()` (the static `tasks` array, at config-load
+ * time) and Phase P3's `queue add` CLI command (a single task appended to
+ * an already-running project's persisted queue) — one validation path,
+ * not two that could quietly disagree.
+ *
+ * @param {object} entry - Raw task config ({id, prompt, objective?, ...}).
+ * @param {object} params
+ * @param {string} params.label - How to refer to this task in problems
+ *   (e.g. `tasks[0]` or `the new task`).
+ * @param {string} params.workingDirectory - For resolving `prompt`.
+ * @param {Set<string>} params.seenIds - Ids already used; this task's id is
+ *   added to it on success (mutated — callers validating a list share one
+ *   set across entries; a single-task caller passes a fresh empty set).
+ * @returns {{task: object|null, problems: string[]}}
+ */
+export function validateSingleTask(entry, { label, workingDirectory, seenIds }) {
+  const problems = [];
+
+  if (!entry || typeof entry !== 'object') {
+    return { task: null, problems: [`${label} must be an object.`] };
+  }
+
+  const id = typeof entry.id === 'string' && entry.id ? entry.id : null;
+  if (!id) {
+    problems.push(`${label}.id is required (a short unique string, e.g. "T1").`);
+  } else if (seenIds.has(id)) {
+    problems.push(`${label}.id "${id}" is not unique — task ids must be distinct.`);
+  } else {
+    seenIds.add(id);
+  }
+
+  let resolvedPromptFile = null;
+  if (!entry.prompt) {
+    problems.push(`${label}.prompt is required (the task's prompt file).`);
+  } else {
+    const promptPath = path.isAbsolute(entry.prompt)
+      ? entry.prompt
+      : path.join(workingDirectory ?? '', entry.prompt);
+    if (!fs.existsSync(promptPath)) {
+      problems.push(`${label}.prompt not found: ${promptPath}`);
+    } else {
+      resolvedPromptFile = promptPath;
+    }
+  }
+
+  const verify = Array.isArray(entry.verify) ? entry.verify : [];
+  for (const [vIndex, verifier] of verify.entries()) {
+    if (!verifier?.type) {
+      problems.push(`${label}.verify[${vIndex}] is missing "type".`);
+    } else if (!isKnownVerifierType(verifier.type)) {
+      problems.push(
+        `${label}.verify[${vIndex}].type "${verifier.type}" is unknown. ` +
+        `Known verifier types: ${listVerifierTypes().join(', ')}.`
+      );
+    }
+  }
+
+  if (problems.length && !id) return { task: null, problems };
+
+  return {
+    task: {
+      id: id ?? label,
+      objective: entry.objective ?? id ?? label,
+      prompt: entry.prompt,
+      resolvedPromptFile,
+      continuePrompt: entry.continuePrompt ?? null, // null = fall back to mission.continuePrompt
+      verify,
+      maxRuns: Number.isInteger(entry.maxRuns) && entry.maxRuns > 0
+        ? entry.maxRuns
+        : DEFAULT_TASK_MAX_RUNS,
+    },
+    problems,
+  };
+}
+
+/**
  * Validate and normalize a project's raw `tasks` array. Called during
  * project config validation; returns problems rather than throwing so the
  * caller can report every issue in the project at once (matching
@@ -50,59 +127,13 @@ export function normalizeAndValidateTasks(project) {
   const problems = [];
   const seenIds = new Set();
   const tasks = raw.map((entry, index) => {
-    const label = `tasks[${index}]`;
-
-    if (!entry || typeof entry !== 'object') {
-      problems.push(`${label} must be an object.`);
-      return null;
-    }
-
-    const id = typeof entry.id === 'string' && entry.id ? entry.id : null;
-    if (!id) {
-      problems.push(`${label}.id is required (a short unique string, e.g. "T1").`);
-    } else if (seenIds.has(id)) {
-      problems.push(`${label}.id "${id}" is not unique — task ids must be distinct.`);
-    } else {
-      seenIds.add(id);
-    }
-
-    let resolvedPromptFile = null;
-    if (!entry.prompt) {
-      problems.push(`${label}.prompt is required (the task's prompt file).`);
-    } else {
-      const promptPath = path.isAbsolute(entry.prompt)
-        ? entry.prompt
-        : path.join(project.workingDirectory ?? '', entry.prompt);
-      if (!fs.existsSync(promptPath)) {
-        problems.push(`${label}.prompt not found: ${promptPath}`);
-      } else {
-        resolvedPromptFile = promptPath;
-      }
-    }
-
-    const verify = Array.isArray(entry.verify) ? entry.verify : [];
-    for (const [vIndex, verifier] of verify.entries()) {
-      if (!verifier?.type) {
-        problems.push(`${label}.verify[${vIndex}] is missing "type".`);
-      } else if (!isKnownVerifierType(verifier.type)) {
-        problems.push(
-          `${label}.verify[${vIndex}].type "${verifier.type}" is unknown. ` +
-          `Known verifier types: ${listVerifierTypes().join(', ')}.`
-        );
-      }
-    }
-
-    return {
-      id: id ?? `tasks[${index}]`,
-      objective: entry.objective ?? id ?? `Task ${index + 1}`,
-      prompt: entry.prompt,
-      resolvedPromptFile,
-      continuePrompt: entry.continuePrompt ?? null, // null = fall back to mission.continuePrompt
-      verify,
-      maxRuns: Number.isInteger(entry.maxRuns) && entry.maxRuns > 0
-        ? entry.maxRuns
-        : DEFAULT_TASK_MAX_RUNS,
-    };
+    const { task, problems: taskProblems } = validateSingleTask(entry, {
+      label: `tasks[${index}]`,
+      workingDirectory: project.workingDirectory,
+      seenIds,
+    });
+    problems.push(...taskProblems);
+    return task;
   }).filter(Boolean);
 
   return { tasks, problems };

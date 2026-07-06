@@ -127,7 +127,7 @@ warning in [CONFIGURATION.md](CONFIGURATION.md).
 
 ---
 
-## Mission mode (Phase P2 — task-based projects)
+## Mission mode (Phase P2/P3 — task-based projects)
 
 ### "Task X failed verification after N attempts" — blocked
 
@@ -141,34 +141,60 @@ which checks failed and why. Common causes:
 - **The agent misunderstood the objective.** Reread the task's `prompt`
   file; make the objective and success criteria more explicit.
 - **The task genuinely needs more attempts.** Raise that task's `maxRuns`
-  in `config/projects/<name>.json`.
+  in `config/projects/<name>.json`, or queue a fixed version with
+  `ai-orchestrator tasks add`.
 
-Like a blocked legacy mission, the session is archived (not auto-resumable)
-so a restart cannot re-enter the same failing loop. Fix the cause, then
-`ai-orchestrator start <project>` begins a fresh session — task 1 restarts,
-since a new session doesn't carry over completed-task history within the
-old session. (Cross-session task memory is planned for Phase P5.)
+The session is archived (not auto-resumable) so a restart cannot re-enter
+the same failing loop — and the blocked task's queue entry is never
+silently re-run by a later `start` either (verified by a dedicated test),
+regardless of session lineage. Fix the cause, then either edit the static
+`tasks` array and `start` again (restarts from task 1 of the static plan),
+or `ai-orchestrator tasks add <project> ...` a corrected replacement task
+and `start` — whichever matches how the mission was built.
 
-### `ai-orchestrator tasks <project>` shows nothing / "No task queue"
+### `ai-orchestrator tasks list <project>` shows nothing / "No task queue"
 
-Either the project hasn't been run yet, or it has no `tasks` array (legacy
-single-prompt mode has no task queue by design — use `sessions`/`timeline`
-instead).
+Either the project hasn't been run yet, has no `tasks` array, and nothing
+has been queued via `tasks add` (legacy single-prompt mode has no task
+queue by design — use `sessions`/`timeline` instead).
 
 ### Unknown verifier type error at startup
 
 `ai-orchestrator doctor` (or any command that loads the project) reports
 this immediately, with the full list of known types — see "Verifier types"
 in [CONFIGURATION.md](CONFIGURATION.md). Typo in `verify[].type` is the
-usual cause.
+usual cause. `tasks add --verify-file` reports the same error immediately
+if its JSON references an unknown type.
 
 ### "Task plan changed mid-mission; restarting the task queue" (log warning)
 
-The project's `tasks` array was edited (ids added/removed/reordered) while
-a session for it was still active. Reconciling an arbitrary edit against
-in-progress work isn't attempted — the task queue reinitializes from task 1
-under the existing session. Avoid editing `tasks` while a mission is
-running; if you must, expect to restart that mission's task progress.
+The project's static `tasks` array was edited (ids added/removed/reordered)
+while a session for it was still active. Reconciling an arbitrary edit
+against in-progress work isn't attempted — the task queue reinitializes
+under the existing session. Avoid editing the static `tasks` array while a
+mission is running; use `tasks add/remove/reorder` instead, which mutate
+the *running* queue safely (see below) rather than the file underneath it.
+
+### `tasks remove`/`tasks reorder` says a task "is not pending"
+
+Only a task that has **never been launched** can be removed or reordered —
+this is deliberate: mutating an active, done, failed, or blocked task would
+either corrupt in-flight supervision or discard real history. Check
+`ai-orchestrator tasks list <project>` for the task's actual state; if it
+already ran, there is nothing to remove/reorder.
+
+### I queued tasks with `tasks add` but `start` doesn't seem to run them
+
+Confirm with `ai-orchestrator tasks list <project>` that they were actually
+added (a validation error from `tasks add` — bad prompt path, unknown
+verifier type, duplicate id — exits non-zero and queues nothing). If the
+project's **static** `tasks` array is also non-empty, the static plan and
+the queue are the *same* queue — `tasks add` appends to whatever already
+exists; it does not create a second, competing plan. If a *previous*
+mission on this project ended `blocked`/`failed`, note the "never silently
+re-adopted" rule above: a fresh `start` after that falls back to the
+static plan or legacy `promptFile`, not to whatever was queued against the
+old, now-abandoned attempt — queue new tasks first, then `start`.
 
 ### A task with no `verify` never seems to finish
 

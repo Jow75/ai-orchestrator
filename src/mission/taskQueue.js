@@ -1,15 +1,22 @@
 /**
  * taskQueue.js — Persistent progress through a mission's task plan.
  *
- * Where `missionPlan.js` is the immutable plan (derived from project JSON),
- * `TaskQueue` is the mutable progress through it: which task is current,
- * how many attempts it has had, and its outcome once finished. Persisted at
- * `state/tasks/<project>.json` via the same atomic-write primitives as
- * every other piece of orchestrator state — a crash, rate limit, or reboot
- * mid-task loses nothing; the next start resumes the exact same task.
+ * Where `missionPlan.js` is the plan derived from a project's static JSON
+ * `tasks`, `TaskQueue` is the mutable progress through it: which task is
+ * current, how many attempts it has had, and its outcome once finished.
+ * Persisted at `state/tasks/<project>.json` via the same atomic-write
+ * primitives as every other piece of orchestrator state — a crash, rate
+ * limit, or reboot mid-task loses nothing; the next start resumes the
+ * exact same task.
  *
- * A task queue is scoped to one session: if a new session starts (a truly
- * fresh mission, not a resume), the queue reinitializes from the plan.
+ * Phase P3 (persistent prompt queue): the queue is no longer purely
+ * derived from static config. `enqueue()`/`removeTask()`/`reorderTask()`
+ * let an operator (via the `tasks add/remove/reorder` CLI) build up or
+ * adjust a project's plan at runtime — including bootstrapping a project
+ * that has no static `tasks` at all. `getOrInitialize()` adopts any
+ * persisted queue that still has unfinished work, regardless of which
+ * session last touched it, which is what lets newly-queued tasks run on
+ * the next `start` without re-declaring the whole plan in JSON.
  */
 
 import path from 'node:path';
@@ -31,59 +38,114 @@ export class TaskQueue {
     return path.join(this.tasksDir, `${project}.json`);
   }
 
-  /** Load the persisted queue for a project, or null if none exists. */
+  /**
+   * Load the persisted queue for a project, or null if none exists.
+   * Also null (never throws) if `tasksDir` itself was never configured —
+   * a legacy-only setup (e.g. a minimal hand-built config in tests) simply
+   * has no task queues, which is exactly what "no queue" already means.
+   */
   load(project) {
+    if (!this.tasksDir) return null;
     return readJsonSafe(this.file(project), { logger: this.logger });
   }
 
   /**
-   * Load the existing queue if it matches this session and plan, otherwise
-   * initialize a fresh one. This is the single entry point the orchestrator
-   * calls at the start of a mission-mode run.
+   * Load the existing queue if it's usable for this run, otherwise
+   * initialize a fresh one from the static plan. This is the single entry
+   * point the orchestrator calls at the start of a mission-mode run.
+   *
+   * Three cases, checked in order:
+   *  1. Same session, same plan shape → true resume (attempts/state as-is).
+   *  2. Same session, DIFFERENT plan shape → the static config was edited
+   *     while this session was active. Reconciling an arbitrary edit
+   *     against in-progress work is out of scope; restart the queue and
+   *     log clearly rather than silently guessing.
+   *  3. Different (or no) session, but the CURRENT task is still PENDING or
+   *     ACTIVE (`currentIsResumable()`) → **adopt** it (Phase P3). Covers
+   *     tasks queued via the CLI that never attached to a session yet, and
+   *     tasks appended onto a queue whose earlier session already
+   *     completed. Deliberately checks the current task's own STATE, not
+   *     merely that the index is in bounds: a BLOCKED or FAILED current
+   *     task must never be silently re-adopted by a new session — that
+   *     would defeat the entire point of blocking (never re-enter the same
+   *     futile loop). Only a truly-idle task (never terminal) is adoptable.
+   *  Otherwise: no usable queue exists → seed fresh from the static plan.
    *
    * @param {string} project - Project name.
-   * @param {object[]} planTasks - Normalized tasks (see missionPlan.js).
+   * @param {object[]} planTasks - Normalized static tasks (see missionPlan.js).
    * @param {string} sessionId - The active session's id.
    * @returns {object} The queue state (persisted shape — see initialize()).
    */
   getOrInitialize(project, planTasks, sessionId) {
     const existing = this.load(project);
-    const planIds = planTasks.map((t) => t.id);
-    const matchesPlan = existing
-      && existing.sessionId === sessionId
-      && existing.tasks.length === planIds.length
-      && existing.tasks.every((t, i) => t.id === planIds[i]);
-
-    if (matchesPlan) return existing;
 
     if (existing && existing.sessionId === sessionId) {
-      // Same session, but the task plan itself changed shape — the project
-      // config was edited mid-mission. Reconciling arbitrary edits is out
-      // of scope for this phase; restart the queue and say so plainly.
+      const planIds = planTasks.map((t) => t.id);
+      const samePlanShape = existing.tasks.length === planIds.length
+        && existing.tasks.every((t, i) => t.id === planIds[i]);
+      if (samePlanShape) return existing;
+
       this.logger.warn('Task plan changed mid-mission; restarting the task queue', {
         project, previousTaskIds: existing.tasks.map((t) => t.id), newTaskIds: planIds,
       });
+      return this.initialize(project, planTasks, sessionId);
+    }
+
+    if (existing && this.currentIsResumable(existing)) {
+      existing.sessionId = sessionId;
+      this.save(existing);
+      this.logger.info('Adopting existing task queue with unfinished work', {
+        project, currentIndex: existing.currentIndex, totalTasks: existing.tasks.length,
+      });
+      return existing;
     }
 
     return this.initialize(project, planTasks, sessionId);
   }
 
-  /** Create and persist a fresh queue from a plan. */
+  /**
+   * Load the persisted queue, or create an empty, session-less one if none
+   * exists yet. Used by the `tasks add` CLI command to bootstrap a queue on
+   * a project with no queue history — including one with no static `tasks`
+   * at all (mission mode built entirely at runtime).
+   *
+   * @param {string} project - Project name.
+   * @returns {object} The queue state.
+   */
+  ensure(project) {
+    const existing = this.load(project);
+    if (existing) return existing;
+
+    const queue = { project, sessionId: null, currentIndex: 0, tasks: [] };
+    this.save(queue);
+    return queue;
+  }
+
+  /**
+   * Create and persist a fresh queue from a plan.
+   *
+   * Each entry carries its full normalized definition (objective,
+   * resolvedPromptFile, continuePrompt, verify, maxRuns) alongside the
+   * runtime fields (state, attempts, checkpoint) — the queue entry IS the
+   * task from here on, not just a progress marker looked up elsewhere.
+   * This is what lets `enqueue()`-added tasks (no static config entry at
+   * all) work with zero special-casing in the orchestrator.
+   */
   initialize(project, planTasks, sessionId) {
     const queue = {
       project,
       sessionId,
       currentIndex: 0,
-      tasks: planTasks.map((t) => ({
-        id: t.id,
-        state: TaskState.PENDING,
-        attempts: 0,
-        checkpoint: null,
-      })),
+      tasks: planTasks.map((t) => this.toQueueEntry(t)),
     };
     this.save(queue);
     this.logger.info('Task queue initialized', { project, taskCount: planTasks.length });
     return queue;
+  }
+
+  /** Combine a normalized task definition with fresh runtime fields. */
+  toQueueEntry(task) {
+    return { ...task, state: TaskState.PENDING, attempts: 0, checkpoint: null };
   }
 
   save(queue) {
@@ -151,6 +213,86 @@ export class TaskQueue {
   currentIsResumable(queue) {
     const task = this.current(queue);
     return Boolean(task && TASK_RESUMABLE_STATES.includes(task.state));
+  }
+
+  /**
+   * Phase P3: append a new task to the end of the queue. `task` must
+   * already be validated/normalized (see `missionPlan.validateSingleTask()`)
+   * — this method does not re-check id uniqueness or prompt existence.
+   *
+   * @param {object} queue
+   * @param {object} task - Normalized task definition.
+   * @returns {object} The updated, persisted queue.
+   */
+  enqueue(queue, task) {
+    queue.tasks.push(this.toQueueEntry(task));
+    this.save(queue);
+    this.logger.info('Task enqueued', { project: queue.project, taskId: task.id });
+    return queue;
+  }
+
+  /**
+   * Remove a task by id. Only a PENDING task may be removed — one that has
+   * never been launched. Removing an ACTIVE, DONE, FAILED, or BLOCKED task
+   * would either corrupt in-flight supervision or discard real history, so
+   * both are refused rather than silently allowed.
+   *
+   * @param {object} queue
+   * @param {string} taskId
+   * @returns {{ok: boolean, reason?: string}}
+   */
+  removeTask(queue, taskId) {
+    const index = queue.tasks.findIndex((t) => t.id === taskId);
+    if (index === -1) return { ok: false, reason: `No task "${taskId}" in the queue.` };
+
+    const task = queue.tasks[index];
+    if (task.state !== TaskState.PENDING) {
+      return {
+        ok: false,
+        reason: `Task "${taskId}" is ${task.state}, not pending — only a task that ` +
+          'has never been launched can be removed.',
+      };
+    }
+
+    queue.tasks.splice(index, 1);
+    this.save(queue);
+    this.logger.info('Task removed from queue', { project: queue.project, taskId });
+    return { ok: true };
+  }
+
+  /**
+   * Move a PENDING task one position earlier or later among the other
+   * PENDING tasks. Cannot reorder a task that has already started, and
+   * cannot move a task past one that has already started or finished.
+   *
+   * @param {object} queue
+   * @param {string} taskId
+   * @param {'up'|'down'} direction - 'up' = earlier, 'down' = later.
+   * @returns {{ok: boolean, reason?: string}}
+   */
+  reorderTask(queue, taskId, direction) {
+    const index = queue.tasks.findIndex((t) => t.id === taskId);
+    if (index === -1) return { ok: false, reason: `No task "${taskId}" in the queue.` };
+    if (queue.tasks[index].state !== TaskState.PENDING) {
+      return { ok: false, reason: `Task "${taskId}" is not pending — cannot reorder it.` };
+    }
+
+    const swapWith = direction === 'up' ? index - 1 : index + 1;
+    if (swapWith < 0 || swapWith >= queue.tasks.length) {
+      return { ok: false, reason: `Task "${taskId}" is already at that end of the queue.` };
+    }
+    if (queue.tasks[swapWith].state !== TaskState.PENDING) {
+      return {
+        ok: false,
+        reason: `Cannot move "${taskId}" past "${queue.tasks[swapWith].id}", ` +
+          `which is already ${queue.tasks[swapWith].state}.`,
+      };
+    }
+
+    [queue.tasks[index], queue.tasks[swapWith]] = [queue.tasks[swapWith], queue.tasks[index]];
+    this.save(queue);
+    this.logger.info('Task reordered', { project: queue.project, taskId, direction });
+    return { ok: true };
   }
 }
 
