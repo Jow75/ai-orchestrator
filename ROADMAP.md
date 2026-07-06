@@ -15,7 +15,7 @@ points:
 | `v2.0.0-alpha.3` | **P2 complete** — mission system: ordered tasks, verification engine, checkpoints |
 | `v2.0.0-beta.1` | **P3 complete** — runtime-mutable prompt queue (add/remove/reorder) |
 | `v2.0.0-beta.2` | **P4 + P5 complete** — intelligent briefing (Continuation Builder) + cross-session memory |
-| `v2.0.0-rc.1` | P6 — verification engine expansion (JSON schema, lint, dependency checks) |
+| `v2.0.0-rc.1` | **P6 complete** — verification engine expansion (JSON schema, lint, dependency checks) |
 | `v2.0.0` | P7 — desktop application; stable release |
 
 ### Architectural principle for every phase: **engine-agnostic**
@@ -51,8 +51,11 @@ code, never the engine that produced them.)
 - Per-project `progress` config overrides (P0 was global-only).
 - Caught and fixed a confidence-scoring bug in the same pass (method-name
   mismatch between the old and new progress signal shapes) — see CHANGELOG.
-- Tests/build signals for the confidence scorer still arrive with P6
-  verification, which reuses `assessConfidence()` rather than a parallel path.
+- Note: P6 shipped verification-engine expansion but deliberately did NOT
+  wire verification outcomes into the confidence scorer — see P6's own
+  section below for why (verification is already authoritative for task
+  completion; a confidence bump for the same decision would be
+  redundant, and the ledger entry is written before verification runs).
 
 ## P2 — Mission system ✅ (`v2.0.0-alpha.3`, complete)
 
@@ -171,14 +174,31 @@ catalog, and (task-scoped) this task id's prior archived attempts —
 learning from past runs instead of silently repeating them. `GET
 /api/memory/:project` exposes the same data read-only.
 
-## P6 — Verification engine expansion (`v2.0.0-rc.1`)
+## P6 — Verification engine expansion ✅ (`v2.0.0-rc.1`, complete)
 
 - P2 already shipped the core principle ("verification decides success,
   not the agent") and four verifier types. P6 extends the same
-  `verifierRegistry.js` — not a rewrite — with JSON schema validation,
-  linting, dependency/build-graph checks, and whatever else real missions
-  need. Verified signals continue to raise the confidence score via the
-  same `assessConfidence()` extension point P0/P1 established.
+  `verifierRegistry.js` — not a rewrite — with three more:
+  - **`json-schema`** — validates a JSON file against a schema (a small,
+    dependency-free validator covering `type`/`required`/`properties`/
+    `items`/`enum`/`minimum`/`maximum`/`minLength`/`maxLength`/`pattern`;
+    documented as a bounded subset, not full JSON Schema draft support).
+  - **`lint`** — runs a lint command like `command` does, but parses
+    ESLint's `-f json` output (when present) into a specific, ranked
+    problem list instead of raw stdout.
+  - **`dependency`** — checks a package is declared in `package.json`
+    and, by default, actually installed in `node_modules` — catches
+    "edited package.json, never ran npm install."
+- **Deliberately not wired**: `assessConfidence()`'s existing `'verified'`
+  signal extension point (P0/P1) is not fed from verification results.
+  Verification already authoritatively decides task completion in
+  mission mode — a supplementary confidence-score bump for the same
+  decision would be redundant, and the ledger entry for a run is written
+  (via `assessProgress()`) *before* that run's verification even
+  executes, so wiring it would mean reordering the exit-handling
+  pipeline for a cosmetic score adjustment. Revisit only if confidence
+  scoring itself needs to reflect verification for a concrete reason
+  (e.g. a future dashboard view), not by default.
 - Revisit plugin-extensible verifier types here if a real need emerges
   (deliberately deferred in P2 — see ARCHITECTURE.md).
 

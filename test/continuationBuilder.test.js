@@ -169,3 +169,22 @@ test('buildTaskContinuation: a task-scoped unresolved failure names the task, no
   });
   assert.match(prompt, /\(task "T2"\) flaky test suite/);
 });
+
+// ── Phase P6: verifier descriptions for the new registry entries ───────────
+
+test('buildTaskContinuation: describes json-schema/lint/dependency verifiers readably', () => {
+  const task = {
+    id: 'T5', objective: 'Ship config', state: 'active', attempts: 1,
+    verify: [
+      { type: 'json-schema', path: 'config.json' },
+      { type: 'lint', run: 'npx eslint .' },
+      { type: 'dependency', name: 'express' },
+    ],
+  };
+  const prompt = buildTaskContinuation({
+    project: PROJECT, queue: { tasks: [task] }, task, reason: 'retrying task',
+  });
+  assert.match(prompt, /`config\.json` conforms to its JSON schema/);
+  assert.match(prompt, /lint command `npx eslint \.` reports zero problems/);
+  assert.match(prompt, /"express" is declared as a dependency and installed/);
+});

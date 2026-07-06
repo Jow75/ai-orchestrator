@@ -212,8 +212,10 @@ Contract rules:
 
 Not plugin-extensible today — a task's `verify` entries must use one of
 the built-in types (`file-exists`, `command`, `output-contains`,
-`files-changed`; see [CONFIGURATION.md](CONFIGURATION.md)). Documented here
-because P6 extends this exact registry rather than replacing it:
+`files-changed`, `json-schema`, `lint`, `dependency`; see
+[CONFIGURATION.md](CONFIGURATION.md)). Documented here because P6 extended
+this exact registry rather than replacing it — the interface below did
+not change shape when the three new verifiers were added:
 
 ```js
 // src/verify/verifiers/*.js — the shape every verifier implements

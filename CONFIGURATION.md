@@ -256,6 +256,9 @@ status` also shows the current task and its position (e.g. `T2 [2/3]`).
 | `command` | `run`, `expectExit` (default `0`), `timeoutMs` (default `60000`) | The shell command exits with the expected code. The command is trusted config — same trust model as the mission prompt |
 | `output-contains` | `pattern`, `regex` (bool), `flags` | The agent's final output contains the substring, or matches the regex when `regex: true` |
 | `files-changed` | `paths` (array; entries ending in `/` match any file under that directory) | Every listed path was created or modified **this run** — reuses the same change facts the progress engine already computed, so it never re-invokes git |
+| `json-schema` (Phase P6) | `path`, `schema` (inline) or `schemaFile` | The JSON file at `path` conforms to the schema — a small built-in validator (`type`, `required`, `properties`, `items`, `enum`, `minimum`/`maximum`, `minLength`/`maxLength`, `pattern`); NOT a full JSON Schema draft implementation (no `$ref`, `oneOf`/`anyOf`/`allOf`, `additionalProperties`) |
+| `lint` (Phase P6) | `run`, `expectExit` (default `0`), `timeoutMs` | The lint command exits with the expected code. If its output parses as ESLint's `-f json` shape, the failure detail names the specific file/line/rule/message instead of raw output |
+| `dependency` (Phase P6) | `name`, `where` (optional: `dependencies`/`devDependencies`/`peerDependencies`), `installed` (default `true`), `packageFile` (default `package.json`) | `name` is declared in the project's `package.json` and — unless `installed: false` — actually present in `node_modules` |
 
 A task can list multiple verifiers; **all** must pass. An unknown verifier
 `type` is caught at config-load time (`ai-orchestrator doctor` / any

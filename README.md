@@ -25,9 +25,10 @@ and handles everything that would normally require a human at the keyboard:
   mission.
 - 🧩 **Multi-task missions** — a project can define an ordered plan of
   **tasks** instead of one prompt, each with its own objective and
-  **verification** (file/command/output checks) — a task is done when its
-  checks pass, never merely because the agent said so. Usage limits and
-  crashes mid-task resume that exact task, not the mission from scratch.
+  **verification** (file/command/output/JSON-schema/lint/dependency
+  checks) — a task is done when its checks pass, never merely because the
+  agent said so. Usage limits and crashes mid-task resume that exact
+  task, not the mission from scratch.
 - 📋 **Runtime prompt queue** — build up or adjust that task plan on the
   fly with `tasks add/remove/reorder`, no JSON editing required. Queue a
   follow-up task after a mission finishes and it runs on the next `start`.

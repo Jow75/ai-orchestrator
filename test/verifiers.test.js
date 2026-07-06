@@ -22,10 +22,13 @@ test('registry knows its built-in types', () => {
   assert.ok(isKnownVerifierType('command'));
   assert.ok(isKnownVerifierType('output-contains'));
   assert.ok(isKnownVerifierType('files-changed'));
+  assert.ok(isKnownVerifierType('json-schema'));
+  assert.ok(isKnownVerifierType('lint'));
+  assert.ok(isKnownVerifierType('dependency'));
   assert.equal(isKnownVerifierType('nonsense'), false);
   assert.deepEqual(
     listVerifierTypes(),
-    ['command', 'file-exists', 'files-changed', 'output-contains']
+    ['command', 'dependency', 'file-exists', 'files-changed', 'json-schema', 'lint', 'output-contains']
   );
 });
 
@@ -159,4 +162,164 @@ test('multiple verifiers must ALL pass', () => {
 test('empty verifier list trivially passes', () => {
   assert.equal(runVerifiers([], {}).passed, true);
   assert.equal(runVerifiers(undefined, {}).passed, true);
+});
+
+// ── Phase P6: json-schema, lint, dependency ─────────────────────────────────
+
+test('json-schema: passes when the file conforms', () => {
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ name: 'app', port: 8080 }));
+  const { passed } = runVerifiers(
+    [{
+      type: 'json-schema', path: 'config.json',
+      schema: {
+        type: 'object', required: ['name', 'port'],
+        properties: { name: { type: 'string' }, port: { type: 'integer', minimum: 1 } },
+      },
+    }],
+    { workingDirectory: dir }
+  );
+  assert.equal(passed, true);
+});
+
+test('json-schema: reports the specific field and reason on mismatch', () => {
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ port: 'not-a-number' }));
+  const { passed, results } = runVerifiers(
+    [{
+      type: 'json-schema', path: 'config.json',
+      schema: {
+        type: 'object', required: ['name', 'port'],
+        properties: { name: { type: 'string' }, port: { type: 'integer' } },
+      },
+    }],
+    { workingDirectory: dir }
+  );
+  assert.equal(passed, false);
+  assert.match(results[0].detail, /missing required property "name"/);
+  assert.match(results[0].detail, /at "\$\.port": expected integer, got string/);
+});
+
+test('json-schema: invalid JSON in the target file fails cleanly', () => {
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, 'config.json'), '{not valid json');
+  const { passed, results } = runVerifiers(
+    [{ type: 'json-schema', path: 'config.json', schema: { type: 'object' } }],
+    { workingDirectory: dir }
+  );
+  assert.equal(passed, false);
+  assert.match(results[0].detail, /not valid JSON/);
+});
+
+test('json-schema: missing target file fails with "Not found"', () => {
+  const { passed, results } = runVerifiers(
+    [{ type: 'json-schema', path: 'missing.json', schema: { type: 'object' } }],
+    { workingDirectory: tempDir() }
+  );
+  assert.equal(passed, false);
+  assert.match(results[0].detail, /Not found/);
+});
+
+test('json-schema: can load the schema from a schemaFile', () => {
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify({ ok: true }));
+  fs.writeFileSync(path.join(dir, 'schema.json'), JSON.stringify({ type: 'object', required: ['ok'] }));
+  const { passed } = runVerifiers(
+    [{ type: 'json-schema', path: 'data.json', schemaFile: 'schema.json' }],
+    { workingDirectory: dir }
+  );
+  assert.equal(passed, true);
+});
+
+test('lint: exits 0 -> passes with a clean-lint detail', () => {
+  const { passed, results } = runVerifiers(
+    [{ type: 'lint', run: 'node -e "process.exit(0)"' }],
+    { workingDirectory: tempDir() }
+  );
+  assert.equal(passed, true);
+  assert.match(results[0].detail, /lint clean/);
+});
+
+test('lint: parses ESLint-style JSON output into a specific problem list', () => {
+  const dir = tempDir();
+  const eslintJson = JSON.stringify([
+    { filePath: '/repo/src/a.js', messages: [{ ruleId: 'no-unused-vars', message: "'x' is never used", line: 12 }] },
+  ]);
+  // A temp script file sidesteps cross-shell quoting entirely (Windows
+  // cmd.exe vs POSIX sh mangle inline `node -e "..."` differently).
+  const scriptFile = path.join(dir, 'fake-lint.js');
+  fs.writeFileSync(scriptFile, `console.log(${JSON.stringify(eslintJson)});\nprocess.exit(1);\n`);
+  const { passed, results } = runVerifiers(
+    [{ type: 'lint', run: `node "${scriptFile}"` }],
+    { workingDirectory: dir }
+  );
+  assert.equal(passed, false);
+  assert.match(results[0].detail, /src\/a\.js:12 \[no-unused-vars\] 'x' is never used/);
+});
+
+test('lint: non-JSON output falls back to the generic exit-code/output detail', () => {
+  const dir = tempDir();
+  const scriptFile = path.join(dir, 'fake-lint-plain.js');
+  fs.writeFileSync(scriptFile, "console.log('plain text error');\nprocess.exit(1);\n");
+  const { passed, results } = runVerifiers(
+    [{ type: 'lint', run: `node "${scriptFile}"` }],
+    { workingDirectory: dir }
+  );
+  assert.equal(passed, false);
+  assert.match(results[0].detail, /exited 1, expected 0/);
+  assert.match(results[0].detail, /plain text error/);
+});
+
+test('dependency: passes when declared and installed', () => {
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ dependencies: { express: '^4.0.0' } }));
+  fs.mkdirSync(path.join(dir, 'node_modules', 'express'), { recursive: true });
+  const { passed, results } = runVerifiers(
+    [{ type: 'dependency', name: 'express' }],
+    { workingDirectory: dir }
+  );
+  assert.equal(passed, true);
+  assert.match(results[0].detail, /declared in dependencies and installed/);
+});
+
+test('dependency: declared but not installed reports the actual gap', () => {
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ dependencies: { express: '^4.0.0' } }));
+  const { passed, results } = runVerifiers(
+    [{ type: 'dependency', name: 'express' }],
+    { workingDirectory: dir }
+  );
+  assert.equal(passed, false);
+  assert.match(results[0].detail, /not installed/);
+  assert.match(results[0].detail, /npm install/);
+});
+
+test('dependency: not declared at all fails clearly', () => {
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ dependencies: {} }));
+  const { passed, results } = runVerifiers(
+    [{ type: 'dependency', name: 'express' }],
+    { workingDirectory: dir }
+  );
+  assert.equal(passed, false);
+  assert.match(results[0].detail, /is not declared/);
+});
+
+test('dependency: installed:false skips the node_modules check', () => {
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ devDependencies: { eslint: '^9.0.0' } }));
+  const { passed } = runVerifiers(
+    [{ type: 'dependency', name: 'eslint', installed: false }],
+    { workingDirectory: dir }
+  );
+  assert.equal(passed, true);
+});
+
+test('dependency: missing package.json fails clearly', () => {
+  const { passed, results } = runVerifiers(
+    [{ type: 'dependency', name: 'express' }],
+    { workingDirectory: tempDir() }
+  );
+  assert.equal(passed, false);
+  assert.match(results[0].detail, /No package\.json found/);
 });

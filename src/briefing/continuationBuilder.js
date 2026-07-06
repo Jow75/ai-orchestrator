@@ -188,6 +188,12 @@ function describeVerifier(v) {
         : `your output contains: "${v.pattern}"`;
     case 'files-changed':
       return `these paths are created or modified: ${v.paths.join(', ')}`;
+    case 'json-schema':
+      return `\`${v.path}\` conforms to its JSON schema`;
+    case 'lint':
+      return `lint command \`${v.run}\` reports zero problems`;
+    case 'dependency':
+      return `"${v.name}" is declared as a dependency${v.installed === false ? '' : ' and installed'}`;
     default:
       return `${v.type} (see project config)`;
   }

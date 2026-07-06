@@ -63,10 +63,11 @@ details) and from mechanism (process handling, persistence) throughout.
 │                           catalog, task history archived before a     │
 │                           plan reinit would otherwise discard it      │
 ├──────────────────────────────────────────────────────────────────────┤
-│  Verification engine (P2 core / P6 target) src/verify/               │
+│  Verification engine (P2 core + P6 expansion) src/verify/            │
 │  verifierRegistry.js      known verifier types; runs them, isolated  │
 │  verifiers/*.js           file-exists, command, output-contains,     │
-│                           files-changed (reuses progress engine facts)│
+│                           files-changed (reuses progress engine facts│
+│                           ), json-schema, lint, dependency (P6)      │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Drivers (engine knowledge)                src/drivers/              │
 │  aiDriver.js              the interface every engine implements      │

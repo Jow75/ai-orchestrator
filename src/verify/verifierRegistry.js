@@ -6,12 +6,11 @@
  * A task is complete only when its verifiers pass — never merely because
  * the agent said so or a marker string appeared.
  *
- * This is the seed of the full P6 Verification Engine: a fixed, known
- * registry of verifier types (`file-exists`, `command`, `output-contains`,
- * `files-changed`) that P2's mission/task system consults for task
- * completion. P6 extends this registry with more verifier types (JSON
- * schema validation, lint, dependency checks, ...) — this module and its
- * `runVerifiers()` contract do not change shape as that happens.
+ * P2 shipped the core registry (`file-exists`, `command`,
+ * `output-contains`, `files-changed`). Phase P6 extends the SAME registry
+ * — not a rewrite — with `json-schema`, `lint`, and `dependency`; this
+ * module and its `runVerifiers()` contract do not change shape as that
+ * happens, and neither does anything that calls it.
  *
  * Deliberately NOT plugin-extensible in this phase: verifier types are
  * eagerly validated at config-load time (see configManager.js), which
@@ -23,10 +22,14 @@ import fileExists from './verifiers/fileExists.js';
 import command from './verifiers/command.js';
 import outputContains from './verifiers/outputContains.js';
 import filesChanged from './verifiers/filesChanged.js';
+import jsonSchema from './verifiers/jsonSchema.js';
+import lint from './verifiers/lint.js';
+import dependency from './verifiers/dependency.js';
 
 /** type string -> verifier implementation ({ type, run(config, context) }). */
 const VERIFIERS = new Map(
-  [fileExists, command, outputContains, filesChanged].map((v) => [v.type, v])
+  [fileExists, command, outputContains, filesChanged, jsonSchema, lint, dependency]
+    .map((v) => [v.type, v])
 );
 
 /** All known verifier type strings, for validation error messages. */

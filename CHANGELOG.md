@@ -3,6 +3,69 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.0.0-rc.1] — 2026-07-06 — Phase P6: Verification Engine Expansion
+
+Extends the same `verifierRegistry.js` P2 shipped — not a rewrite — with
+three new verifier types. Every existing verifier, the registry contract,
+and every caller (mission engine, Continuation Builder) are unchanged.
+
+### Added
+
+- **`json-schema` verifier**: validates a JSON file against a schema
+  (inline `schema` or an external `schemaFile`). A small, dependency-free
+  validator — no ajv/etc. — supporting `type`, `required`, `properties`,
+  `items`, `enum`, `minimum`/`maximum`, `minLength`/`maxLength`, `pattern`.
+  Explicitly NOT a full JSON Schema draft implementation (no `$ref`,
+  `oneOf`/`anyOf`/`allOf`, `additionalProperties`, format validators) —
+  documented as a bounded subset rather than silently unsupported.
+  Failure detail names the exact field and reason, e.g. `at "$.port":
+  expected integer, got string`.
+- **`lint` verifier**: same execution model as `command`, but when the
+  command's output parses as ESLint's `-f json` shape, the failure detail
+  becomes a specific, ranked problem list (`src/a.js:12 [no-unused-vars]
+  'x' is never used`) instead of a wall of raw stdout. Any other linter's
+  output (or ESLint without `-f json`) falls back to the same
+  exit-code-and-truncated-output detail `command` already produces.
+- **`dependency` verifier**: checks a project's `package.json` declares a
+  named package (`dependencies`/`devDependencies`/`peerDependencies`, or
+  a narrower `where`) and, unless `installed: false`, that it's actually
+  present in `node_modules` — catching the common half-finished case of
+  editing `package.json` without ever running `npm install`.
+- **Continuation Builder**: `describeVerifier()` gained readable
+  descriptions for all three new types, so a task gated by them renders
+  properly in the "checks pass" section of a retry briefing instead of
+  falling through to the generic `(see project config)` fallback.
+- 15 new verifier unit tests (all three types: pass, specific failure
+  detail, and edge cases like missing files/invalid JSON/non-JSON lint
+  output) plus a real orchestrator integration test proving a
+  `dependency` verifier gates actual task completion and retry through
+  the full supervision loop. 251 tests total. Verified live via a direct
+  script exercising all three verifiers against real files.
+
+### Known limitations (documented, not hidden)
+
+- `json-schema` is intentionally a subset (see above) — a project needing
+  full draft compliance should verify via a `command` verifier invoking
+  a real JSON Schema CLI instead.
+- `lint`'s rich failure detail only activates for ESLint's exact `-f json`
+  array shape; every other linter gets the same generic detail `command`
+  always provided (still functional, just less specific).
+- `dependency` only understands npm's `package.json`/`node_modules`
+  layout — no support for other package managers' lockfile-only
+  installs (e.g. pnpm's content-addressed store) where a package can be
+  installed without a matching `node_modules/<name>` directory existing.
+- The verifier registry remains deliberately NOT plugin-extensible (a P2
+  decision, reaffirmed here) — a closed, known set validated at
+  config-load time. Revisit only if a real, concrete need emerges.
+- Verification outcomes are NOT wired into `assessConfidence()`'s
+  existing `'verified'` signal extension point, despite earlier ROADMAP
+  language suggesting P6 would do so — verification already
+  authoritatively decides mission-mode task completion, so a
+  confidence-score bump for the same decision is redundant, and the
+  ledger record for a run is written before that run's verification even
+  executes. ROADMAP.md corrected to reflect this rather than leave a
+  stale promise standing.
+
 ## [2.0.0-beta.2] — 2026-07-06 — Phase P4: Continuation Builder + Phase P5: Memory
 
 Replaces the single static `continuePrompt` string — sent unchanged on
