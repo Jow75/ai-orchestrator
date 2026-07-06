@@ -60,14 +60,37 @@ is not yet exposed over the API):
 ### `/api/tasks/:project` shape (Phase P2 — mission mode)
 
 `null` for a legacy (single-prompt) project or one that hasn't run yet;
-otherwise the persisted task queue:
+otherwise the persisted task queue. Each task's `lastVerifyResult`
+(Phase P4) is the latest verification outcome — set on *every* attempt,
+not just terminal ones — and is what the Continuation Builder reads to
+tell the agent exactly which check failed on a retry:
 
 ```jsonc
 {
   "project": "my-project", "sessionId": "…", "currentIndex": 1,
   "tasks": [
-    { "id": "T1", "state": "done", "attempts": 1, "checkpoint": { "taskId": "T1", "outcome": "done", "filesTouched": ["src/index.js"], "verify": { "passed": true, "results": [...] }, "summary": "…" } },
-    { "id": "T2", "state": "active", "attempts": 1, "checkpoint": null }
+    { "id": "T1", "state": "done", "attempts": 1, "checkpoint": { "taskId": "T1", "outcome": "done", "filesTouched": ["src/index.js"], "verify": { "passed": true, "results": [...] }, "summary": "…" }, "lastVerifyResult": { "passed": true, "results": [...] } },
+    { "id": "T2", "state": "active", "attempts": 1, "checkpoint": null, "lastVerifyResult": { "passed": false, "results": [{ "type": "file-exists", "passed": false, "detail": "Not found: out.txt" }] } }
+  ]
+}
+```
+
+### `/api/memory/:project` shape (Phase P5 — cross-session memory)
+
+`null` for a project with nothing recorded yet; otherwise the persisted
+memory record — see `src/memory/memoryStore.js`:
+
+```jsonc
+{
+  "project": "my-project",
+  "notes": [
+    { "id": 1, "category": "architecture", "text": "always run npm run build first", "at": "…" }
+  ],
+  "failures": [
+    { "id": 1, "category": "verification-failed", "reason": "…", "hint": "…", "taskId": "T2", "at": "…", "resolved": false }
+  ],
+  "taskHistory": [
+    { "taskId": "T1", "outcome": "done", "attempts": 1, "summary": "…", "at": "…" }
   ]
 }
 ```
@@ -251,3 +274,48 @@ taskQueue.reorderTask(queue, 'T3', 'up'); // -> { ok, reason? } — PENDING only
 
 See `test/orchestrator.p3.test.js` for a full example driving a real
 mission purely from queued tasks (no static `tasks` in the project config).
+
+### Continuation Builder (Phase P4)
+
+Pure functions — given already-loaded state, they return a prompt string
+and perform no I/O. The orchestrator calls these internally via
+`buildContinuationPrompt()`; they're exported for anyone building tooling
+around mission state (e.g. previewing what the next retry prompt will say):
+
+```js
+import { buildTaskContinuation } from 'ai-orchestrator';
+
+const prompt = buildTaskContinuation({
+  project, queue, task: queue.tasks[queue.currentIndex],
+  reason: 'retrying task', recentRuns: progressLedger.recent(project.name, 3),
+});
+```
+
+See `test/continuationBuilder.test.js` for the full behavior (including
+the headline case: a failed verifier's specific detail message appears
+in the next prompt) and `test/orchestrator.p4.test.js` for the real
+supervision loop feeding a briefing into an actual driver launch.
+
+### Memory (Phase P5)
+
+```js
+import { MemoryStore } from 'ai-orchestrator';
+
+const memoryStore = new MemoryStore({ memoryDir, logger });
+
+memoryStore.addNote('my-project', { category: 'architecture', text: 'build via npm run build' });
+memoryStore.recordFailure('my-project', { category: 'x', reason: '…', hint: '…', taskId: 'T2' });
+memoryStore.resolveFailure('my-project', 1); // -> { ok, reason? }
+
+memoryStore.recentNotes('my-project');      // most-recent-first, capped
+memoryStore.activeFailures('my-project');   // unresolved only, most-recent-first
+memoryStore.taskHistoryFor('my-project', 'T2'); // archived prior attempts, oldest first
+```
+
+`Orchestrator` constructs its own `MemoryStore` from `paths.memoryDir` and
+wires it into both the task queue (to archive history before a plan-shape
+reinitialization) and `buildContinuationPrompt()` (to fold notes/failures/
+history into every briefing) — nothing further to configure. See
+`test/memoryStore.test.js` for the full unit-test surface and
+`test/orchestrator.p5.test.js` for `block()` recording a failure and a
+real continuation prompt carrying operator notes end-to-end.

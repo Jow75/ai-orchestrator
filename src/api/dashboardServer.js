@@ -24,8 +24,11 @@ export class DashboardServer {
    * @param {import('../config/configManager.js').ConfigManager} deps.configManager
    * @param {import('../state/missionTimeline.js').MissionTimeline} [deps.timeline]
    * @param {import('../mission/taskQueue.js').TaskQueue} [deps.taskQueue]
+   * @param {import('../memory/memoryStore.js').MemoryStore} [deps.memoryStore]
    */
-  constructor({ config, logger, statusManager, sessionManager, configManager, timeline, taskQueue }) {
+  constructor({
+    config, logger, statusManager, sessionManager, configManager, timeline, taskQueue, memoryStore,
+  }) {
     this.config = config;
     this.logger = logger;
     this.statusManager = statusManager;
@@ -33,6 +36,7 @@ export class DashboardServer {
     this.configManager = configManager;
     this.timeline = timeline;
     this.taskQueue = taskQueue;
+    this.memoryStore = memoryStore;
     this.server = null;
     this.app = this.buildApp();
   }
@@ -72,6 +76,12 @@ export class DashboardServer {
     // single-prompt projects or a project that hasn't run yet).
     app.get('/api/tasks/:project', (req, res) => {
       res.json(this.taskQueue ? this.taskQueue.load(req.params.project) : null);
+    });
+
+    // Long-term memory for one project (Phase P5): notes, failure catalog,
+    // archived task history. Null if nothing has been recorded yet.
+    app.get('/api/memory/:project', (req, res) => {
+      res.json(this.memoryStore ? this.memoryStore.load(req.params.project) : null);
     });
 
     // Defined projects and whether each currently has an active session.

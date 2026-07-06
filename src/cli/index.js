@@ -9,6 +9,7 @@
  *   status                 Show live status (from status.json)
  *   sessions [project]     Show active sessions / a project's history
  *   tasks list|add|remove|reorder   Manage a project's task queue (Phase P2/P3)
+ *   memory list|add|resolve   Manage a project's long-term memory (Phase P5)
  *   projects list|add      Manage project definitions
  *   drivers                List available AI engine drivers
  *   scheduler ...          Install/inspect the Windows auto-start task
@@ -30,6 +31,7 @@ import SessionManager from '../state/sessionManager.js';
 import MissionTimeline from '../state/missionTimeline.js';
 import TaskQueue from '../mission/taskQueue.js';
 import { validateSingleTask } from '../mission/missionPlan.js';
+import MemoryStore from '../memory/memoryStore.js';
 import DriverRegistry from '../drivers/driverRegistry.js';
 import { readJsonSafe } from '../state/statePersistence.js';
 import { isPidAlive } from '../state/heartbeat.js';
@@ -64,7 +66,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('2.0.0-beta.1');
+    .version('2.0.0-beta.2');
 
   program
     .command('start')
@@ -338,6 +340,93 @@ export function buildProgram() {
           return;
         }
         console.log(chalk.green(`Moved task "${taskId}" ${direction}.`));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  const memory = program
+    .command('memory')
+    .description('Manage a project’s long-term memory (Phase P5) — notes, failure catalog, task history');
+
+  memory
+    .command('list')
+    .argument('<project>', 'project name')
+    .description('Show a project’s memory: operator notes, failures, and archived task history')
+    .action((project) => {
+      try {
+        const { paths } = readOnlyContext();
+        const memoryStore = new MemoryStore({ memoryDir: paths.memoryDir, logger: silentLogger });
+        const mem = memoryStore.load(project);
+        if (!mem) {
+          console.log(`No memory recorded yet for "${project}".`);
+          return;
+        }
+        console.log(chalk.bold(`\nMemory — ${project}\n`));
+
+        console.log(chalk.bold('Notes:'));
+        if (!mem.notes.length) console.log(chalk.dim('  (none)'));
+        for (const note of mem.notes) {
+          console.log(`  #${note.id} [${note.category}] ${note.text}`);
+        }
+
+        console.log(chalk.bold('\nFailures:'));
+        if (!mem.failures.length) console.log(chalk.dim('  (none)'));
+        for (const f of mem.failures) {
+          const status = f.resolved ? chalk.green('resolved') : chalk.red('unresolved');
+          const scope = f.taskId ? `task "${f.taskId}"` : 'mission';
+          console.log(`  #${f.id} [${status}] (${scope}) ${f.reason}`);
+        }
+
+        console.log(chalk.bold('\nArchived task history:'));
+        if (!mem.taskHistory.length) console.log(chalk.dim('  (none)'));
+        for (const h of mem.taskHistory) {
+          console.log(`  ${h.taskId}: ${h.outcome} after ${h.attempts} attempt(s)`);
+        }
+        console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  memory
+    .command('add')
+    .argument('<project>', 'project name')
+    .requiredOption('--note <text>', 'the durable fact to remember')
+    .option('--category <category>', '"project" (general) or "architecture" (build/structure/conventions)', 'project')
+    .description('Record a durable, operator-authored fact — surfaced in every future resume/retry briefing')
+    .action((project, options) => {
+      try {
+        if (options.category !== 'project' && options.category !== 'architecture') {
+          console.error(chalk.red('\n--category must be "project" or "architecture".'));
+          process.exitCode = 1;
+          return;
+        }
+        const { paths } = readOnlyContext();
+        const memoryStore = new MemoryStore({ memoryDir: paths.memoryDir, logger: silentLogger });
+        memoryStore.addNote(project, { category: options.category, text: options.note });
+        console.log(chalk.green(`Noted for "${project}".`));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  memory
+    .command('resolve')
+    .argument('<project>', 'project name')
+    .argument('<failureId>', 'id of the failure to mark resolved', Number)
+    .description('Mark a recorded failure resolved — it stops appearing in future briefings')
+    .action((project, failureId) => {
+      try {
+        const { paths } = readOnlyContext();
+        const memoryStore = new MemoryStore({ memoryDir: paths.memoryDir, logger: silentLogger });
+        const result = memoryStore.resolveFailure(project, failureId);
+        if (!result.ok) {
+          console.error(chalk.red(`\n${result.reason}`));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(chalk.green(`Failure #${failureId} marked resolved for "${project}".`));
       } catch (error) {
         fail(error);
       }

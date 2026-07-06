@@ -3,6 +3,112 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.0.0-beta.2] — 2026-07-06 — Phase P4: Continuation Builder + Phase P5: Memory
+
+Replaces the single static `continuePrompt` string — sent unchanged on
+every resume, retry, or crash recovery since v1 — with a structured
+briefing generated from live orchestrator state on every relaunch.
+
+### Added
+
+- **`src/briefing/continuationBuilder.js`**: `buildLegacyContinuation()`
+  (single-prompt missions) and `buildTaskContinuation()` (mission mode,
+  scoped to the current task). Both turn orchestrator state the agent
+  would otherwise have to rediscover — completed tasks (so they're never
+  redone), remaining tasks, and recent ledger activity — into one prompt.
+  The headline feature: on a retry after a failed verification,
+  `buildTaskContinuation()` names **exactly which check failed and why**
+  (`file-exists failed: Not found: out.txt`), not a generic "try again".
+- **`TaskQueue#recordVerifyResult()`**: stores the current task's latest
+  verification outcome on every attempt (pass, retry, or exhausted),
+  independent of `checkpoint` (which is only set on a terminal outcome).
+  This is what the builder reads to explain a failed retry.
+- **`Orchestrator#buildContinuationPrompt()`**: the single call site both
+  supervision modes now route through for a resume/retry prompt. Reads
+  `config.briefing` (`enabled`, `recentRunCount`); `enabled: false` (the
+  default in hand-built configs that omit the block) reverts to the old
+  static-string behaviour byte-for-byte — a deliberate escape hatch, not
+  a migration requirement.
+- **`ORCHESTRATOR_DEFAULTS.briefing`**: `{ enabled: true, recentRunCount: 3 }`
+  — on by default for real deployments.
+- **`MockDriver#receivedPrompts`**: every prompt a test launch was called
+  with, in order — lets orchestrator-level tests assert on real prompt
+  content instead of parsing logs.
+- 15 new tests: 11 unit tests for both builder functions (including the
+  "does NOT list a passing check as a failure" negative case), and 4
+  orchestrator integration tests proving the real supervision loop feeds
+  a failed task's specific verifier failure into the very next launch's
+  prompt — verified live via a direct call into the builder as well.
+
+### Known limitations (documented, not hidden — P4)
+
+- `recentRunCount` is a flat cap, not adaptive to prompt-size budgets —
+  a task with very long `resultText` entries could still produce a long
+  briefing (each entry is capped at 300 chars, but there is no overall
+  briefing-length ceiling).
+
+Phase P5 immediately follows, closing the one gap P4 explicitly deferred:
+the briefing above only drew on *this session's* ledger activity, with
+nothing surviving past the data structure that produced it.
+
+### Added (Phase P5 — Memory)
+
+- **`src/memory/memoryStore.js`**: cross-session project memory, persisted
+  at `state/memory/<project>.json`, in three categories:
+  - `notes` — operator-authored durable facts (`memory add` CLI),
+    categorized `project` or `architecture`. Never auto-added or removed.
+  - `failures` — auto-recorded every time `Orchestrator#block()` fires (a
+    BLOCKED or FAILED terminal outcome), independent of session or
+    task-queue lifetime. An operator marks one resolved (`memory resolve`)
+    once its cause is fixed; only unresolved failures are surfaced.
+  - `taskHistory` — archived from a task queue's DONE/FAILED/BLOCKED tasks
+    right before `TaskQueue` reinitializes and would otherwise discard
+    them (a static-config edit mid-mission). A later plan reusing the
+    same task id can now see what happened last time.
+- **`TaskQueue` gains an optional `memoryStore` dependency**: calls
+  `archiveTaskHistory()` immediately before a plan-shape-changed
+  reinitialization discards the outgoing queue's tasks — this was a real,
+  silent data-loss gap in P3's reinit path, closed here rather than
+  carried forward.
+- **The Continuation Builder (P4) now folds in memory**: both
+  `buildLegacyContinuation()` and `buildTaskContinuation()` accept
+  `memoryNotes`/`activeFailures`, rendered as "Project memory" and "Known
+  problems from past attempts" sections; `buildTaskContinuation()` also
+  accepts `priorAttempts` (this task id's archived history), rendered as
+  "attempted before, under an earlier version of this plan".
+  `Orchestrator#buildContinuationPrompt()` fetches all three from
+  `this.memoryStore` before delegating — no other call site changed.
+- **CLI**: `memory list <project>` (shows notes/failures/task history),
+  `memory add <project> --note "..." [--category project|architecture]`,
+  `memory resolve <project> <failureId>`.
+- **API**: `GET /api/memory/:project` — read-only, mirrors `/api/tasks/:project`.
+- **`paths.memoryDir`** (`state/memory/`) added to path resolution and
+  runtime directory creation, alongside every other state subdirectory.
+- 23 new tests: `MemoryStore` unit tests (persistence, note/failure/
+  task-history lifecycle, graceful no-op when `memoryDir` is unset),
+  `continuationBuilder` tests for the three new sections, a `TaskQueue`
+  test proving archiving fires exactly on plan-shape reinitialization
+  (and only for terminal tasks — an ACTIVE task has nothing to archive),
+  and 5 orchestrator integration tests proving a real `block()` records a
+  failure and a real continuation prompt carries operator notes and the
+  unresolved-failure catalog. Verified live via the `memory add`/`memory
+  list` CLI commands.
+
+### Known limitations (documented, not hidden — P5)
+
+- Memory is per-project only; there is no cross-project memory (e.g. "a
+  pattern that recurs across every project using this driver"). Revisit
+  if a real multi-project pattern emerges.
+- `taskHistory` accumulates without pruning — a project reinitialized
+  many times over its life grows an ever-longer archive. Harmless at
+  realistic scale (JSON file, read in full only per-project), but not
+  bounded the way `recentNotes`/`activeFailures` are at read time.
+- Failures are never auto-resolved — even a task that later succeeds
+  leaves its earlier failure entry `resolved: false` until an operator
+  runs `memory resolve`. This is deliberate (an operator should confirm
+  the *cause* was actually fixed, not infer it from one later success),
+  but means the catalog can go stale if operators don't maintain it.
+
 ## [2.0.0-beta.1] — 2026-07-06 — Phase P3: Persistent Prompt Queue
 
 Makes P2's task plan runtime-mutable: `tasks add/remove/reorder` build up

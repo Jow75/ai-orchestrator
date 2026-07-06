@@ -49,6 +49,7 @@ export function resolvePaths(overrides = {}) {
   resolved.progressDir = path.join(resolved.stateDir, 'progress');
   resolved.tasksDir = path.join(resolved.stateDir, 'tasks');
   resolved.diagnosticsDir = path.join(resolved.stateDir, 'diagnostics');
+  resolved.memoryDir = path.join(resolved.stateDir, 'memory');
   resolved.heartbeatFile = path.join(resolved.stateDir, 'heartbeat.json');
   resolved.runtimeHistoryFile = path.join(resolved.stateDir, 'runtime_history.json');
 
@@ -71,6 +72,7 @@ export function ensureRuntimeDirs(paths) {
     paths.progressDir,
     paths.tasksDir,
     paths.diagnosticsDir,
+    paths.memoryDir,
     paths.pluginsDir,
   ]) {
     fs.mkdirSync(dir, { recursive: true });

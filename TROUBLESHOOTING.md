@@ -127,7 +127,7 @@ warning in [CONFIGURATION.md](CONFIGURATION.md).
 
 ---
 
-## Mission mode (Phase P2/P3 — task-based projects)
+## Mission mode (Phase P2/P3/P4 — task-based projects)
 
 ### "Task X failed verification after N attempts" — blocked
 
@@ -204,6 +204,58 @@ that exact marker for the task (not just the whole mission) to be
 considered done. Either add real verifiers or ensure the task's prompt
 instructs the agent to print the marker when that task specifically is
 finished.
+
+### The retry prompt looks different from what `continuePrompt` says (Phase P4)
+
+Expected: by default (`briefing.enabled: true`), a resume or retry sends a
+generated **Continuation Builder** briefing — completed/remaining tasks,
+and on a verification-failed retry, exactly which check failed and why —
+instead of the static `continuePrompt`/`mission.continuePrompt` string. If
+you need the old byte-for-byte static-string behaviour (e.g. a custom
+`continuePrompt` your prompt engineering depends on verbatim), set
+`"briefing": { "enabled": false }` in `config/orchestrator.json`. See the
+`briefing` section in [CONFIGURATION.md](CONFIGURATION.md).
+
+### A retry's briefing doesn't mention "Recent activity"
+
+That section only appears when the progress ledger has entries to
+summarize (`briefing.recentRunCount`, default `3`) — it's omitted rather
+than shown empty on a task's very first retry, when there's nothing yet
+to report from previous runs on this specific task/mission combination.
+
+## Memory (Phase P5)
+
+### I added a note but it's not showing up in the briefing
+
+Check it was actually recorded: `ai-orchestrator memory list <project>`.
+Notes only render in a **generated** briefing (`briefing.enabled: true`,
+the default) — if you've disabled briefing entirely (see above), nothing
+in memory reaches the agent either, since the static `continuePrompt`
+string is used verbatim.
+
+### A resolved problem keeps reappearing in every briefing
+
+Failures are never auto-resolved, even once the task that hit them later
+succeeds — this is deliberate (an operator should confirm the underlying
+*cause* was fixed, not infer it from one later success). Run
+`ai-orchestrator memory list <project>` to find the failure's id, then
+`ai-orchestrator memory resolve <project> <id>`.
+
+### I edited the static `tasks` array and now old task history seems gone from `tasks list`
+
+That's expected — `tasks list` only shows the **current** queue, and a
+plan-shape edit reinitializes it fresh. The old queue's finished tasks
+(DONE/FAILED/BLOCKED) aren't discarded, though: they're archived to
+memory first. Check `ai-orchestrator memory list <project>` — if a task
+id from the new plan matches one from the old, its prior outcome will
+also surface automatically in that task's next retry briefing.
+
+### `memory resolve` says "No failure with id N"
+
+Ids are per-project and assigned in insertion order starting at 1 — run
+`ai-orchestrator memory list <project>` to see the actual ids currently
+recorded (a resolved failure keeps its id; ids are never reused or
+renumbered).
 
 ---
 

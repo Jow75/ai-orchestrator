@@ -31,6 +31,10 @@ export class MockDriver extends AIDriver {
     this.id = 'mock';
     this.name = 'Mock Engine';
     this.launchCount = 0;
+    // Test introspection: every prompt this driver was launched with, in
+    // order — lets orchestrator-level tests assert on real briefing content
+    // (see Phase P4's Continuation Builder) without parsing log output.
+    this.receivedPrompts = [];
 
     this.exitPatterns = {
       usageLimit: [/usage limit reached/i],
@@ -44,7 +48,8 @@ export class MockDriver extends AIDriver {
   }
 
   /** @inheritdoc */
-  async launch({ project, engineSessionId }) {
+  async launch({ project, prompt, engineSessionId }) {
+    this.receivedPrompts.push(prompt);
     const runs = project.mock?.runs?.length ? project.mock.runs : DEFAULT_RUNS;
     // Replay the last scripted entry if launches outnumber script entries.
     const script = runs[Math.min(this.launchCount, runs.length - 1)];

@@ -2,10 +2,13 @@
 node_modules/
 
 # Runtime data (never commit live state)
-logs/
-state/
-sessions/
-status.json
+# Anchored to the repo root (leading /) — an unanchored "state/" also matched
+# src/state/, silently excluding the entire session/status persistence layer
+# from every commit since P0. Never unanchor these again.
+/logs/
+/state/
+/sessions/
+/status.json
 *.log
 
 # Atomic-write temp files (should be cleaned up automatically; ignore any strays)

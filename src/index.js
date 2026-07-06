@@ -33,6 +33,10 @@ export { buildCheckpoint } from './mission/checkpoint.js';
 export {
   runVerifiers, isKnownVerifierType, listVerifierTypes,
 } from './verify/verifierRegistry.js';
+export {
+  buildLegacyContinuation, buildTaskContinuation,
+} from './briefing/continuationBuilder.js';
+export { MemoryStore } from './memory/memoryStore.js';
 export { AIDriver, AgentRun } from './drivers/aiDriver.js';
 export { ClaudeDriver } from './drivers/claudeDriver.js';
 export { MockDriver } from './drivers/mockDriver.js';

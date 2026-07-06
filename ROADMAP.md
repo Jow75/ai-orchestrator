@@ -14,7 +14,7 @@ points:
 | `v2.0.0-alpha.2` | **P1 complete** — structured progress engine (files/git change facts) |
 | `v2.0.0-alpha.3` | **P2 complete** — mission system: ordered tasks, verification engine, checkpoints |
 | `v2.0.0-beta.1` | **P3 complete** — runtime-mutable prompt queue (add/remove/reorder) |
-| `v2.0.0-beta.2` | P4 — intelligent briefing (Continuation Builder) + P5 memory |
+| `v2.0.0-beta.2` | **P4 + P5 complete** — intelligent briefing (Continuation Builder) + cross-session memory |
 | `v2.0.0-rc.1` | P6 — verification engine expansion (JSON schema, lint, dependency checks) |
 | `v2.0.0` | P7 — desktop application; stable release |
 
@@ -97,33 +97,79 @@ code, never the engine that produced them.)
   (reuses P2's verification engine unchanged); survives crashes, restarts,
   power loss, and rate limits (reuses P2's per-task persistence unchanged).
 
-## P4 — Intelligent briefing / **Claude Continuation Builder** (`v2.0.0-beta.2`)
+## P4 — Intelligent briefing / **Claude Continuation Builder** ✅ (`v2.0.0-beta.2`, complete)
 
 > **Flagged as important — do not let this slip.** Replacing the bare
 > "Continue." with a generated, structured briefing is one of the highest-
 > leverage token savings in the whole project.
 
-Every resume auto-generates a briefing from orchestrator state, e.g.:
+Every resume/retry now auto-generates a briefing from live orchestrator
+state (`src/briefing/continuationBuilder.js`) instead of a static string:
 
 ```text
-Mission: <name>
-Current task: <task>
-Completed tasks: <list>   (do not redo)
-Remaining tasks: <list>
-Workspace changes: <git summary since last run>
-Verification results: <pass/fail with details>
-Known problems: <blockers / failed attempts>
-Last checkpoint: <checkpoint summary>
-Continue ONLY from here.
+## Mission Continuation Briefing
+
+**Project:** <name>
+**Why you are being resumed:** <reason>
+
+### Current task: <id>
+Objective: <objective>
+
+### Completed tasks — do NOT redo these
+- <task> ✓
+
+### Remaining tasks after this one
+- <task>
+
+### Your previous attempt (#N) was NOT accepted — here is exactly why
+- **file-exists** failed: Not found: out.txt
+
+### This task is done only when ALL of these checks pass
+- <verifier description>
+
+### Recent activity (most recent last)
+- <exitReason>: <result summary>
+
+Continue ONLY from here. Do not repeat completed work.
 ```
 
-The agent never rediscovers what the orchestrator already knows.
+The agent never rediscovers what the orchestrator already knows, and —
+the headline property — a failed-verification retry states the exact
+failing check and its detail message, not a generic "try again."
+Legacy (single-prompt) missions get the equivalent `buildLegacyContinuation()`
+briefing, scoped to the whole mission rather than one task.
 
-## P5 — Memory (`v2.0.0-beta.2`)
+A global `briefing.enabled` switch (default `true`) reverts to the old
+static `continuePrompt` string byte-for-byte when set to `false` — a
+deliberate escape hatch for anyone who prefers the old behavior, not a
+migration requirement.
 
-- Long-term, separated memory: project / execution / task / failure /
-  architecture memory. Learn from past runs instead of repeating mistakes.
-  (P0's ledger + timeline are the seed of execution memory.)
+## P5 — Memory ✅ (`v2.0.0-beta.2`, complete)
+
+Long-term, cross-session memory (`src/memory/memoryStore.js`,
+`state/memory/<project>.json`) — the piece P0's ledger and P2's checkpoints
+don't cover: neither survives past the data structure that produced it (a
+task queue reinitialization used to discard old checkpoints entirely), and
+neither has a place for a durable fact a human wants remembered.
+
+Three categories:
+
+- **`notes`** — operator-authored durable facts (`memory add` CLI),
+  categorized `project` (general) or `architecture` (build/structure/
+  conventions). Never auto-added or removed.
+- **`failures`** — auto-recorded every time supervision `block()`s (a
+  BLOCKED or FAILED terminal outcome), independent of session or
+  task-queue lifetime. `memory resolve` marks one fixed; only unresolved
+  failures are surfaced going forward.
+- **`taskHistory`** — archived from a task queue's DONE/FAILED/BLOCKED
+  tasks right before a plan-shape change would otherwise discard them,
+  so a later plan reusing the same task id can see what happened before.
+
+All three feed the Phase P4 Continuation Builder: every resume/retry
+briefing now also carries relevant operator notes, the unresolved-failure
+catalog, and (task-scoped) this task id's prior archived attempts —
+learning from past runs instead of silently repeating them. `GET
+/api/memory/:project` exposes the same data read-only.
 
 ## P6 — Verification engine expansion (`v2.0.0-rc.1`)
 

@@ -46,6 +46,8 @@ import { isLegacyMission } from '../mission/missionPlan.js';
 import { TaskQueue } from '../mission/taskQueue.js';
 import { buildCheckpoint } from '../mission/checkpoint.js';
 import { runVerifiers } from '../verify/verifierRegistry.js';
+import { buildLegacyContinuation, buildTaskContinuation } from '../briefing/continuationBuilder.js';
+import { MemoryStore } from '../memory/memoryStore.js';
 
 /**
  * Domain events emitted by the orchestrator.
@@ -127,11 +129,22 @@ export class Orchestrator extends EventEmitter {
         : {}),
     });
 
+    // Phase P5: cross-session project memory (notes, failure catalog,
+    // archived task history). Degrades to a safe no-op when paths.memoryDir
+    // is unset (hand-built test configs that predate this phase).
+    this.memoryStore = new MemoryStore({ memoryDir: this.paths.memoryDir, logger });
+
     // Phase P2: mission mode (ordered tasks). Unused (missionMode stays
     // false, taskQueueState stays null) for legacy single-prompt projects.
-    this.taskQueueStore = new TaskQueue({ tasksDir: this.paths.tasksDir, logger });
+    this.taskQueueStore = new TaskQueue({
+      tasksDir: this.paths.tasksDir, logger, memoryStore: this.memoryStore,
+    });
     this.missionMode = false;
     this.taskQueueState = null;
+
+    // Phase P4: the Continuation Builder. Off (falls back to the static
+    // continuePrompt string) in hand-built test configs that omit it.
+    this.briefingConfig = config.briefing ?? { enabled: false, recentRunCount: 0 };
 
     this.stopRequested = false;
     this.stopController = new AbortController();
@@ -263,13 +276,13 @@ export class Orchestrator extends EventEmitter {
         const taskIsFresh = taskEntry.attempts === 0;
         prompt = taskIsFresh
           ? fs.readFileSync(taskEntry.resolvedPromptFile, 'utf8')
-          : (taskEntry.continuePrompt ?? project.mission.continuePrompt);
+          : this.buildContinuationPrompt({ project, task: taskEntry, reason: lastActivity });
         this.taskQueueStore.recordAttempt(this.taskQueueState);
         this.statusManager.syncTaskQueue(this.taskQueueState);
       } else {
         prompt = engineIsFresh
           ? fs.readFileSync(project.resolvedPromptFile, 'utf8')
-          : project.mission.continuePrompt;
+          : this.buildContinuationPrompt({ project, reason: lastActivity });
       }
 
       this.sessionManager.update(session, {
@@ -554,6 +567,11 @@ export class Orchestrator extends EventEmitter {
       })
       : markerFallbackVerify(project.mission.completionMarker, finalText);
 
+    // Phase P4: record on EVERY outcome (pass, retry, or exhausted) so the
+    // Continuation Builder can tell the agent exactly why its last attempt
+    // on THIS task wasn't accepted, even mid-retry.
+    this.taskQueueStore.recordVerifyResult(queue, verifyResult);
+
     if (verifyResult.passed) {
       const checkpoint = buildCheckpoint({
         task: taskDef, attempts: taskEntry.attempts, changes: progress.changes,
@@ -616,6 +634,7 @@ export class Orchestrator extends EventEmitter {
           category: decision.category,
           hint: decision.hint ?? progress.blocked?.hint,
           evidence: progress.blocked?.evidence,
+          taskId: taskDef.id,
         });
       }
     }
@@ -647,6 +666,7 @@ export class Orchestrator extends EventEmitter {
       category: 'verification-failed',
       hint: `Review the task's objective and verifiers. Failed checks: ${failedChecks}`,
       evidence: failedChecks,
+      taskId: taskDef.id,
     });
   }
 
@@ -739,6 +759,32 @@ export class Orchestrator extends EventEmitter {
     };
   }
 
+  /**
+   * Phase P4: build the prompt for a continuation (resume/retry), replacing
+   * the static continuePrompt with a structured briefing when enabled.
+   * Phase P5: folds in cross-session memory — operator notes, unresolved
+   * failures, and (task-scoped) any archived history for this task id from
+   * an earlier, now-superseded plan.
+   */
+  buildContinuationPrompt({ project, task, reason }) {
+    if (!this.briefingConfig.enabled) {
+      return task
+        ? (task.continuePrompt ?? project.mission.continuePrompt)
+        : project.mission.continuePrompt;
+    }
+    const recentRuns = this.progressLedger.recent(project.name, this.briefingConfig.recentRunCount ?? 3);
+    const memoryNotes = this.memoryStore.recentNotes(project.name);
+    const activeFailures = this.memoryStore.activeFailures(project.name);
+    if (task) {
+      const priorAttempts = this.memoryStore.taskHistoryFor(project.name, task.id);
+      return buildTaskContinuation({
+        project, queue: this.taskQueueState, task, reason, recentRuns,
+        memoryNotes, activeFailures, priorAttempts,
+      });
+    }
+    return buildLegacyContinuation({ project, reason, recentRuns, memoryNotes, activeFailures });
+  }
+
   /** Optional engine-specific blocked-state patterns supplied by the driver. */
   blockedPatternsFor(project) {
     try {
@@ -765,7 +811,7 @@ export class Orchestrator extends EventEmitter {
    * operator can fix the blocker and start a clean run. This is precisely
    * what turns a 13-hour overnight quota fire into a one-minute stop.
    */
-  block(project, session, { reason, category, hint, evidence }) {
+  block(project, session, { reason, category, hint, evidence, taskId }) {
     const recentRuns = this.progressLedger.recent(project.name, 8);
     const reportPath = writeDiagnosticReport({
       diagnosticsDir: this.paths.diagnosticsDir,
@@ -778,6 +824,9 @@ export class Orchestrator extends EventEmitter {
       recentRuns,
       logger: this.logger,
     });
+    // Phase P5: outlives this session/queue — a catalog of "what has gone
+    // wrong on this project and why", independent of ledger/queue lifetime.
+    this.memoryStore.recordFailure(project.name, { category, reason, hint, taskId });
 
     this.sessionManager.update(session, { lastActivity: `blocked: ${reason}` });
     this.sessionManager.closeSession(session, SessionState.BLOCKED);

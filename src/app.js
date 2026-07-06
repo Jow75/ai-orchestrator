@@ -25,6 +25,7 @@ import SessionManager from './state/sessionManager.js';
 import StatusManager from './state/statusManager.js';
 import MissionTimeline from './state/missionTimeline.js';
 import TaskQueue from './mission/taskQueue.js';
+import MemoryStore from './memory/memoryStore.js';
 import Heartbeat from './state/heartbeat.js';
 import DriverRegistry from './drivers/driverRegistry.js';
 import Orchestrator from './core/orchestrator.js';
@@ -101,6 +102,13 @@ export class App {
       logger: childLogger(this.logger, 'tasks'),
     });
 
+    // Read-only view for the dashboard API; the orchestrator owns its own
+    // MemoryStore instance (see Orchestrator's constructor).
+    this.memoryStore = new MemoryStore({
+      memoryDir: this.paths.memoryDir,
+      logger: childLogger(this.logger, 'memory'),
+    });
+
     this.pluginManager = new PluginManager({
       pluginsDir: this.paths.pluginsDir,
       logger: childLogger(this.logger, 'plugins'),
@@ -114,6 +122,7 @@ export class App {
       configManager: this.configManager,
       timeline: this.timeline,
       taskQueue: this.taskQueue,
+      memoryStore: this.memoryStore,
     });
 
     this.stopFilePath = path.join(this.paths.stateDir, STOP_REQUEST_FILENAME);

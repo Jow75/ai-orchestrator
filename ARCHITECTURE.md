@@ -49,7 +49,19 @@ details) and from mechanism (process handling, persistence) throughout.
 │                           the SAME queue at runtime, no JSON needed  │
 │  taskState.js             per-task lifecycle states                 │
 │  checkpoint.js            structured "what happened on this task"   │
-│                           data (seeds the P4 Continuation Builder)  │
+│                           data (feeds the P4 Continuation Builder)   │
+├──────────────────────────────────────────────────────────────────────┤
+│  Briefing engine (P4)                       src/briefing/            │
+│  continuationBuilder.js   turns live state (queue, checkpoints,      │
+│                           ledger, memory) into a structured resume/   │
+│                           retry prompt — names exactly which verifier│
+│                           failed and why, instead of a bare "continue"│
+├──────────────────────────────────────────────────────────────────────┤
+│  Memory (P5)                                src/memory/              │
+│  memoryStore.js           cross-session memory (state/memory/*.json):│
+│                           operator notes, auto-recorded failure       │
+│                           catalog, task history archived before a     │
+│                           plan reinit would otherwise discard it      │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Verification engine (P2 core / P6 target) src/verify/               │
 │  verifierRegistry.js      known verifier types; runs them, isolated  │
@@ -200,17 +212,19 @@ not accidental — see `markerFallbackVerify()`). Passing:
 - **not the last task** → advance to the next task, same engine
   conversation, but that task's *own* prompt (not a bare "continue") —
   `TaskQueue.recordAttempt()` marks whether this is the task's first
-  launch (`attempts === 0`), which is what selects prompt vs. continuePrompt.
+  launch (`attempts === 0`), which is what selects the fresh prompt file
+  vs. `Orchestrator#buildContinuationPrompt()` (P4).
 - **the last task** → mission complete, identical ending to a legacy
   marker hit (archive session, emit `mission:complete`).
 
-Failing retries the same task (`continuePrompt`) until its own `maxRuns`
-is spent, then routes to `block()` — the same diagnostic-report machinery
-P0 built for loop prevention, now also guarding "an unverified task never
-gets silently skipped." The P0/P1 stagnation breaker still runs in
-parallel as an extra net: repeatedly failing verification with zero
-workspace change is exactly the "spinning, not working" pattern it exists
-to catch, regardless of which subsystem is doing the spinning.
+Failing retries the same task, via `buildContinuationPrompt()`'s
+task-scoped briefing (P4 — see below), until its own `maxRuns` is spent,
+then routes to `block()` — the same diagnostic-report machinery P0 built
+for loop prevention, now also guarding "an unverified task never gets
+silently skipped." The P0/P1 stagnation breaker still runs in parallel as
+an extra net: repeatedly failing verification with zero workspace change
+is exactly the "spinning, not working" pattern it exists to catch,
+regardless of which subsystem is doing the spinning.
 
 **Persistence** (`TaskQueue`, `state/tasks/<project>.json`): current task
 index, and each task's *complete definition plus runtime state*
@@ -247,9 +261,84 @@ runs it; `tasks add` is how the plan grows after that.
 
 **Checkpoints** (`src/mission/checkpoint.js`) capture *data only* — files
 touched, verification results, a truncated summary — deliberately stopping
-short of generating a Claude-facing prompt from that data. Turning
-checkpoints into a structured briefing is Phase P4, the Continuation
-Builder; P2's job is making sure the history exists to build from.
+short of generating a Claude-facing prompt from that data. Phase P2 also
+added `TaskQueue.recordVerifyResult()`, storing the current task's latest
+verify outcome on *every* attempt (not just terminal ones); P4 is what
+reads it.
+
+## The Continuation Builder — structured resumes, not "Continue." (Phase P4)
+
+Every resume, retry, or crash recovery from v1 through P3 sent the exact
+same static string, regardless of cause. The agent had no way to know
+*why* it was relaunched or, on a verification-failed retry, *which* check
+it failed — it had to rediscover that from scratch, burning tokens on
+orientation instead of progress. `src/briefing/continuationBuilder.js`
+replaces the string with a briefing built from state the orchestrator
+already has on hand:
+
+- **`buildLegacyContinuation({ project, reason, recentRuns })`** — for
+  single-prompt missions: project name, why this run was resumed, and a
+  short "recent activity" digest from the progress ledger.
+- **`buildTaskContinuation({ project, queue, task, reason, recentRuns })`**
+  — for mission mode, scoped to the *current* task: its objective,
+  completed tasks (explicitly "do NOT redo"), remaining tasks, the
+  verifiers that must pass, and — the headline feature — when
+  `task.lastVerifyResult.passed` is false, exactly which check failed and
+  its detail message (e.g. `file-exists failed: Not found: out.txt`),
+  filtered so a *passing* check in the same result is never listed as a
+  failure reason.
+
+`Orchestrator#buildContinuationPrompt({ project, task, reason })` is the
+single call site both supervision modes route through. It is a pure
+routing function, not policy: it reads `this.briefingConfig` (from
+`config.briefing`) and either builds a briefing or falls back to the old
+`task.continuePrompt ?? project.mission.continuePrompt` string when
+`briefing.enabled` is false — a deliberate, complete opt-out, not a
+partial one, so a hand-built config (or an operator who prefers the old
+behavior) reverts byte-for-byte with one flag.
+
+Both builder functions are pure: given already-loaded state, they return
+a string and perform no I/O. The orchestrator supplies everything they
+need — `this.taskQueueState` for the queue, `this.progressLedger.recent()`
+for recent activity — keeping the module trivially unit-testable and
+engine-agnostic (it has no idea which driver is running).
+
+## Cross-session memory (Phase P5)
+
+The ledger (P0/P1) and task queue (P2/P3) both remember *what happened,
+run by run* — but neither survives past the data structure that produced
+it. A `TaskQueue` reinitialization (static `tasks` edited mid-mission)
+used to discard the outgoing queue's checkpoints entirely; and neither
+has a place for a durable fact a human wants remembered ("the build
+system is X") independent of any one mission's lifetime.
+`src/memory/memoryStore.js` (`state/memory/<project>.json`) closes that
+gap with three categories:
+
+- **`notes`** — operator-authored, via the `memory add` CLI. Categorized
+  `project` (general) or `architecture` (build/structure/conventions).
+  Never auto-added or auto-removed — purely a human's own record.
+- **`failures`** — auto-recorded every time `Orchestrator#block()` fires
+  (a BLOCKED or FAILED terminal outcome), tagged with the failing task id
+  when there is one. Outlives the session and the task queue that hit it;
+  `memory resolve <project> <id>` marks one fixed once its cause is
+  addressed, so only genuinely-open problems are ever surfaced.
+- **`taskHistory`** — archived by `TaskQueue#getOrInitialize()` immediately
+  before a plan-shape-changed reinitialization would otherwise discard the
+  outgoing queue's DONE/FAILED/BLOCKED tasks (`MemoryStore#archiveTaskHistory()`,
+  called with a `memoryStore` injected into `TaskQueue`'s constructor). A
+  task with no static config it was actually attempted under, never
+  archived; a still-ACTIVE task (never reached a terminal state) is
+  likewise skipped — only real, finished history is worth keeping.
+
+All three are read by the Continuation Builder and folded into every
+resume/retry briefing (`Orchestrator#buildContinuationPrompt()` fetches
+them from `this.memoryStore` and passes them straight through) — "Project
+memory", "Known problems from past attempts", and, task-scoped, "attempted
+before, under an earlier version of this plan". Like every other store in
+this codebase, `MemoryStore` degrades to safe no-ops when `paths.memoryDir`
+is unset (hand-built test configs that predate this phase), matching
+`TaskQueue`'s `tasksDir` guard. `GET /api/memory/:project` exposes the
+same data read-only, alongside `/api/tasks/:project`.
 
 ## Crash-anywhere durability
 

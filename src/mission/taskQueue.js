@@ -17,6 +17,11 @@
  * persisted queue that still has unfinished work, regardless of which
  * session last touched it, which is what lets newly-queued tasks run on
  * the next `start` without re-declaring the whole plan in JSON.
+ *
+ * Phase P5 (memory): a reinitialization (plan shape changed mid-mission)
+ * used to discard the outgoing queue's terminal tasks with no trace. An
+ * optional `memoryStore` now archives their outcome first — see
+ * `MemoryStore#archiveTaskHistory()`.
  */
 
 import path from 'node:path';
@@ -28,10 +33,16 @@ export class TaskQueue {
    * @param {object} options
    * @param {string} options.tasksDir - Directory for per-project task queues.
    * @param {object} options.logger - Module logger.
+   * @param {import('../memory/memoryStore.js').MemoryStore} [options.memoryStore] -
+   *   Phase P5: when a queue reinitializes (plan shape changed mid-mission),
+   *   its DONE/FAILED/BLOCKED tasks are archived here before being
+   *   discarded, rather than silently lost. Optional — omitted entirely in
+   *   test harnesses/setups that predate P5.
    */
-  constructor({ tasksDir, logger }) {
+  constructor({ tasksDir, logger, memoryStore }) {
     this.tasksDir = tasksDir;
     this.logger = logger;
+    this.memoryStore = memoryStore;
   }
 
   file(project) {
@@ -88,6 +99,7 @@ export class TaskQueue {
       this.logger.warn('Task plan changed mid-mission; restarting the task queue', {
         project, previousTaskIds: existing.tasks.map((t) => t.id), newTaskIds: planIds,
       });
+      this.memoryStore?.archiveTaskHistory(project, existing.tasks);
       return this.initialize(project, planTasks, sessionId);
     }
 
@@ -174,6 +186,25 @@ export class TaskQueue {
     if (!task) return queue;
     task.attempts += 1;
     if (task.state === TaskState.PENDING) task.state = TaskState.ACTIVE;
+    this.save(queue);
+    return queue;
+  }
+
+  /**
+   * Record the verification outcome of the current task's latest attempt,
+   * regardless of whether that attempt passed, will retry, or exhausted
+   * its budget. Distinct from `checkpoint` (set only on a TERMINAL outcome
+   * by markDone/markFailed/markBlocked): `lastVerifyResult` is what the
+   * Phase P4 Continuation Builder reads to tell the agent exactly why its
+   * previous attempt on THIS task wasn't accepted, even mid-retry.
+   *
+   * @param {object} queue
+   * @param {{passed: boolean, results: object[]}} verifyResult
+   */
+  recordVerifyResult(queue, verifyResult) {
+    const task = this.current(queue);
+    if (!task) return queue;
+    task.lastVerifyResult = verifyResult;
     this.save(queue);
     return queue;
   }

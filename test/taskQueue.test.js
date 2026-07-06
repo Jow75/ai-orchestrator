@@ -11,11 +11,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { TaskQueue } from '../src/mission/taskQueue.js';
 import { TaskState } from '../src/mission/taskState.js';
+import { MemoryStore } from '../src/memory/memoryStore.js';
 import { silentLogger } from '../src/infra/logger.js';
 
 function queue() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-tq-'));
   return new TaskQueue({ tasksDir: dir, logger: silentLogger });
+}
+
+/** A TaskQueue wired to a real MemoryStore, for archiving tests (Phase P5). */
+function queueWithMemory() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-tq-'));
+  const memoryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-tq-mem-'));
+  const memoryStore = new MemoryStore({ memoryDir, logger: silentLogger });
+  return { q: new TaskQueue({ tasksDir: dir, logger: silentLogger, memoryStore }), memoryStore };
 }
 
 const PLAN = [{ id: 'T1' }, { id: 'T2' }, { id: 'T3' }];
@@ -72,6 +81,20 @@ test('markFailed() and markBlocked() set the expected terminal states', () => {
   assert.equal(q.current(state).state, TaskState.BLOCKED);
 });
 
+test('recordVerifyResult() stores the latest verification outcome on the current task, independent of checkpoint', () => {
+  const q = queue();
+  let state = q.initialize('proj', PLAN, 'sess-1');
+  const verifyResult = { passed: false, results: [{ type: 'file-exists', passed: false, detail: 'not found' }] };
+
+  state = q.recordVerifyResult(state, verifyResult);
+  assert.deepEqual(q.current(state).lastVerifyResult, verifyResult);
+  assert.equal(q.current(state).checkpoint, null); // unaffected — still no terminal outcome
+
+  // A fresh instance reloading from disk sees it too (persisted).
+  const reloaded = q.load('proj');
+  assert.deepEqual(reloaded.tasks[0].lastVerifyResult, verifyResult);
+});
+
 test('currentIsResumable() reflects PENDING/ACTIVE vs terminal states', () => {
   const q = queue();
   let state = q.initialize('proj', PLAN, 'sess-1');
@@ -110,6 +133,25 @@ test('getOrInitialize() reinitializes when the plan changes shape mid-session', 
   assert.equal(reinitialized.tasks.length, 2);
   assert.equal(reinitialized.tasks[0].id, 'X1');
   assert.equal(reinitialized.currentIndex, 0);
+});
+
+test('getOrInitialize() archives the outgoing queue\'s terminal tasks to memory before reinitializing (Phase P5)', () => {
+  const { q, memoryStore } = queueWithMemory();
+  let state = q.initialize('proj', PLAN, 'sess-1');
+  state = q.recordAttempt(state);
+  state = q.markDone(state, { summary: 'T1 done successfully' }); // terminal
+  state = q.advance(state); // T2 now current
+  state = q.recordAttempt(state); // T2 is ACTIVE, NOT terminal
+
+  const changedPlan = [{ id: 'X1' }, { id: 'X2' }];
+  q.getOrInitialize('proj', changedPlan, 'sess-1');
+
+  const history = memoryStore.taskHistoryFor('proj', 'T1');
+  assert.equal(history.length, 1);
+  assert.equal(history[0].outcome, TaskState.DONE);
+  assert.equal(history[0].summary, 'T1 done successfully');
+  // T2 was never terminal — nothing to archive for it.
+  assert.deepEqual(memoryStore.taskHistoryFor('proj', 'T2'), []);
 });
 
 test('getOrInitialize() ADOPTS a different session\'s queue when the current task is still pending (Phase P3)', () => {

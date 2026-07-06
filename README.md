@@ -31,6 +31,15 @@ and handles everything that would normally require a human at the keyboard:
 - 📋 **Runtime prompt queue** — build up or adjust that task plan on the
   fly with `tasks add/remove/reorder`, no JSON editing required. Queue a
   follow-up task after a mission finishes and it runs on the next `start`.
+- 🧠 **Intelligent resumes** — every resume or retry gets a generated
+  briefing instead of a bare "Continue.": completed tasks, remaining
+  tasks, and — on a verification-failed retry — **exactly which check
+  failed and why**, so the agent never wastes a turn rediscovering what
+  the orchestrator already knows.
+- 🗂️ **Long-term memory** — record durable facts (`memory add`) that
+  every future resume/retry briefing includes; blocked/failed outcomes
+  are auto-cataloged and stay visible until you mark them resolved; a
+  task's history survives even a plan edit that would otherwise erase it.
 
 ## Quick start
 

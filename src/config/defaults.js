@@ -77,6 +77,21 @@ export const ORCHESTRATOR_DEFAULTS = {
     blockedDetection: true,
   },
 
+  /**
+   * Phase P4: the Claude Continuation Builder (see
+   * src/briefing/continuationBuilder.js). Replaces the bare
+   * `mission.continuePrompt`/task `continuePrompt` string with a
+   * structured briefing generated from live orchestrator state on every
+   * resume/retry — completed vs. remaining tasks, and, on a
+   * verification-failed retry, exactly which check failed and why.
+   */
+  briefing: {
+    /** Master switch. `false` reverts to the static continuePrompt string. */
+    enabled: true,
+    /** How many recent progress-ledger entries to summarize in the briefing. */
+    recentRunCount: 3,
+  },
+
   /** Usage-limit handling (see src/core/rateLimitEngine.js). */
   rateLimit: {
     /** Shortest allowed wait (guards against hot-looping on bad parses). */

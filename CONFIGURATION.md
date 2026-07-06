@@ -86,6 +86,26 @@ to raise the threshold for a project whose agent legitimately goes several
 runs between observable file changes (long research/reading phases). Any
 key you omit falls back to the global setting above.
 
+### briefing (Phase P4 — Continuation Builder)
+
+Controls whether a resume/retry gets a structured briefing generated from
+live orchestrator state, or the old static `continuePrompt` string.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Master switch. `false` reverts to the static `continuePrompt` string, byte-for-byte |
+| `recentRunCount` | `3` | How many recent progress-ledger entries to summarize in the briefing's "Recent activity" section |
+
+When enabled, every resume/retry prompt is built by
+`src/briefing/continuationBuilder.js` instead of reusing a fixed string:
+completed tasks (so they're never redone), remaining tasks, and — on a
+retry after a failed verification — **exactly which check failed and
+why** (e.g. `file-exists failed: Not found: out.txt`), read from
+`TaskQueue.recordVerifyResult()`'s stored outcome. Legacy (single-prompt)
+missions get an equivalent briefing scoped to the whole mission rather
+than one task. See ARCHITECTURE.md's "Continuation Builder" section for
+the full briefing shape.
+
 ### rateLimit
 
 | Key | Default | Meaning |
@@ -137,7 +157,7 @@ Minimal working example:
 | --- | --- | --- | --- |
 | `driver` | no | `"claude"` | Which engine driver runs this project |
 | `workingDirectory` | **yes** | — | Folder the agent works in |
-| `promptFile` | conditional | — | Mission prompt (relative to `workingDirectory` or absolute). **Required unless `tasks` is defined** (see below) — used for the FIRST launch; resumed runs use `mission.continuePrompt` |
+| `promptFile` | conditional | — | Mission prompt (relative to `workingDirectory` or absolute). **Required unless `tasks` is defined** (see below) — used for the FIRST launch; resumed runs get a Continuation Builder briefing (Phase P4), or `mission.continuePrompt` if `briefing.enabled` is `false` |
 | `tasks` | no | `[]` | Phase P2: an ordered task plan instead of one prompt — see "tasks" below |
 | `enabled` | no | `true` | Reserved for multi-project scheduling |
 
@@ -146,7 +166,7 @@ Minimal working example:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `completionMarker` | `"MISSION COMPLETE"` | Text whose appearance in the agent's final output ends the mission. **Instruct the agent in your prompt to print it only when everything is done.** Set `""` to disable (then supervision runs until `maxRuns` or manual stop) |
-| `continuePrompt` | *"Continue from where you left off…"* | Prompt for resumed/continued runs |
+| `continuePrompt` | *"Continue from where you left off…"* | Fallback prompt for resumed/continued runs, used only when `briefing.enabled` is `false` (see the `briefing` section above) |
 | `maxRuns` | `0` | Safety valve: max launches per mission (0 = unlimited) |
 
 ### progress (optional, per-project override)
@@ -207,7 +227,7 @@ Per-task fields:
 | `prompt` | **yes** | — | This task's prompt file (relative to `workingDirectory` or absolute) |
 | `objective` | no | `id` | Human-readable description, shown in logs/CLI |
 | `verify` | no | `[]` | List of verifier configs (see below). **Empty means the task falls back to `mission.completionMarker`** as a lightweight per-task signal |
-| `continuePrompt` | no | `mission.continuePrompt` | Prompt sent on a retry of this task (after a failed verification, usage limit, or crash) |
+| `continuePrompt` | no | `mission.continuePrompt` | Fallback prompt sent on a retry of this task, used only when `briefing.enabled` is `false`. When briefing is on (the default), the Continuation Builder generates a structured retry prompt instead — see the `briefing` section above |
 | `maxRuns` | no | `5` | Launches allowed on this task before it is marked failed and supervision **blocks** (never silently skips unverified work) |
 
 How a mission-mode run proceeds: the current task's prompt is sent on its
@@ -215,8 +235,10 @@ first launch; if the run exits cleanly, its verifiers run against the
 result. Passing advances to the next task (same engine conversation — no
 new session, just a new prompt) or, on the last task, completes the
 mission exactly like a legacy marker hit. Failing retries the *same* task
-with its `continuePrompt` until `maxRuns` is reached, at which point
-supervision stops with a diagnostic report explaining which check failed
+— with a Continuation Builder briefing naming exactly which check failed
+(or, if `briefing.enabled` is `false`, the static `continuePrompt`) —
+until `maxRuns` is reached, at which point supervision stops with a
+diagnostic report explaining which check failed
 and why (`state/diagnostics/<project>-<ts>.md`). Usage limits, crashes, and
 network errors are handled identically to legacy mode — they resume the
 task that was running, not the mission from the start.
@@ -294,6 +316,49 @@ Rules worth knowing:
 - Static `tasks` (JSON) and the runtime queue are the **same underlying
   queue** — the JSON array only seeds it the first time a session runs;
   after that, `tasks add/remove/reorder` is the way to adjust the plan.
+
+#### Memory (Phase P5) — durable, cross-session project knowledge
+
+`state/memory/<project>.json`, managed via the `memory` CLI command
+group — not project JSON config, since it's runtime knowledge that
+accumulates over a project's life rather than a setting you declare
+upfront.
+
+```bat
+:: Record a durable fact — surfaced in every future resume/retry briefing
+node bin\ai-orchestrator.js memory add my-project ^
+    --note "always run npm run build before tests" --category architecture
+
+:: Inspect notes, the failure catalog, and archived task history
+node bin\ai-orchestrator.js memory list my-project
+
+:: Mark a recorded failure resolved once its cause is actually fixed
+node bin\ai-orchestrator.js memory resolve my-project 1
+```
+
+| Command | Meaning |
+| --- | --- |
+| `memory add <project> --note <text> [--category project\|architecture]` | Record an operator-authored durable fact (default category `project`) |
+| `memory list <project>` | Show notes, the failure catalog (resolved/unresolved), and archived task history |
+| `memory resolve <project> <failureId>` | Mark a failure resolved — it stops appearing in future briefings |
+
+Two categories fill themselves in automatically, with no CLI action
+needed:
+
+- **Failures** are recorded whenever supervision blocks (a BLOCKED or
+  FAILED terminal outcome) — independent of the session or task queue
+  that hit them, so they outlive both. Only *unresolved* failures are
+  surfaced in future briefings.
+- **Task history** is archived just before a plan-shape change (editing
+  the static `tasks` array mid-mission) would otherwise discard a
+  finished task's outcome — so a later plan reusing the same task id
+  can still see what happened last time.
+
+All of this feeds the Phase P4 Continuation Builder automatically: every
+resume/retry briefing folds in relevant notes, unresolved failures, and
+(for the current task) any archived prior attempts on that same task id.
+No configuration is needed to enable this — it activates the moment
+anything has been recorded.
 
 ### claude (used when `driver` is `"claude"`)
 
