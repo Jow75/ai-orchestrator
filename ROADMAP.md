@@ -16,7 +16,7 @@ points:
 | `v2.0.0-beta.1` | **P3 complete** — runtime-mutable prompt queue (add/remove/reorder) |
 | `v2.0.0-beta.2` | **P4 + P5 complete** — intelligent briefing (Continuation Builder) + cross-session memory |
 | `v2.0.0-rc.1` | **P6 complete** — verification engine expansion (JSON schema, lint, dependency checks) |
-| `v2.0.0` | P7 — desktop application; stable release |
+| `v2.0.0` | **P7 complete** — desktop backend (mutating API + auth token); v2 stable |
 
 ### Architectural principle for every phase: **engine-agnostic**
 
@@ -202,13 +202,39 @@ learning from past runs instead of silently repeating them. `GET
 - Revisit plugin-extensible verifier types here if a real need emerges
   (deliberately deferred in P2 — see ARCHITECTURE.md).
 
-## P7 — Desktop application (`v2.0.0`)
+## P7 — Desktop backend ✅ (`v2.0.0`, complete — v2 stable)
 
-- Backend-first: extend the HTTP API with mutating endpoints (pause/resume/
-  skip/approve) behind a local auth token; the UI is purely an API client.
-- Tauri (preferred) or Electron shell: mission dashboard, progress timeline,
-  prompt-queue manager, usage/rate-limit monitor, checkpoint viewer,
-  diagnostics, memory viewer, multi-project manager, notification center.
+Backend-first, as planned: extended the HTTP API with mutating endpoints
+behind a local auth token (`src/api/apiAuth.js`) — the UI is purely an
+API client, and this is that API's mutation surface.
+
+- **Stop** (`POST /api/control/stop`) — the one endpoint acting on the
+  live process (`orchestrator.stop()`), same graceful shutdown the CLI's
+  `stop` command already used. "Pause/resume" maps onto this plus the
+  existing `start` command: supervision has no separate in-place pause
+  concept — every resume already IS a `start` against a preserved,
+  resumable session, so introducing a second pause primitive would
+  duplicate that mechanism instead of reusing it.
+- **Task queue mutation** (`add`/`remove`/`reorder`) mirrors the `tasks`
+  CLI over HTTP with identical validation and guards.
+- **Approve / skip** — the two genuinely new pieces: `TaskQueue#approveRetry()`
+  resets a BLOCKED/FAILED current task to PENDING for the next `start` to
+  retry (the sanctioned way back in after `block()` shut the door);
+  `TaskQueue#operatorSkip()` marks it done-via-override and advances past
+  it. Both require an explicit human decision (CLI or API), never
+  automatic — P0's loop-prevention guarantee is unaffected.
+- **Memory mutation** (`notes`, `failures/:id/resolve`) mirrors the
+  `memory` CLI over HTTP.
+- **Auth**: one local token (`state/api-token.txt`), required for every
+  mutating endpoint; every existing read-only endpoint stays open, as it
+  always has been on the local-only bind.
+
+**Explicitly NOT built in this phase** (documented, not deferred quietly):
+the actual Tauri/Electron shell, mission dashboard UI, progress timeline
+visualization, checkpoint/diagnostics/memory viewers, multi-project
+manager, notification center. All of these are real future work — a
+concrete UI layer on top of an API that can now both read AND mutate —
+but are out of scope for "backend-first."
 
 ---
 

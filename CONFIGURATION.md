@@ -32,9 +32,18 @@ Files: `logs/orchestrator-YYYY-MM-DD.log` (everything) and
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `true` | Serve the read-only dashboard API |
+| `enabled` | `true` | Serve the dashboard API |
 | `host` | `"127.0.0.1"` | Bind address (local-only by default) |
 | `port` | `4711` | Port |
+
+Read-only endpoints (`/api/status`, `/api/tasks/:project`, `/api/memory/:project`,
+...) need no authentication — unchanged since P0. Mutating endpoints
+(Phase P7 — stopping a mission, editing a task queue, approving/skipping
+a blocked task, resolving a memory failure) require the local API token:
+run `ai-orchestrator api-token` to print it (a fresh one is generated on
+first use and stored at `state/api-token.txt`), or `--rotate` to
+invalidate it and generate a new one. See API.md for the full endpoint
+list and request/response shapes.
 
 ### supervision
 
@@ -315,10 +324,34 @@ Rules worth knowing:
   queue's current task ended in one of those states, the next `start`
   falls back to the project's static plan (or legacy `promptFile`) instead
   of re-adopting the stuck task — fix the cause first (see
-  TROUBLESHOOTING.md), then queue fresh tasks or edit the static config.
+  TROUBLESHOOTING.md), then either queue fresh tasks/edit the static
+  config, **or** use `tasks approve`/`tasks skip` (Phase P7, below) if the
+  existing task itself should simply be retried or bypassed.
 - Static `tasks` (JSON) and the runtime queue are the **same underlying
   queue** — the JSON array only seeds it the first time a session runs;
   after that, `tasks add/remove/reorder` is the way to adjust the plan.
+
+#### Operator overrides (Phase P7) — approve or skip a blocked task
+
+```bat
+:: Fixed the underlying cause? Retry the SAME task on the next start:
+node bin\ai-orchestrator.js tasks approve my-project T2
+
+:: Or confirm the work is fine (or should be abandoned) and move on:
+node bin\ai-orchestrator.js tasks skip my-project T2 --reason "verified manually"
+```
+
+Both act only on the **current** task, and only when it is `blocked` or
+`failed` — refused otherwise (e.g. a `pending` or `active` task, or any
+task id that isn't the current one). `tasks approve` clears the task's
+attempts/checkpoint and resets it to `pending`, so the next `start`
+retries it with a clean slate. `tasks skip` marks it `done` (with an
+`operator-skipped` checkpoint recording the reason) and advances to the
+next task — if it was the last task, the mission is now complete; no
+further `start` is needed (running one anyway would restart the whole
+mission from scratch, the same as re-running any already-completed
+mission-mode project). The same two actions are available over HTTP as
+`POST /api/tasks/:project/approve` and `.../skip` — see API.md.
 
 #### Memory (Phase P5) — durable, cross-session project knowledge
 

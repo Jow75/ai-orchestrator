@@ -48,3 +48,4 @@ export { Heartbeat } from './state/heartbeat.js';
 export { NotificationEngine } from './notifications/notificationEngine.js';
 export { PluginManager } from './plugins/pluginManager.js';
 export { DashboardServer } from './api/dashboardServer.js';
+export { loadOrCreateToken, requireAuth } from './api/apiAuth.js';

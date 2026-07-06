@@ -41,6 +41,11 @@ and handles everything that would normally require a human at the keyboard:
   every future resume/retry briefing includes; blocked/failed outcomes
   are auto-cataloged and stay visible until you mark them resolved; a
   task's history survives even a plan edit that would otherwise erase it.
+- 🖥️ **API for the future desktop app** — the dashboard API's read-only
+  endpoints are joined by a mutating surface (stop a mission, edit a task
+  queue, approve/skip a blocked task, resolve a memory entry) behind a
+  local auth token (`ai-orchestrator api-token`) — everything the CLI can
+  do, also reachable over HTTP.
 
 ## Quick start
 
@@ -119,6 +124,9 @@ prompt (same conversation) → … → mission complete." See
 | `timeline <project>` | Key events over the mission's lifetime |
 | `tasks list <project>` | Task queue for a multi-task mission |
 | `tasks add/remove/reorder` | Build or adjust a project's task queue at runtime |
+| `tasks approve/skip <project> <taskId>` | Retry or bypass a blocked/failed task |
+| `memory list/add/resolve <project>` | Durable notes, failure catalog, task history |
+| `api-token [--rotate]` | Show/rotate the dashboard API's mutating-endpoint token |
 | `projects list` / `projects add` | Manage project definitions |
 | `drivers` | List available AI engine drivers |
 | `scheduler install/uninstall/status` | Windows auto-resume task |

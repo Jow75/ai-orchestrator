@@ -32,6 +32,7 @@ import Orchestrator from './core/orchestrator.js';
 import NotificationEngine from './notifications/notificationEngine.js';
 import PluginManager from './plugins/pluginManager.js';
 import DashboardServer from './api/dashboardServer.js';
+import { loadOrCreateToken } from './api/apiAuth.js';
 
 /** Cadence for checking the CLI stop-request file while supervising. */
 const STOP_FILE_POLL_MS = 5_000;
@@ -114,6 +115,11 @@ export class App {
       logger: childLogger(this.logger, 'plugins'),
     });
 
+    // Phase P7: local token gating the dashboard API's mutating endpoints
+    // (generated once, persisted at state/api-token.txt). Read-only
+    // endpoints are unauthenticated, as they always have been.
+    this.apiToken = loadOrCreateToken(this.paths.apiTokenFile);
+
     this.dashboard = new DashboardServer({
       config: this.config.api,
       logger: childLogger(this.logger, 'api'),
@@ -123,6 +129,8 @@ export class App {
       timeline: this.timeline,
       taskQueue: this.taskQueue,
       memoryStore: this.memoryStore,
+      orchestrator: this.orchestrator,
+      apiToken: this.apiToken,
     });
 
     this.stopFilePath = path.join(this.paths.stateDir, STOP_REQUEST_FILENAME);

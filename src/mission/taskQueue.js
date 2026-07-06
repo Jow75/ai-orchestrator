@@ -22,6 +22,11 @@
  * used to discard the outgoing queue's terminal tasks with no trace. An
  * optional `memoryStore` now archives their outcome first — see
  * `MemoryStore#archiveTaskHistory()`.
+ *
+ * Phase P7 (operator overrides): `approveRetry()`/`operatorSkip()` are the
+ * only sanctioned way to re-enter or bypass a BLOCKED/FAILED task — always
+ * an explicit human decision (CLI or the dashboard API's mutating
+ * endpoints), never automatic.
  */
 
 import path from 'node:path';
@@ -324,6 +329,84 @@ export class TaskQueue {
     this.save(queue);
     this.logger.info('Task reordered', { project: queue.project, taskId, direction });
     return { ok: true };
+  }
+
+  /**
+   * Phase P7: operator override — reset the current BLOCKED/FAILED task
+   * back to PENDING (attempts, checkpoint, and verify result cleared) so
+   * the next `start` retries it, instead of falling through to a static-
+   * plan/legacy restart. Requires a human decision (the `tasks approve`
+   * CLI or `POST /api/tasks/:project/approve`) — never automatic, which
+   * is what keeps P0's loop-prevention guarantee intact: nothing in the
+   * supervision loop itself ever re-enters a task that `block()` shut the
+   * door on.
+   *
+   * @param {object} queue
+   * @param {string} taskId
+   * @returns {{ok: boolean, reason?: string}}
+   */
+  approveRetry(queue, taskId) {
+    const task = this.currentBlockedOrFailedTask(queue, taskId);
+    if (task.reason) return task;
+
+    task.task.state = TaskState.PENDING;
+    task.task.attempts = 0;
+    task.task.checkpoint = null;
+    task.task.lastVerifyResult = null;
+    this.save(queue);
+    this.logger.info('Task approved for retry by operator', { project: queue.project, taskId });
+    return { ok: true };
+  }
+
+  /**
+   * Phase P7: operator override — mark the current BLOCKED/FAILED task
+   * done (with an `operator-skipped` checkpoint noting why) and advance
+   * past it, for when automated verification can't be satisfied but a
+   * human has confirmed the work is acceptable, or that it should simply
+   * be abandoned. Only ever the current task, only from a terminal state
+   * — this never touches an ACTIVE task, so it can never interfere with a
+   * live agent (a task can only be BLOCKED/FAILED once that run has
+   * already ended and supervision has already stopped — see `block()`).
+   *
+   * @param {object} queue
+   * @param {string} taskId
+   * @param {string} [reason]
+   * @returns {{ok: boolean, reason?: string}}
+   */
+  operatorSkip(queue, taskId, reason) {
+    const task = this.currentBlockedOrFailedTask(queue, taskId);
+    if (task.reason) return task;
+
+    task.task.state = TaskState.DONE;
+    task.task.checkpoint = {
+      ...(task.task.checkpoint ?? {}),
+      outcome: 'operator-skipped',
+      summary: reason ?? 'Skipped by operator',
+    };
+    this.save(queue);
+    this.advance(queue);
+    this.logger.info('Task skipped by operator', { project: queue.project, taskId, reason });
+    return { ok: true };
+  }
+
+  /**
+   * Shared guard for `approveRetry`/`operatorSkip`: the named task must be
+   * the CURRENT task (index-wise) and in a terminal, non-resumable state.
+   * Returns `{ task }` on success or `{ ok: false, reason }` on failure —
+   * callers check `.reason` to distinguish the two without a second lookup.
+   */
+  currentBlockedOrFailedTask(queue, taskId) {
+    const current = this.current(queue);
+    if (!current || current.id !== taskId) {
+      return { ok: false, reason: `Task "${taskId}" is not the current task in the queue.` };
+    }
+    if (TASK_RESUMABLE_STATES.includes(current.state)) {
+      return {
+        ok: false,
+        reason: `Task "${taskId}" is ${current.state}, not blocked/failed — nothing to approve or skip.`,
+      };
+    }
+    return { task: current };
   }
 }
 

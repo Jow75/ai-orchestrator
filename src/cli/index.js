@@ -8,8 +8,11 @@
  *   stop                   Ask the running orchestrator to stop gracefully
  *   status                 Show live status (from status.json)
  *   sessions [project]     Show active sessions / a project's history
- *   tasks list|add|remove|reorder   Manage a project's task queue (Phase P2/P3)
+ *   tasks list|add|remove|reorder|approve|skip   Manage a project's task
+ *                           queue (Phase P2/P3); approve/skip are Phase P7
+ *                           operator overrides for a blocked/failed task
  *   memory list|add|resolve   Manage a project's long-term memory (Phase P5)
+ *   api-token [--rotate]    Show/rotate the dashboard API's mutating-endpoint token (Phase P7)
  *   projects list|add      Manage project definitions
  *   drivers                List available AI engine drivers
  *   scheduler ...          Install/inspect the Windows auto-start task
@@ -32,6 +35,7 @@ import MissionTimeline from '../state/missionTimeline.js';
 import TaskQueue from '../mission/taskQueue.js';
 import { validateSingleTask } from '../mission/missionPlan.js';
 import MemoryStore from '../memory/memoryStore.js';
+import { loadOrCreateToken } from '../api/apiAuth.js';
 import DriverRegistry from '../drivers/driverRegistry.js';
 import { readJsonSafe } from '../state/statePersistence.js';
 import { isPidAlive } from '../state/heartbeat.js';
@@ -66,7 +70,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('2.0.0-rc.1');
+    .version('2.0.0');
 
   program
     .command('start')
@@ -340,6 +344,78 @@ export function buildProgram() {
           return;
         }
         console.log(chalk.green(`Moved task "${taskId}" ${direction}.`));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  tasks
+    .command('approve')
+    .argument('<project>', 'project name')
+    .argument('<taskId>', 'id of the current BLOCKED/FAILED task to retry')
+    .description('Operator override (Phase P7): reset a blocked/failed task to PENDING so the next start retries it')
+    .action((project, taskId) => {
+      try {
+        const { paths } = readOnlyContext();
+        const taskQueue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger });
+        const queue = taskQueue.load(project);
+        if (!queue) {
+          console.log(`No task queue for "${project}".`);
+          return;
+        }
+        const result = taskQueue.approveRetry(queue, taskId);
+        if (!result.ok) {
+          console.error(chalk.red(`\n${result.reason}`));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(chalk.green(`Task "${taskId}" approved for retry — the next start will retry it.`));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  tasks
+    .command('skip')
+    .argument('<project>', 'project name')
+    .argument('<taskId>', 'id of the current BLOCKED/FAILED task to skip')
+    .option('--reason <text>', 'why this task is being skipped (recorded on its checkpoint)')
+    .description('Operator override (Phase P7): mark a blocked/failed task done and advance past it')
+    .action((project, taskId, options) => {
+      try {
+        const { paths } = readOnlyContext();
+        const taskQueue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger });
+        const queue = taskQueue.load(project);
+        if (!queue) {
+          console.log(`No task queue for "${project}".`);
+          return;
+        }
+        const result = taskQueue.operatorSkip(queue, taskId, options.reason);
+        if (!result.ok) {
+          console.error(chalk.red(`\n${result.reason}`));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(chalk.green(`Task "${taskId}" skipped.`));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  program
+    .command('api-token')
+    .option('--rotate', 'generate a new token, invalidating the previous one')
+    .description('Show (or rotate) the local token required by the dashboard API\'s mutating endpoints (Phase P7)')
+    .action((options) => {
+      try {
+        const { paths } = readOnlyContext();
+        const token = loadOrCreateToken(paths.apiTokenFile, { rotate: Boolean(options.rotate) });
+        if (options.rotate) {
+          console.log(chalk.green('Rotated. New API token:'));
+        } else {
+          console.log('API token:');
+        }
+        console.log(token);
       } catch (error) {
         fail(error);
       }

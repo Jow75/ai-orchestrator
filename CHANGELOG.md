@@ -3,6 +3,76 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.0.0] — 2026-07-06 — Phase P7: Desktop Backend — v2 stable
+
+Backend-first, per the roadmap: extends the dashboard HTTP API with
+mutating endpoints behind a local auth token. The actual Tauri/Electron
+desktop shell is out of scope for this phase — "the UI is purely an API
+client," and this is that API's mutation surface. With P7 complete, the
+full P0–P7 v2 roadmap ("Autonomous AI Project Manager") is delivered.
+
+### Added
+
+- **`src/api/apiAuth.js`**: a local token (`state/api-token.txt`,
+  generated once, `0600`-mode) gates every mutating endpoint below.
+  Deliberately not a full auth system — one shared secret, matching the
+  "one operator, one machine" model the rest of the CLI already assumes.
+  `requireAuth()` checks `Authorization: Bearer <token>` or `X-API-Token`;
+  a missing/unconfigured token always 401s (never open-by-default).
+- **Mutating dashboard API endpoints** (all require the token; every
+  existing read-only endpoint is unchanged and still unauthenticated):
+  - `POST /api/control/stop` — gracefully stops the live orchestrator
+    (the one endpoint that acts on the in-memory process, not a file).
+  - `POST /api/tasks/:project/add|remove|reorder` — mirror the `tasks`
+    CLI exactly (same validation, same PENDING-only guards).
+  - `POST /api/tasks/:project/approve` / `.../skip` — **new** operator
+    overrides (see below), not previously available via CLI either.
+  - `POST /api/memory/:project/notes` — mirrors `memory add`.
+  - `POST /api/memory/:project/failures/:id/resolve` — mirrors `memory resolve`.
+- **`TaskQueue#approveRetry()`**: resets a BLOCKED/FAILED **current**
+  task back to PENDING (attempts/checkpoint/verify-result cleared) so the
+  next `start` retries it, instead of falling through to a static-plan/
+  legacy restart. The only sanctioned way to re-enter a task that
+  `block()` shut the door on — always an explicit operator decision,
+  never automatic, preserving P0's loop-prevention guarantee.
+- **`TaskQueue#operatorSkip()`**: marks the current BLOCKED/FAILED task
+  DONE (with an `operator-skipped` checkpoint noting why) and advances
+  past it — for when automated verification can't be satisfied but a
+  human has confirmed the work is acceptable. Only ever the current task,
+  only from a terminal state — can never touch a live/ACTIVE task, so it
+  can never interfere with a live agent (by the time a task is
+  BLOCKED/FAILED, `block()` has already closed the session and the
+  orchestrator process has already exited).
+- **CLI**: `tasks approve <project> <taskId>`, `tasks skip <project>
+  <taskId> [--reason]`, `api-token [--rotate]`.
+- 26 new tests: `TaskQueue#approveRetry()`/`operatorSkip()` unit tests
+  (including refusing a non-current or non-terminal task, and proving the
+  approved queue gets ADOPTED rather than reinitialized by the next
+  session), `apiAuth` unit tests (token generation/persistence/rotation,
+  middleware accept/reject, and the "no token configured = always 401"
+  safe default), and a real-HTTP `DashboardServer` integration suite
+  (ephemeral port, real `fetch` calls) covering every mutating endpoint's
+  auth gate and actual on-disk effect. 277 tests total. Verified live: a
+  real `App` instance supervising a real mock mission, stopped via a
+  genuine HTTP POST to `/api/control/stop` with the auto-generated token
+  — session correctly preserved for resume, exactly as the CLI's `stop`
+  already guaranteed.
+
+### Known limitations (documented, not hidden)
+
+- No actual desktop application ships in this phase — Tauri/Electron
+  shell, mission dashboard UI, timeline visualization, etc. are explicitly
+  future work building **on top of** this API, not delivered here.
+- The auth model is intentionally minimal: one static shared token, no
+  expiry, no per-action scopes, no multi-user support. Sufficient for
+  "one operator, one machine, gating accidental/remote mutation," not a
+  multi-tenant or internet-facing deployment model.
+- `approveRetry`/`operatorSkip` assume single-process operation (no
+  orchestrator concurrently supervising the same project while an
+  operator calls them) — true by construction today (a task can only be
+  BLOCKED/FAILED after the process that hit it has already exited), but
+  would need reconsideration if multi-process supervision is ever added.
+
 ## [2.0.0-rc.1] — 2026-07-06 — Phase P6: Verification Engine Expansion
 
 Extends the same `verifierRegistry.js` P2 shipped — not a rewrite — with

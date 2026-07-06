@@ -88,7 +88,9 @@ details) and from mechanism (process handling, persistence) throughout.
 │  src/notifications/       engine + channels (desktop/webhook/discord/│
 │                           telegram/email-stub)                       │
 │  src/plugins/             plugin loader (event & driver extension)   │
-│  src/api/                 read-only dashboard HTTP API               │
+│  src/api/                 dashboard HTTP API: read-only status/      │
+│                           tasks/memory/timeline + P7 mutating         │
+│                           endpoints behind a local auth token         │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Foundation                                                          │
 │  src/config/              JSON config: defaults.js (every tunable) + │
@@ -340,6 +342,46 @@ this codebase, `MemoryStore` degrades to safe no-ops when `paths.memoryDir`
 is unset (hand-built test configs that predate this phase), matching
 `TaskQueue`'s `tasksDir` guard. `GET /api/memory/:project` exposes the
 same data read-only, alongside `/api/tasks/:project`.
+
+## The dashboard API's mutation surface (Phase P7)
+
+Every endpoint through P5 was read-only — status, sessions, timeline,
+tasks, memory — safe to leave unauthenticated on the local-only bind
+(`api.host` default `127.0.0.1`). P7 adds a mutation surface for the
+future desktop app ("the UI is purely an API client"), which is a
+different risk: anyone who can reach the port can now change state, not
+just observe it. `src/api/apiAuth.js` gates every mutating route with a
+single local token (`state/api-token.txt`, generated once, `0600`-mode);
+`requireAuth()` 401s on anything else, including an *unconfigured* token
+— there is no "open by default" path.
+
+The mutating routes fall into three shapes:
+
+- **`POST /api/control/stop`** — the only one that acts on the live
+  process in memory (`this.orchestrator.stop(reason)`), not a file. It's
+  the same graceful stop the CLI's `stop` command already performed
+  (`AgentRun.requestStop()`, never a kill) — the API is a second door to
+  an existing mechanism, not a new one.
+- **Mirrors of existing CLI mutations** — `/api/tasks/:project/add|remove|reorder`
+  and `/api/memory/:project/notes` / `.../failures/:id/resolve` call the
+  exact same `TaskQueue`/`MemoryStore` methods the CLI calls, with the
+  same validation and guards. Both the CLI and the API read/write the
+  same files on disk; neither is a special case of the other.
+- **New operator overrides** — `TaskQueue#approveRetry()` and
+  `#operatorSkip()`, the one piece of genuinely new domain logic in this
+  phase. Both act ONLY on the *current* task and ONLY from a terminal
+  (BLOCKED/FAILED) state (shared guard: `currentBlockedOrFailedTask()`):
+  `approveRetry()` clears attempts/checkpoint/verify-result and resets the
+  task to PENDING, so the next `start` retries it — relying on the
+  existing P3 adoption rule (`currentIsResumable()`) to pick it back up
+  under a fresh session rather than falling through to a static-plan
+  restart. `operatorSkip()` instead marks the task DONE with an
+  `operator-skipped` checkpoint and advances past it. Neither can ever
+  touch a live/ACTIVE task: a task only reaches BLOCKED/FAILED after
+  `block()` has already closed its session, by which point the
+  orchestrator process that hit it has already exited — so these two
+  overrides can never race a live agent or violate "never interfere while
+  the process is alive."
 
 ## Crash-anywhere durability
 

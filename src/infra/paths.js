@@ -50,6 +50,7 @@ export function resolvePaths(overrides = {}) {
   resolved.tasksDir = path.join(resolved.stateDir, 'tasks');
   resolved.diagnosticsDir = path.join(resolved.stateDir, 'diagnostics');
   resolved.memoryDir = path.join(resolved.stateDir, 'memory');
+  resolved.apiTokenFile = path.join(resolved.stateDir, 'api-token.txt');
   resolved.heartbeatFile = path.join(resolved.stateDir, 'heartbeat.json');
   resolved.runtimeHistoryFile = path.join(resolved.stateDir, 'runtime_history.json');
 

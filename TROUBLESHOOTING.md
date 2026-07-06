@@ -290,6 +290,27 @@ final snapshot of the last run.
 If port 4711 is taken the orchestrator logs a warning and continues without
 the API — change `api.port`.
 
+### A mutating API call returns 401 (Phase P7)
+
+Every mutating endpoint (`POST /api/control/stop`, `/api/tasks/:project/*`,
+`/api/memory/:project/*`) requires the local API token. Get it with
+`ai-orchestrator api-token`; send it as `Authorization: Bearer <token>`
+(or `X-API-Token: <token>`). A 401 with no token sent, a stale/wrong
+token, or no token file existing yet (it's generated on first use — run
+`ai-orchestrator api-token` once to force creation) all look identical:
+the endpoint intentionally never distinguishes "wrong token" from "no
+token configured," so an attacker can't use the error message to probe
+whether auth is set up at all.
+
+### `tasks approve`/`tasks skip` says a task "is not the current task" or "not blocked/failed"
+
+Both operator overrides (Phase P7) only ever act on the queue's
+**current** task, and only when it's `blocked` or `failed`. Check
+`ai-orchestrator tasks list <project>` — if the task you meant isn't
+first in the list (marked with `→`), it isn't current; if it's `pending`,
+`active`, or `done`, there's nothing to approve or skip. A queue can only
+have one BLOCKED/FAILED task at a time (the one supervision stopped on).
+
 ### Logs growing / missing
 
 Rotation is automatic (`logging.maxSize`, `logging.maxFiles`). For deep

@@ -81,6 +81,90 @@ test('markFailed() and markBlocked() set the expected terminal states', () => {
   assert.equal(q.current(state).state, TaskState.BLOCKED);
 });
 
+// ---------------------------------------------------------------------------
+// Phase P7: operator overrides (approveRetry / operatorSkip)
+// ---------------------------------------------------------------------------
+
+test('approveRetry() resets a BLOCKED current task back to PENDING with a clean slate', () => {
+  const q = queue();
+  let state = q.initialize('proj', PLAN, 'sess-1');
+  state = q.recordAttempt(state);
+  state = q.recordVerifyResult(state, { passed: false, results: [] });
+  state = q.markBlocked(state, { summary: 'stuck' });
+
+  const result = q.approveRetry(state, 'T1');
+  assert.equal(result.ok, true);
+  const task = q.current(state);
+  assert.equal(task.state, TaskState.PENDING);
+  assert.equal(task.attempts, 0);
+  assert.equal(task.checkpoint, null);
+  assert.equal(task.lastVerifyResult, null);
+});
+
+test('approveRetry() refuses a task that is not blocked/failed', () => {
+  const q = queue();
+  let state = q.initialize('proj', PLAN, 'sess-1');
+  state = q.recordAttempt(state); // ACTIVE, not terminal
+
+  const result = q.approveRetry(state, 'T1');
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /not blocked\/failed/);
+});
+
+test('approveRetry() refuses a task id that is not the current task', () => {
+  const q = queue();
+  const state = q.initialize('proj', PLAN, 'sess-1');
+  const result = q.approveRetry(state, 'T2'); // T1 is current, not T2
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /not the current task/);
+});
+
+test('approveRetry() lets the queue be ADOPTED (not restarted) by the next session', () => {
+  const q = queue();
+  let state = q.initialize('proj', PLAN, 'sess-1');
+  state = q.recordAttempt(state);
+  state = q.markFailed(state, { summary: 'exhausted retries' });
+  q.approveRetry(state, 'T1');
+
+  const adopted = q.getOrInitialize('proj', PLAN, 'sess-2');
+  assert.equal(adopted.currentIndex, 0);
+  assert.equal(adopted.tasks[0].state, TaskState.PENDING);
+  assert.equal(adopted.sessionId, 'sess-2'); // reattached, not reinitialized from scratch
+});
+
+test('operatorSkip() marks a FAILED current task done-via-override and advances', () => {
+  const q = queue();
+  let state = q.initialize('proj', PLAN, 'sess-1');
+  state = q.recordAttempt(state);
+  state = q.markFailed(state, { summary: 'could not verify' });
+
+  const result = q.operatorSkip(state, 'T1', 'confirmed manually, moving on');
+  assert.equal(result.ok, true);
+  assert.equal(state.currentIndex, 1);
+  assert.equal(state.tasks[0].state, TaskState.DONE);
+  assert.equal(state.tasks[0].checkpoint.outcome, 'operator-skipped');
+  assert.equal(state.tasks[0].checkpoint.summary, 'confirmed manually, moving on');
+  assert.equal(q.current(state).id, 'T2'); // advanced to the next task
+});
+
+test('operatorSkip() refuses a task that is not blocked/failed', () => {
+  const q = queue();
+  const state = q.initialize('proj', PLAN, 'sess-1'); // T1 is PENDING
+  const result = q.operatorSkip(state, 'T1');
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /not blocked\/failed/);
+});
+
+test('operatorSkip() refuses a task id that is not the current task', () => {
+  const q = queue();
+  let state = q.initialize('proj', PLAN, 'sess-1');
+  state = q.recordAttempt(state);
+  state = q.markFailed(state, {});
+  const result = q.operatorSkip(state, 'T2');
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /not the current task/);
+});
+
 test('recordVerifyResult() stores the latest verification outcome on the current task, independent of checkpoint', () => {
   const q = queue();
   let state = q.initialize('proj', PLAN, 'sess-1');

@@ -8,9 +8,11 @@ covered last.)
 
 ## 1. Dashboard HTTP API
 
-Read-only, JSON, served on `http://127.0.0.1:4711` by default (see
-`api` in [CONFIGURATION.md](CONFIGURATION.md)). Built for the future web
-dashboard, equally useful for curl and monitoring.
+JSON, served on `http://127.0.0.1:4711` by default (see `api` in
+[CONFIGURATION.md](CONFIGURATION.md)). Built for the future desktop app,
+equally useful for curl, scripts, and monitoring. Read-only endpoints
+need no authentication (unchanged since P0); mutating endpoints (Phase
+P7) require the local API token — see section 1b below.
 
 | Endpoint | Returns |
 | --- | --- |
@@ -20,6 +22,7 @@ dashboard, equally useful for curl and monitoring.
 | `GET /api/sessions/:project/history` | Finished sessions for a project |
 | `GET /api/timeline/:project` | Mission timeline — key events over time |
 | `GET /api/tasks/:project` | Phase P2: task queue (`null` for legacy/not-yet-run projects) |
+| `GET /api/memory/:project` | Phase P5: notes/failures/task history (`null` if nothing recorded) |
 | `GET /api/projects` | Defined projects + `hasActiveSession` flag |
 
 ### `/api/status` shape
@@ -111,6 +114,36 @@ One line per run, the complete audit trail behind the timeline:
   "consecutiveNoProgress": 0, "resultText": "…"
 }
 ```
+
+---
+
+## 1b. Mutating endpoints (Phase P7)
+
+Every endpoint here requires the local API token: `Authorization: Bearer
+<token>`, or the `X-API-Token: <token>` header. Get the current token
+with `ai-orchestrator api-token` (generated on first use, persisted at
+`state/api-token.txt`); `--rotate` invalidates it and issues a new one.
+A missing or wrong token — or no token configured at all — always
+returns `401`.
+
+| Endpoint | Body | Effect |
+| --- | --- | --- |
+| `POST /api/control/stop` | `{ reason? }` | Gracefully stops the live orchestrator (same mechanism as the CLI's `stop`) |
+| `POST /api/tasks/:project/add` | `{ id, prompt, objective?, maxRuns?, verify? }` | Enqueues a validated task (mirrors `tasks add`) — `400` with `{ ok: false, problems: [...] }` on validation failure |
+| `POST /api/tasks/:project/remove` | `{ taskId }` | Removes a PENDING task (mirrors `tasks remove`) |
+| `POST /api/tasks/:project/reorder` | `{ taskId, direction: "up"\|"down" }` | Reorders a PENDING task (mirrors `tasks reorder`) |
+| `POST /api/tasks/:project/approve` | `{ taskId }` | Resets a BLOCKED/FAILED current task to PENDING for the next `start` to retry |
+| `POST /api/tasks/:project/skip` | `{ taskId, reason? }` | Marks a BLOCKED/FAILED current task DONE and advances past it |
+| `POST /api/memory/:project/notes` | `{ category?, text }` | Records an operator note (mirrors `memory add`) |
+| `POST /api/memory/:project/failures/:id/resolve` | *(none)* | Marks a recorded failure resolved (mirrors `memory resolve`) |
+
+All except `/api/control/stop` return `{ ok: boolean, reason?: string }`
+(or `{ ok: false, problems: [...] }` for `add`'s validation errors) with
+HTTP status `200` on success, `400`/`404` on a rejected mutation — the
+exact same result shape `TaskQueue`/`MemoryStore`'s own methods return,
+since these routes call them directly. `/api/control/stop` returns
+`{ ok: true }` on success, `503` if no live orchestrator is attached
+(e.g. a `DashboardServer` built standalone for testing).
 
 ---
 
@@ -321,3 +354,24 @@ history into every briefing) — nothing further to configure. See
 `test/memoryStore.test.js` for the full unit-test surface and
 `test/orchestrator.p5.test.js` for `block()` recording a failure and a
 real continuation prompt carrying operator notes end-to-end.
+
+### API auth (Phase P7)
+
+```js
+import { loadOrCreateToken, requireAuth } from 'ai-orchestrator';
+
+const token = loadOrCreateToken(paths.apiTokenFile); // generates on first use
+const token2 = loadOrCreateToken(paths.apiTokenFile, { rotate: true }); // invalidates the old one
+
+app.post('/my-mutating-route', requireAuth(token), (req, res) => { /* ... */ });
+```
+
+`App` calls `loadOrCreateToken()` once at startup and passes the result
+to `DashboardServer` as `apiToken`; `DashboardServer` applies
+`requireAuth()` to every mutating route itself (see section 1b) — a
+library consumer building their own server only needs these two
+functions if they want the exact same token/middleware behavior
+elsewhere. See `test/apiAuth.test.js` for the full behavior, including
+the "no token configured always 401s" safe default, and
+`test/dashboardServer.test.js` for real HTTP requests against every
+mutating endpoint.
