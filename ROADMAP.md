@@ -17,6 +17,7 @@ points:
 | `v2.0.0-beta.2` | **P4 + P5 complete** — intelligent briefing (Continuation Builder) + cross-session memory |
 | `v2.0.0-rc.1` | **P6 complete** — verification engine expansion (JSON schema, lint, dependency checks) |
 | `v2.0.0` | **P7 complete** — desktop backend (mutating API + auth token); v2 stable |
+| `v2.1.0` | **Phase 8 complete** — operator desktop application (Electron) |
 
 ### Architectural principle for every phase: **engine-agnostic**
 
@@ -235,6 +236,35 @@ visualization, checkpoint/diagnostics/memory viewers, multi-project
 manager, notification center. All of these are real future work — a
 concrete UI layer on top of an API that can now both read AND mutate —
 but are out of scope for "backend-first."
+
+## Phase 8 — Operator desktop application ✅ (`v2.1.0`, complete)
+
+The concrete UI layer P7 was built for. See `desktop/README.md` for the
+full architecture; summary:
+
+- **Electron**, not Tauri — the whole codebase is Node/ESM already; the
+  main process reaches the backend directly with no new toolchain.
+- **Dual-mode integration** (`desktop/main/orchestratorBridge.js`): the
+  dashboard HTTP API when an orchestrator is live, the same library
+  classes the CLI uses when idle (there's no HTTP server to reach then).
+  Starting a mission spawns the real CLI entry point as a detached child
+  process — never a re-implementation of `Orchestrator`/`App` in the UI
+  layer.
+- Seven views: Dashboard, Missions, Tasks, Timeline, Memory Center, Logs,
+  Settings — covering the full read/monitor/control surface P7's API
+  exposed. Editing surfaces (full project config editing, every
+  notification channel, a visual verify-condition builder) were
+  deliberately left as view-and-open-file for v1 — see the desktop
+  README's "Known limitations."
+- Verified live (not just unit-tested): a full mission start → stop →
+  resume → complete cycle, and a genuine crash-recovery pass (force-killed
+  the spawned process mid-mission; the app's Start button correctly
+  triggered the existing "Recovered interrupted session" path) — for free,
+  since it spawns the real, already-tested CLI/supervision code.
+
+**Still explicitly NOT built**: a packaged installer (dev-mode `npm start`
+only), multi-agent coordination (Phase 9), autonomous planning/scheduling
+(Phase 10).
 
 ---
 

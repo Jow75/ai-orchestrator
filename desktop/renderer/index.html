@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+<title>AI-Orchestrator</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">AI-Orchestrator</div>
+    <div class="project-picker">
+      <label for="project-select">Project</label>
+      <select id="project-select"></select>
+    </div>
+    <nav class="nav">
+      <button class="nav-item" data-tab="dashboard">Dashboard</button>
+      <button class="nav-item" data-tab="missions">Missions</button>
+      <button class="nav-item" data-tab="tasks">Tasks</button>
+      <button class="nav-item" data-tab="timeline">Timeline</button>
+      <button class="nav-item" data-tab="memory">Memory</button>
+      <button class="nav-item" data-tab="logs">Logs</button>
+      <button class="nav-item" data-tab="settings">Settings</button>
+    </nav>
+    <div class="live-indicator" id="live-badge">checking…</div>
+  </aside>
+  <main class="content">
+    <header class="content-header">
+      <h1 id="view-title">Dashboard</h1>
+    </header>
+    <section id="view-root" class="view-root">
+      <div class="view-panel" data-view="dashboard"></div>
+      <div class="view-panel" data-view="missions"></div>
+      <div class="view-panel" data-view="tasks"></div>
+      <div class="view-panel" data-view="timeline"></div>
+      <div class="view-panel" data-view="memory"></div>
+      <div class="view-panel" data-view="logs"></div>
+      <div class="view-panel" data-view="settings"></div>
+    </section>
+  </main>
+</div>
+<div id="toast-root" class="toast-root"></div>
+
+<script src="views/util.js"></script>
+<script src="views/dashboard.js"></script>
+<script src="views/missions.js"></script>
+<script src="views/tasks.js"></script>
+<script src="views/timeline.js"></script>
+<script src="views/memory.js"></script>
+<script src="views/logs.js"></script>
+<script src="views/settings.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

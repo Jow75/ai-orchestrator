@@ -348,9 +348,9 @@ same data read-only, alongside `/api/tasks/:project`.
 Every endpoint through P5 was read-only — status, sessions, timeline,
 tasks, memory — safe to leave unauthenticated on the local-only bind
 (`api.host` default `127.0.0.1`). P7 adds a mutation surface for the
-future desktop app ("the UI is purely an API client"), which is a
-different risk: anyone who can reach the port can now change state, not
-just observe it. `src/api/apiAuth.js` gates every mutating route with a
+desktop app (Phase 8, `desktop/` — "the UI is purely an API client"),
+which is a different risk: anyone who can reach the port can now change
+state, not just observe it. `src/api/apiAuth.js` gates every mutating route with a
 single local token (`state/api-token.txt`, generated once, `0600`-mode);
 `requireAuth()` 401s on anything else, including an *unconfigured* token
 — there is no "open by default" path.

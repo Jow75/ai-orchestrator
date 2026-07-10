@@ -1,0 +1,91 @@
+window.Views = window.Views || {};
+window.Views.missions = (function () {
+  async function render(root, ctx) {
+    const [health, drivers, projects] = await Promise.all([
+      ctx.api.getHealth(), ctx.api.listDrivers(), ctx.api.listProjects(),
+    ]);
+    const live = Boolean(health?.ok);
+    const current = projects.find((p) => p.name === ctx.project);
+
+    root.innerHTML = `
+      <div class="section">
+        <div class="section-title">Mission control</div>
+        <div class="card">
+          <div class="row between">
+            <div>
+              <div class="value" style="font-size:16px">${OViz.escapeHtml(ctx.project || '(no project selected)')}</div>
+              <div class="sub">${live ? 'An orchestrator is currently running.' : (current ? 'Idle — ready to start.' : 'Create or select a project below.')}</div>
+            </div>
+            <div class="row">
+              <label class="row" style="font-size:12px;color:var(--text-dim)"><input type="checkbox" id="fresh-check" ${live ? 'disabled' : ''}/> fresh start</label>
+              <button class="btn primary" id="start-btn" ${live || !ctx.project ? 'disabled' : ''}>Start</button>
+              <button class="btn danger" id="stop-btn" ${live ? '' : 'disabled'}>Stop</button>
+            </div>
+          </div>
+          <div class="sub" style="margin-top:10px">
+            Stop is graceful and resumable — starting the same project again resumes it (there is no separate "pause" state).
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Create a new project</div>
+        <div class="card">
+          <form class="form" id="create-form">
+            <label>Project name <input name="name" required pattern="[A-Za-z0-9_-]+" placeholder="my-project" /></label>
+            <label>Working directory
+              <div class="row"><input name="dir" required readonly placeholder="Pick a folder…" style="flex:1" /><button type="button" class="btn small" id="pick-dir">Browse…</button></div>
+            </label>
+            <label>Mission prompt file (relative to working directory, or absolute)
+              <div class="row"><input name="promptFile" required placeholder="prompts/mission.md" style="flex:1" /><button type="button" class="btn small" id="pick-file">Browse…</button></div>
+            </label>
+            <label>Driver
+              <select name="driver">${drivers.map((d) => `<option value="${OViz.escapeHtml(d)}">${OViz.escapeHtml(d)}</option>`).join('')}</select>
+            </label>
+            <div class="row"><button type="submit" class="btn primary">Create project</button></div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    root.querySelector('#start-btn')?.addEventListener('click', async () => {
+      const fresh = root.querySelector('#fresh-check').checked;
+      const result = await ctx.api.startMission(ctx.project, { fresh });
+      ctx.toast(result.ok ? `Starting "${ctx.project}"…` : `Could not start: ${result.reason}`, result.ok ? 'success' : 'error');
+      setTimeout(() => render(root, ctx), 800);
+    });
+
+    root.querySelector('#stop-btn')?.addEventListener('click', async () => {
+      const result = await ctx.api.stopMission('stopped from desktop app');
+      ctx.toast(result.ok ? 'Stop requested.' : `Could not stop: ${result.reason}`, result.ok ? 'success' : 'error');
+      setTimeout(() => render(root, ctx), 800);
+    });
+
+    root.querySelector('#pick-dir')?.addEventListener('click', async () => {
+      const dir = await ctx.api.pickDirectory();
+      if (dir) root.querySelector('[name="dir"]').value = dir;
+    });
+
+    root.querySelector('#pick-file')?.addEventListener('click', async () => {
+      const file = await ctx.api.pickFile();
+      if (file) root.querySelector('[name="promptFile"]').value = file;
+    });
+
+    root.querySelector('#create-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = new FormData(e.target);
+      const name = form.get('name');
+      const result = await ctx.api.createProject(name, {
+        dir: form.get('dir'), promptFile: form.get('promptFile'), driver: form.get('driver'),
+      });
+      if (result.ok) {
+        ctx.toast(`Project "${name}" created.`, 'success');
+        ctx.setProject(name);
+      } else {
+        ctx.toast(`Could not create project: ${result.reason}`, 'error');
+      }
+    });
+  }
+
+  return { mount: render };
+})();

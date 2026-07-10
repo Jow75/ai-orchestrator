@@ -74,6 +74,20 @@ with `scheduler uninstall`.
 > not (`taskschd.msc` → task properties → security options; requires storing
 > credentials).
 
+## Desktop app (optional)
+
+A visual operator console — dashboard, mission control, task queue,
+timeline, memory center, logs, settings — on top of everything above:
+
+```bat
+cd desktop
+npm install
+npm start
+```
+
+It's a pure client of the CLI/API you just installed (no separate backend
+to run) — see [desktop/README.md](desktop/README.md).
+
 ## Verify the pipeline without spending tokens
 
 The mock driver exercises the entire supervision pipeline (launch, limit

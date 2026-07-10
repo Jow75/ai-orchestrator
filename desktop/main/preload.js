@@ -1,0 +1,54 @@
+'use strict';
+
+/**
+ * preload.js — the ONLY bridge the renderer gets. contextIsolation is on
+ * and nodeIntegration is off (see main.js), so the renderer can call
+ * exactly the functions listed here, nothing else in Node/Electron.
+ */
+
+const { contextBridge, ipcRenderer, clipboard } = require('electron');
+
+const invoke = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
+
+contextBridge.exposeInMainWorld('orchestrator', {
+  listProjects: invoke('projects:list'),
+  createProject: invoke('projects:create'),
+
+  getStatus: invoke('status:get'),
+  getHealth: invoke('health:get'),
+
+  getTasks: invoke('tasks:get'),
+  addTask: invoke('tasks:add'),
+  removeTask: invoke('tasks:remove'),
+  reorderTask: invoke('tasks:reorder'),
+  approveTask: invoke('tasks:approve'),
+  skipTask: invoke('tasks:skip'),
+
+  getTimeline: invoke('timeline:get'),
+
+  getMemory: invoke('memory:get'),
+  addNote: invoke('memory:addNote'),
+  resolveFailure: invoke('memory:resolveFailure'),
+
+  getSessionHistory: invoke('sessions:history'),
+  listDrivers: invoke('drivers:list'),
+  getGlobalConfig: invoke('config:global'),
+  getPaths: invoke('config:paths'),
+  getProjectDetails: invoke('projects:details'),
+
+  startMission: invoke('mission:start'),
+  stopMission: invoke('mission:stop'),
+
+  getApiToken: invoke('token:get'),
+  rotateApiToken: invoke('token:rotate'),
+
+  listLogFiles: invoke('logs:files'),
+  getDefaultLogFile: invoke('logs:default-file'),
+  pollLog: invoke('logs:poll'),
+  resetLog: invoke('logs:reset'),
+
+  pickDirectory: invoke('dialog:openDirectory'),
+  pickFile: invoke('dialog:openFile'),
+  openPath: invoke('shell:openPath'),
+  copyText: (text) => clipboard.writeText(text),
+});

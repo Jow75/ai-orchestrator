@@ -41,11 +41,11 @@ and handles everything that would normally require a human at the keyboard:
   every future resume/retry briefing includes; blocked/failed outcomes
   are auto-cataloged and stay visible until you mark them resolved; a
   task's history survives even a plan edit that would otherwise erase it.
-- 🖥️ **API for the future desktop app** — the dashboard API's read-only
-  endpoints are joined by a mutating surface (stop a mission, edit a task
-  queue, approve/skip a blocked task, resolve a memory entry) behind a
-  local auth token (`ai-orchestrator api-token`) — everything the CLI can
-  do, also reachable over HTTP.
+- 🖥️ **Desktop operator app** — an Electron console (`desktop/`) for
+  everything above: live dashboard, mission start/stop/resume, a visual
+  task queue, mission timeline, memory center, logs, and settings. A pure
+  client of the same HTTP API/library the CLI uses — see
+  [desktop/README.md](desktop/README.md).
 
 ## Quick start
 
@@ -147,8 +147,11 @@ a trading bot today and a website tomorrow without touching code. See
   events or register drivers. See [API.md](API.md).
 - **Notifications**: desktop toasts by default; webhook, Discord, and
   Telegram channels are config-only switches.
-- **Dashboard**: a local read-only HTTP API (`http://127.0.0.1:4711/api/status`)
-  is ready for a future web dashboard.
+- **Dashboard**: a local HTTP API (`http://127.0.0.1:4711/api/status`) backs
+  both scripts/curl and the desktop app (read-only endpoints always open;
+  mutating endpoints behind `ai-orchestrator api-token`).
+- **Desktop app**: `cd desktop && npm install && npm start` — see
+  [desktop/README.md](desktop/README.md).
 
 ## Documentation
 
@@ -158,6 +161,7 @@ a trading bot today and a website tomorrow without touching code. See
 | [CONFIGURATION.md](CONFIGURATION.md) | Every setting, with defaults |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Modules, design rules, data flow |
 | [API.md](API.md) | HTTP API, plugin API, driver interface, library usage |
+| [desktop/README.md](desktop/README.md) | Desktop app architecture, setup, backend integration contract |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Diagnosing common problems |
 | [ROADMAP.md](ROADMAP.md) | Planned features |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |

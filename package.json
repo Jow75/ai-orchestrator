@@ -1,6 +1,6 @@
 {
   "name": "ai-orchestrator",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Autonomous supervisor for AI coding agents (Claude Code today, more engines tomorrow). Launches, monitors, recovers, and resumes long-running AI sessions without ever interrupting healthy work.",
   "main": "src/index.js",
   "type": "module",
@@ -11,7 +11,8 @@
     "start": "node bin/ai-orchestrator.js start",
     "status": "node bin/ai-orchestrator.js status",
     "test": "node --test",
-    "test:watch": "node --test --watch"
+    "test:watch": "node --test --watch",
+    "test:desktop": "node --test desktop/test/orchestratorBridge.test.js"
   },
   "keywords": [
     "ai",

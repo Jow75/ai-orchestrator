@@ -3,6 +3,86 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.1.0] — 2026-07-07 — Phase 8: Operator Desktop Application
+
+The first real UI on top of P7's dashboard API: an Electron desktop app
+(`desktop/`) — a pure client of the existing backend, never a
+reimplementation of it. Dashboard, mission control, task queue, timeline,
+memory center, logs, and settings, all in one window.
+
+### Added
+
+- **`desktop/`** — a sibling subproject (own `package.json`, own
+  `node_modules`; the root project's dependencies/tests are untouched).
+  CommonJS main process; plain HTML/CSS/JS renderer (no framework, no
+  bundler) — Electron loads the static files directly.
+- **`desktop/main/orchestratorBridge.js`** — the dual-mode integration
+  layer every IPC handler goes through: when an orchestrator process is
+  live (`state/heartbeat.json`), calls the dashboard HTTP API exactly as
+  P7 intended ("the UI is purely an API client"); when idle, calls the
+  same library classes the CLI's read-only commands use
+  (`ConfigManager`/`TaskQueue`/`MemoryStore`/`MissionTimeline`/
+  `SessionManager`, all already exported from `src/index.js`) — reuse, not
+  duplication, since there is no HTTP server to reach when nothing is
+  running. Starting a mission spawns the real `bin/ai-orchestrator.js
+  start <project>` as a detached child process (via
+  `ELECTRON_RUN_AS_NODE`, no system Node dependency) — the same command a
+  human would type — so no supervision logic is reimplemented; stopping
+  prefers `POST /api/control/stop`, falling back to the CLI's own
+  `stop.requested` file mechanism if the API is unreachable.
+- **`desktop/main/logTail.js`** — tails the winston log files for the Logs
+  view; works regardless of which process (this app, the CLI, or the
+  Scheduler task) started the mission being watched.
+- **Seven views**: Dashboard (live status, project grid), Missions
+  (start/stop/resume, create a project), Tasks (queue viewer;
+  add/remove/reorder/approve/skip), Timeline, Memory Center (notes,
+  failure catalog, archived task history), Logs, Settings (API token
+  show/rotate, project locations, config file shortcuts).
+- 14 new tests (`desktop/test/orchestratorBridge.test.js`, `node --test`):
+  live/idle branch selection, HTTP-vs-library dispatch, and the stop
+  fallback, against real temp-dir fixtures and a fake `fetch` — no
+  Electron/Chromium involved. Also picked up automatically by the root
+  `node --test` run (291 total; the 277 pre-existing backend tests are
+  unchanged).
+- Live-verified via a Playwright `_electron` driver (not committed — a
+  throwaway verification script): every view renders without a console
+  error; a full mission start → stop (mid-mission) → resume →
+  complete cycle against the `mock` driver; and a genuine crash-recovery
+  pass — force-killed the spawned orchestrator process mid-mission,
+  clicked Start again from the app, and confirmed the Timeline recorded
+  "Recovered interrupted session (reboot-or-power-loss)" before completing
+  normally.
+
+### Fixed
+
+- A real bug caught during the live-verification pass, not by unit tests:
+  the renderer originally mounted every tab into one shared `#view-root`
+  element. `missions.js` schedules a delayed re-render after Start/Stop to
+  refresh its own live/idle read — if the user switched tabs before that
+  timeout fired, it clobbered whatever tab was now showing with stale
+  Missions markup. Fixed by giving each tab its own persistent container
+  div (`.view-panel[data-view=...]`), so a late callback from a
+  since-abandoned tab can only ever write into that tab's own hidden
+  container.
+
+### Known limitations (documented, not hidden)
+
+- The Logs view shows orchestrator lifecycle/system events, not the
+  agent's raw conversation — confirmed no code path persists full agent
+  stdout to disk today. A live child-stdout pipe was deliberately not
+  built either: a detached mission must survive the desktop app closing,
+  and an unread stdio pipe on an unattended child can fill and block the
+  orchestrator's own writes. A per-session transcript file would be a
+  reasonable small backend addition later.
+- Settings is view-and-create, not a full editor: project locations and
+  notification config are shown read-only with a shortcut to the actual
+  JSON file; only creating a new legacy (single-prompt) project is fully
+  in-app.
+- No packaged installer — `npm start` runs the app in dev mode.
+  `electron-builder` packaging is a reasonable fast-follow.
+- Task `verify` rules are entered as raw JSON, mirroring `tasks add
+  --verify-file`, not a visual condition builder.
+
 ## [2.0.0] — 2026-07-06 — Phase P7: Desktop Backend — v2 stable
 
 Backend-first, per the roadmap: extends the dashboard HTTP API with
