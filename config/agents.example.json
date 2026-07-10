@@ -1,0 +1,65 @@
+{
+  "$comment": "Phase 9 multi-agent roster. Copy to config/agents.json to enable specialized agents. A task routes to an agent by its explicit `agent` id, its `role`, or its `capabilities` (see CONFIGURATION.md). With NO agents.json, every project runs on a single implicit agent wrapping its `driver` — exactly the pre-Phase-9 behavior. Each agent's `config` block is deep-merged over the project config at launch, so an agent can override engine settings (model, cli command, etc.) without a separate project.",
+
+  "agents": [
+    {
+      "id": "coder",
+      "role": "coding",
+      "driver": "claude",
+      "capabilities": ["code", "refactor", "implement"],
+      "config": {
+        "claude": { "permissionMode": "acceptEdits" }
+      }
+    },
+    {
+      "id": "reviewer",
+      "role": "review",
+      "driver": "claude",
+      "capabilities": ["review", "audit"],
+      "config": {
+        "claude": { "permissionMode": "", "model": "" }
+      }
+    },
+    {
+      "id": "tester",
+      "role": "testing",
+      "driver": "claude",
+      "capabilities": ["test", "verify"]
+    },
+
+    {
+      "$comment": "Example generic-CLI agents. The `cli` driver runs any command-line engine; set command/args/promptArg and (optionally) usageLimit/network regex patterns. These are TEMPLATES — enable only engines actually installed on this machine. Disabled by default so a stray copy never routes real work to a missing binary.",
+      "id": "gemini",
+      "role": "research",
+      "driver": "cli",
+      "enabled": false,
+      "capabilities": ["research", "search"],
+      "config": {
+        "cli": {
+          "command": "gemini",
+          "promptArg": "-p",
+          "usageLimitPatterns": ["quota exceeded", "resource exhausted"],
+          "networkPatterns": ["ECONNRESET", "fetch failed"]
+        }
+      }
+    },
+    {
+      "id": "codex",
+      "role": "coding",
+      "driver": "cli",
+      "enabled": false,
+      "config": {
+        "cli": { "command": "codex", "args": ["exec"], "promptViaStdin": true }
+      }
+    },
+    {
+      "id": "opencode",
+      "role": "coding",
+      "driver": "cli",
+      "enabled": false,
+      "config": {
+        "cli": { "command": "opencode", "promptArg": "-p" }
+      }
+    }
+  ]
+}

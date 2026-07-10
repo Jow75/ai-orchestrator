@@ -26,6 +26,8 @@ import StatusManager from './state/statusManager.js';
 import MissionTimeline from './state/missionTimeline.js';
 import TaskQueue from './mission/taskQueue.js';
 import MemoryStore from './memory/memoryStore.js';
+import AgentRegistry from './agents/agentRegistry.js';
+import AgentHealth from './agents/agentHealth.js';
 import Heartbeat from './state/heartbeat.js';
 import DriverRegistry from './drivers/driverRegistry.js';
 import Orchestrator from './core/orchestrator.js';
@@ -110,6 +112,18 @@ export class App {
       logger: childLogger(this.logger, 'memory'),
     });
 
+    // Phase 9: read-only views for the dashboard API. The orchestrator owns
+    // its own AgentRegistry/AgentHealth instances for actually routing runs.
+    this.agentRegistry = new AgentRegistry({
+      driverRegistry: this.driverRegistry,
+      logger: childLogger(this.logger, 'agents'),
+      agentsFile: this.paths.agentsFile,
+    });
+    this.agentHealth = new AgentHealth({
+      healthFile: this.paths.agentHealthFile,
+      logger: childLogger(this.logger, 'agents'),
+    });
+
     this.pluginManager = new PluginManager({
       pluginsDir: this.paths.pluginsDir,
       logger: childLogger(this.logger, 'plugins'),
@@ -129,6 +143,9 @@ export class App {
       timeline: this.timeline,
       taskQueue: this.taskQueue,
       memoryStore: this.memoryStore,
+      agentRegistry: this.agentRegistry,
+      agentHealth: this.agentHealth,
+      configManagerForAgents: this.configManager,
       orchestrator: this.orchestrator,
       apiToken: this.apiToken,
     });

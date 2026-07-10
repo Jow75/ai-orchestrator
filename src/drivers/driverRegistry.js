@@ -13,15 +13,15 @@
 import { childLogger } from '../infra/logger.js';
 import ClaudeDriver from './claudeDriver.js';
 import MockDriver from './mockDriver.js';
+import CliDriver from './cliDriver.js';
 
 /** Built-in driver constructors, keyed by driver id. */
 const BUILTIN_DRIVERS = {
   claude: ClaudeDriver,
   mock: MockDriver,
-  // Planned (implement AIDriver and add here):
-  // codex: CodexDriver,
-  // gemini: GeminiDriver,
-  // aider: AiderDriver,
+  // Phase 9: one generic, config-driven driver for any CLI engine (Gemini,
+  // Codex, OpenCode, local LLMs) — configured per-agent, no class per engine.
+  cli: CliDriver,
 };
 
 export class DriverRegistry {

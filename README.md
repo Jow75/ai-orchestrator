@@ -46,6 +46,12 @@ and handles everything that would normally require a human at the keyboard:
   task queue, mission timeline, memory center, logs, and settings. A pure
   client of the same HTTP API/library the CLI uses — see
   [desktop/README.md](desktop/README.md).
+- 🤝 **Multi-agent teams** (Phase 9) — define specialized agents (coding,
+  testing, docs, research, review) in `config/agents.json` and each task
+  routes to the best-fit agent; a generic `cli` driver plugs in Gemini,
+  Codex, OpenCode, or a local LLM by config alone. Per-agent health and
+  performance are tracked (`agents list`/`agents health`, the Agents view).
+  **No agents configured = one implicit agent = exactly the old behavior.**
 
 ## Quick start
 
@@ -126,9 +132,10 @@ prompt (same conversation) → … → mission complete." See
 | `tasks add/remove/reorder` | Build or adjust a project's task queue at runtime |
 | `tasks approve/skip <project> <taskId>` | Retry or bypass a blocked/failed task |
 | `memory list/add/resolve <project>` | Durable notes, failure catalog, task history |
+| `agents list/health [project]` | Inspect the multi-agent roster and per-agent performance (Phase 9) |
 | `api-token [--rotate]` | Show/rotate the dashboard API's mutating-endpoint token |
 | `projects list` / `projects add` | Manage project definitions |
-| `drivers` | List available AI engine drivers |
+| `drivers` | List available AI engine drivers (`claude`, `cli`, `mock`) |
 | `scheduler install/uninstall/status` | Windows auto-resume task |
 | `doctor` | Diagnose environment, config, and engine installation |
 

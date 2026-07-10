@@ -18,6 +18,7 @@ points:
 | `v2.0.0-rc.1` | **P6 complete** — verification engine expansion (JSON schema, lint, dependency checks) |
 | `v2.0.0` | **P7 complete** — desktop backend (mutating API + auth token); v2 stable |
 | `v2.1.0` | **Phase 8 complete** — operator desktop application (Electron) |
+| `v2.2.0` | **Phase 9 complete** — multi-agent intelligence (agent roster, role routing, health) |
 
 ### Architectural principle for every phase: **engine-agnostic**
 
@@ -265,6 +266,55 @@ full architecture; summary:
 **Still explicitly NOT built**: a packaged installer (dev-mode `npm start`
 only), multi-agent coordination (Phase 9), autonomous planning/scheduling
 (Phase 10).
+
+## Phase 9 — Multi-agent intelligence system ✅ (`v2.2.0`, complete)
+
+A team of specialized agents in place of one. An *agent* is a named,
+role-tagged binding of an engine driver + capabilities + engine settings —
+built ON TOP of the existing `AIDriver`/`DriverRegistry`, not replacing them.
+
+- **Agent layer** (`src/agents/`): `agentProfile.js` (roles + validation),
+  `agentRegistry.js` (loads `config/agents.json` + a project's `agents`
+  block, wraps the driver registry), `agentRouter.js` (pure task→agent
+  routing), `agentHealth.js` (install status + per-agent performance at
+  `state/agents/health.json`).
+- **Role routing**: a task's `agent` id > `role` > `capabilities` > the
+  project default selects which agent runs it. The orchestrator resolves the
+  driver **per task** from the routed agent; switching agents mid-mission
+  starts a fresh engine conversation. Task done/failed/blocked outcomes are
+  tallied per agent, and each checkpoint is stamped with its agent id.
+- **Generic CLI driver** (`src/drivers/cliDriver.js`, id `cli`): one
+  config-driven driver for any command-line engine (Gemini, Codex, OpenCode,
+  local LLMs) — configured per agent, no class per engine. See
+  `config/agents.example.json` for presets. Claude + mock remain the
+  fully-tested reference engines.
+- **Surfaces**: `agents list|health` CLI, `GET /api/agents[/health]`, and a
+  desktop **Agents** view (per-agent role/install/performance cards) plus
+  role/agent routing shown and settable in the Tasks view.
+- **BACKWARD-COMPATIBILITY GUARANTEE** (the load-bearing invariant, tested):
+  a project with no `agents.json` runs on a single *implicit* agent wrapping
+  `project.driver` — byte-for-byte identical to pre-Phase-9. All 291 prior
+  tests stayed green; 39 new agent tests added (334 total).
+
+**Deliberately deferred** (documented, not hidden): sequential execution
+only — concurrent/parallel agents are Phase 10 (which owns concurrency).
+Inter-agent "communication" is handoff via the shared task queue + P5 memory
++ P4 briefing (a downstream agent's briefing carries the upstream agent's
+checkpoint summary); live message-passing between simultaneously-running
+agents needs concurrency first. The Gemini/Codex/OpenCode/local presets are
+real `cli` config but unverified against those actual CLIs (not installed
+here).
+
+---
+
+## Phase 10 — True autonomous project management (next, not started)
+
+Goal → milestones → tasks → agent assignment → execute → monitor, all
+self-generated; scheduled/overnight missions with automatic resume;
+self-improvement from project history; an automated git/release/changelog/
+docs workflow; and richer notification channels (email/Discord/Slack). This
+is where concurrency (parallel agents, multi-project) and the carried-over
+v1.x items below finally land.
 
 ---
 

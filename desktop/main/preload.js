@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('orchestrator', {
   getPaths: invoke('config:paths'),
   getProjectDetails: invoke('projects:details'),
 
+  getAgents: invoke('agents:list'),
+  getAgentHealth: invoke('agents:health'),
+
   startMission: invoke('mission:start'),
   stopMission: invoke('mission:stop'),
 

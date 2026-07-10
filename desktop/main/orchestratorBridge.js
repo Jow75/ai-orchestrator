@@ -47,12 +47,15 @@ function backend() {
       import('../../src/state/statePersistence.js'),
       import('../../src/infra/logger.js'),
       import('../../src/drivers/driverRegistry.js'),
+      import('../../src/agents/agentRegistry.js'),
+      import('../../src/agents/agentHealth.js'),
       import('../../src/app.js'),
     ]).then(
       ([
         configManagerMod, sessionManagerMod, missionTimelineMod, taskQueueMod,
         missionPlanMod, memoryStoreMod, apiAuthMod, heartbeatMod,
-        statePersistenceMod, loggerMod, driverRegistryMod, appMod,
+        statePersistenceMod, loggerMod, driverRegistryMod, agentRegistryMod,
+        agentHealthMod, appMod,
       ]) => ({
         ConfigManager: configManagerMod.ConfigManager,
         ConfigError: configManagerMod.ConfigError,
@@ -66,6 +69,8 @@ function backend() {
         readJsonSafe: statePersistenceMod.readJsonSafe,
         silentLogger: loggerMod.silentLogger,
         DriverRegistry: driverRegistryMod.DriverRegistry,
+        AgentRegistry: agentRegistryMod.AgentRegistry,
+        AgentHealth: agentHealthMod.AgentHealth,
         STOP_REQUEST_FILENAME: appMod.STOP_REQUEST_FILENAME,
       })
     );
@@ -227,6 +232,50 @@ class OrchestratorBridge {
   async listDrivers() {
     const { DriverRegistry, silentLogger } = await backend();
     return new DriverRegistry({ logger: silentLogger }).listDrivers();
+  }
+
+  /** Build an AgentRegistry + resolved roster for a project (idle helper). */
+  async agentRosterFor(project) {
+    const { AgentRegistry, DriverRegistry, silentLogger } = await backend();
+    const cm = await this.configManager();
+    const paths = cm.getPaths();
+    const registry = new AgentRegistry({
+      driverRegistry: new DriverRegistry({ logger: silentLogger }),
+      logger: silentLogger,
+      agentsFile: paths.agentsFile,
+    });
+    if (project) {
+      try {
+        return { registry, roster: registry.agentsFor(cm.getProject(project)) };
+      } catch {
+        return { registry, roster: [] };
+      }
+    }
+    return { registry, roster: registry.globalAgents() };
+  }
+
+  /** Phase 9: the agent roster (live → API, idle → registry). */
+  async getAgents(project) {
+    if (await this.isLive()) {
+      const q = project ? `?project=${encodeURIComponent(project)}` : '';
+      const result = await this.apiCall(`/api/agents${q}`);
+      if (result.ok) return result.data;
+    }
+    const { roster } = await this.agentRosterFor(project);
+    return roster;
+  }
+
+  /** Phase 9: per-agent health + performance (live → API, idle → store). */
+  async getAgentHealth(project) {
+    if (await this.isLive()) {
+      const q = project ? `?project=${encodeURIComponent(project)}` : '';
+      const result = await this.apiCall(`/api/agents/health${q}`);
+      if (result.ok) return result.data;
+    }
+    const { AgentHealth, silentLogger } = await backend();
+    const paths = await this.paths();
+    const { roster } = await this.agentRosterFor(project);
+    return new AgentHealth({ healthFile: paths.agentHealthFile, logger: silentLogger }).report(roster);
   }
 
   /** Global config (for Settings' read-only notification/paths display). */

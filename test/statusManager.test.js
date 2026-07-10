@@ -22,6 +22,7 @@ test('defaults include a legacy mission section', () => {
   assert.deepEqual(s.get().mission, {
     mode: 'legacy', currentTaskId: null, taskIndex: null,
     totalTasks: 0, taskState: null, taskAttempts: 0,
+    currentAgent: null, currentAgentRole: null,
   });
 });
 
@@ -61,6 +62,7 @@ test('syncTaskQueue(null) reports legacy mode', () => {
   assert.deepEqual(s.get().mission, {
     mode: 'legacy', currentTaskId: null, taskIndex: null,
     totalTasks: 0, taskState: null, taskAttempts: 0,
+    currentAgent: null, currentAgentRole: null,
   });
 });
 
@@ -78,6 +80,7 @@ test('syncTaskQueue() reports the current task\'s id, state, and attempts', () =
   assert.deepEqual(s.get().mission, {
     mode: 'tasks', currentTaskId: 'T2', taskIndex: 1,
     totalTasks: 3, taskState: 'active', taskAttempts: 2,
+    currentAgent: null, currentAgentRole: null,
   });
 });
 

@@ -31,7 +31,7 @@ export class StatusManager {
         state: 'starting',
         pid: process.pid,
         startedAt: new Date(this.startedAt).toISOString(),
-        version: '2.1.0',
+        version: '2.2.0',
       },
       project: null,
       session: null,
@@ -66,6 +66,9 @@ export class StatusManager {
         totalTasks: 0,
         taskState: null,
         taskAttempts: 0,
+        /** Phase 9: which agent is (or last) handling the current work. */
+        currentAgent: null,
+        currentAgentRole: null,
       },
     };
   }

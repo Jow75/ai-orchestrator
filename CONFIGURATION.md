@@ -238,6 +238,9 @@ Per-task fields:
 | `verify` | no | `[]` | List of verifier configs (see below). **Empty means the task falls back to `mission.completionMarker`** as a lightweight per-task signal |
 | `continuePrompt` | no | `mission.continuePrompt` | Fallback prompt sent on a retry of this task, used only when `briefing.enabled` is `false`. When briefing is on (the default), the Continuation Builder generates a structured retry prompt instead — see the `briefing` section above |
 | `maxRuns` | no | `5` | Launches allowed on this task before it is marked failed and supervision **blocks** (never silently skips unverified work) |
+| `role` | no | — | Phase 9: route this task to an agent filling this role (`planner`/`coding`/`testing`/`documentation`/`research`/`review`). See the `agents` section |
+| `agent` | no | — | Phase 9: route this task to a specific agent id (overrides `role`) |
+| `capabilities` | no | `[]` | Phase 9: route to any agent advertising all of these capability tags (used only if `agent`/`role` don't match) |
 
 How a mission-mode run proceeds: the current task's prompt is sent on its
 first launch; if the run exits cleanly, its verifiers run against the
@@ -441,6 +444,54 @@ agent actually doing work (exercising the progress engine and verifiers),
 add `writeFile: { path, content }` (creates/overwrites a file, creating
 parent directories as needed — just like a real agent's write tool) or
 `appendFile: { path, content }` (grows a file across runs).
+
+---
+
+## Agents (Phase 9) — `config/agents.json`
+
+By default every project runs on a single agent: the engine named by its
+`driver`. Defining agents turns that into a **team**: each task routes to
+the best-fit specialized agent. **This file is optional** — with no
+`config/agents.json`, behavior is byte-for-byte the same as before Phase 9.
+
+Copy `config/agents.example.json` to `config/agents.json`. Each agent:
+
+| Key | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `id` | **yes** | — | Short unique id (e.g. `"coder"`). Tasks route by this id |
+| `role` | no | `"general"` | One of `planner`/`coding`/`testing`/`documentation`/`research`/`review`/`general` |
+| `driver` | **yes** | — | A registered driver id (`claude`, `cli`, `mock`, or a plugin driver) |
+| `capabilities` | no | `[]` | Free capability tags a task can route on |
+| `config` | no | `{}` | Engine-settings override deep-merged over the project at launch (e.g. `{ "claude": { "model": "..." } }` or a `cli` block) |
+| `enabled` | no | `true` | `false` keeps the definition but removes it from routing |
+
+A task picks its agent by, in order: explicit `agent` id → `role` → all
+`capabilities` matched → the project's default agent. A project may also
+declare a project-scoped `agents` array (same schema) that overrides global
+agents of the same id.
+
+### The generic `cli` driver
+
+The `cli` driver runs **any** command-line engine, configured entirely from
+an agent's `config.cli` block — no code per engine:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `command` | — (**required**) | The executable to run |
+| `args` | `[]` | Static arguments before the prompt |
+| `promptArg` | — | Flag the prompt follows (e.g. `"-p"`); absent → prompt via stdin |
+| `promptViaStdin` | auto | Force stdin even with `promptArg` |
+| `usageLimitPatterns` | sensible defaults | Regex sources that mean "usage limit" |
+| `networkPatterns` | sensible defaults | Regex sources that mean "network problem" |
+| `launchTimeoutMs` | `120000` | Warn (never kill) after this much initial silence |
+
+The `cli` driver does not implement engine-specific *resume* (most CLIs have
+no conversation id) — every launch is fresh and the orchestrator's
+continuation prompt + the shared workspace carry context across runs.
+
+Inspect the roster and performance: `ai-orchestrator agents list [project]`
+and `ai-orchestrator agents health [project]`, or `GET /api/agents` /
+`GET /api/agents/health`, or the desktop app's **Agents** view.
 
 ---
 

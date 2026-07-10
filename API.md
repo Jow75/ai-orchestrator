@@ -24,6 +24,8 @@ P7) require the local API token — see section 1b below.
 | `GET /api/tasks/:project` | Phase P2: task queue (`null` for legacy/not-yet-run projects) |
 | `GET /api/memory/:project` | Phase P5: notes/failures/task history (`null` if nothing recorded) |
 | `GET /api/projects` | Defined projects + `hasActiveSession` flag |
+| `GET /api/agents` | Phase 9: the agent roster. `?project=<name>` for a project's effective roster (the implicit default for an agent-less project); else global agents. `[]` if the agent layer is absent |
+| `GET /api/agents/health` | Phase 9: per-agent install status + task performance. Same `?project=` scoping |
 
 ### `/api/status` shape
 
@@ -187,6 +189,7 @@ can never take the supervisor down.
 | `session:recovered` | `{ project, session, after }` |
 | `mission:complete` | `{ project, session, summary }` |
 | `task:done` | Phase P2: `{ project, session, taskId, checkpoint }` |
+| `agent:assigned` | Phase 9: `{ project, session, taskId, agentId, role, reason }` |
 | `orchestrator:recovered-after-reboot` | `{ project }` |
 
 ---

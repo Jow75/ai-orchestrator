@@ -41,6 +41,9 @@ const HANDLERS = {
   'config:paths': () => bridge.getPaths(),
   'projects:details': (name) => bridge.getProjectDetails(name),
 
+  'agents:list': (project) => bridge.getAgents(project),
+  'agents:health': (project) => bridge.getAgentHealth(project),
+
   'mission:start': (project, options) => bridge.startMission(project, options),
   'mission:stop': (reason) => bridge.stopMission(reason),
 

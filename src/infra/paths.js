@@ -54,6 +54,14 @@ export function resolvePaths(overrides = {}) {
   resolved.heartbeatFile = path.join(resolved.stateDir, 'heartbeat.json');
   resolved.runtimeHistoryFile = path.join(resolved.stateDir, 'runtime_history.json');
 
+  // Phase 9: multi-agent layer. Global agent definitions live in config;
+  // per-agent health/performance is machine-owned runtime state.
+  resolved.agentsFile = path.resolve(
+    root, overrides.agentsFile ?? path.join(resolved.configDir, 'agents.json')
+  );
+  resolved.agentsDir = path.join(resolved.stateDir, 'agents');
+  resolved.agentHealthFile = path.join(resolved.agentsDir, 'health.json');
+
   return resolved;
 }
 
@@ -74,6 +82,7 @@ export function ensureRuntimeDirs(paths) {
     paths.tasksDir,
     paths.diagnosticsDir,
     paths.memoryDir,
+    paths.agentsDir,
     paths.pluginsDir,
   ]) {
     fs.mkdirSync(dir, { recursive: true });

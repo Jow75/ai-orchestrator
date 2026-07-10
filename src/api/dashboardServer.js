@@ -42,7 +42,7 @@ export class DashboardServer {
    */
   constructor({
     config, logger, statusManager, sessionManager, configManager, timeline, taskQueue, memoryStore,
-    orchestrator, apiToken,
+    agentRegistry, agentHealth, orchestrator, apiToken,
   }) {
     this.config = config;
     this.logger = logger;
@@ -52,6 +52,8 @@ export class DashboardServer {
     this.timeline = timeline;
     this.taskQueue = taskQueue;
     this.memoryStore = memoryStore;
+    this.agentRegistry = agentRegistry; // Phase 9 (optional)
+    this.agentHealth = agentHealth; // Phase 9 (optional)
     this.orchestrator = orchestrator;
     this.apiToken = apiToken;
     this.server = null;
@@ -125,6 +127,32 @@ export class DashboardServer {
         }))
       );
     });
+
+    // Phase 9: the agent roster. With ?project=<name> the effective roster
+    // for that project (the implicit default for an agent-less project);
+    // otherwise the global agents. Empty array if the agent layer is absent.
+    app.get('/api/agents', (req, res) => {
+      if (!this.agentRegistry) return res.json([]);
+      res.json(this.rosterFor(req.query.project));
+    });
+
+    // Phase 9: per-agent engine install status + task performance tallies.
+    app.get('/api/agents/health', (req, res) => {
+      if (!this.agentRegistry || !this.agentHealth) return res.json([]);
+      res.json(this.agentHealth.report(this.rosterFor(req.query.project)));
+    });
+  }
+
+  /** Resolve an agent roster for the API (project-scoped or global). */
+  rosterFor(projectName) {
+    if (projectName) {
+      try {
+        return this.agentRegistry.agentsFor(this.configManager.getProject(projectName));
+      } catch {
+        return [];
+      }
+    }
+    return this.agentRegistry.globalAgents();
   }
 
   /**

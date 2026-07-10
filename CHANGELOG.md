@@ -3,6 +3,77 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.2.0] — 2026-07-10 — Phase 9: Multi-Agent Intelligence System
+
+A team of specialized agents in place of a single one. An *agent* is a
+named, role-tagged binding of an engine driver + capabilities + engine
+settings, layered ON TOP of the existing driver system — tasks route to the
+best-fit agent (coding / testing / documentation / research / review /
+planner), sequentially, verified between each.
+
+### Added
+
+- **`src/agents/`** — the agent layer:
+  - `agentProfile.js`: the `ROLES` vocabulary and pure agent-definition
+    validation (mirrors `missionPlan.validateSingleTask`).
+  - `agentRegistry.js`: loads `config/agents.json` (global) merged with a
+    project's optional `agents` block; wraps the existing `DriverRegistry`
+    (each agent references a driver id). **Backward-compat core:** a project
+    with no agents configured resolves to a single *implicit* agent wrapping
+    `project.driver`.
+  - `agentRouter.js`: pure task→agent routing — explicit `agent` id > `role`
+    > `capabilities` > project default.
+  - `agentHealth.js`: per-agent engine install status + performance tallies
+    (tasks done/failed/blocked, attempts, last used) at
+    `state/agents/health.json`; never throws into supervision.
+- **`src/drivers/cliDriver.js`** (driver id `cli`) — one generic,
+  config-driven CLI engine driver so Gemini/Codex/OpenCode/local LLMs are
+  added by config, not a class per engine (`command`, `args`, `promptArg`/
+  stdin, configurable usage-limit/network regex patterns). Registered in the
+  driver registry alongside `claude` and `mock`.
+- **Task routing hints**: `validateSingleTask` gains optional `role`,
+  `agent`, and `capabilities`. Absent → the default agent (i.e. unchanged).
+- **Orchestrator**: resolves the driver **per task** from the routed agent
+  (was: one driver per project); switching agents mid-mission starts a fresh
+  engine conversation; each checkpoint is stamped with its `agentId`; per-
+  agent outcomes are recorded; new `agent:assigned` event; `status.json`'s
+  `mission` block gains `currentAgent`/`currentAgentRole`.
+- **CLI**: `agents list [project]` and `agents health [project]`.
+- **API**: `GET /api/agents[?project=]` and `GET /api/agents/health[?project=]`
+  (read-only, like the other GETs).
+- **Desktop app**: a new **Agents** view (per-agent role/install/performance
+  cards, current agent highlighted); the Tasks view shows each task's agent/
+  role and its Add-task form gains role + agent selectors; the Dashboard's
+  Agent card shows the current agent + role.
+- **Config**: `config/agents.example.json` (Claude coding/review/testing
+  agents + disabled Gemini/Codex/OpenCode `cli` presets).
+- **Tests**: 39 new — `agentProfile`, `agentRegistry`, `agentRouter`,
+  `agentHealth`, `cliDriver` unit suites; `orchestrator.p9` (two-agent
+  routing + the legacy-guarantee integration test); plus desktop-bridge
+  agent dispatch. **334 total, all green** (the 291 pre-Phase-9 tests
+  unchanged).
+
+### Guarantee
+
+A project with no `config/agents.json` behaves **byte-for-byte** as it did
+before Phase 9 (one implicit agent = `project.driver`) — asserted by
+dedicated unit and integration tests. Backend changes outside `src/agents/`
+were limited to the per-task driver resolution in `orchestrator.js`, the
+optional task fields, the `status.json` field, and version-string bumps.
+
+### Known limitations (documented, not hidden)
+
+- **Sequential only** — one agent at a time. Concurrent/parallel agents are
+  Phase 10 (which owns concurrency); building them now would risk the stable
+  single-supervisor core.
+- **Inter-agent communication** is handoff via the shared task queue + P5
+  memory + P4 briefing (a downstream agent's briefing already carries the
+  upstream agent's checkpoint summary), not live message-passing between
+  simultaneously-running agents.
+- The **Gemini/Codex/OpenCode/local `cli` presets** are real configuration
+  but unverified against those actual CLIs (not installed here); `claude`
+  and `mock` are the verified reference engines.
+
 ## [2.1.0] — 2026-07-07 — Phase 8: Operator Desktop Application
 
 The first real UI on top of P7's dashboard API: an Electron desktop app

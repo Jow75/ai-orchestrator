@@ -74,8 +74,18 @@ details) and from mechanism (process handling, persistence) throughout.
 │  claudeDriver.js          Claude Code: headless stream-json launch,  │
 │                           --resume, limit-message patterns, reset-   │
 │                           time parsing                               │
+│  cliDriver.js             generic config-driven CLI engine (P9): any │
+│                           command-line engine via config, no class   │
+│                           per engine (Gemini/Codex/OpenCode/local)   │
 │  mockDriver.js            scriptable engine for tests & dry runs     │
 │  driverRegistry.js        id → driver lookup; plugin-extensible      │
+├──────────────────────────────────────────────────────────────────────┤
+│  Agents (role routing, on top of drivers)   src/agents/    (P9)      │
+│  agentProfile.js          roles + agent-definition validation        │
+│  agentRegistry.js         load config/agents.json; implicit default  │
+│                           = project.driver (legacy guarantee)        │
+│  agentRouter.js           pure task→agent routing (agent>role>caps)  │
+│  agentHealth.js           per-agent install status + performance     │
 ├──────────────────────────────────────────────────────────────────────┤
 │  State (persistence)                       src/state/                │
 │  statePersistence.js      atomic writes, corruption quarantine, jsonl│
@@ -419,6 +429,32 @@ Implement `AIDriver` (see `src/drivers/aiDriver.js`):
 Register it in `driverRegistry.js` (or from a plugin via
 `driverRegistry.registerDriver(id, Class)`), reference it as `"driver": "<id>"`
 in a project config — done. No supervision code changes.
+
+## Multi-agent routing (Phase 9)
+
+The `src/agents/` layer sits **on top of** the drivers, adding role-based
+task routing without the supervision core knowing which engine ran what.
+
+- An **agent** = `{ id, role, driver, capabilities, config }`. The
+  `AgentRegistry` loads them from `config/agents.json` (and a project's
+  optional `agents` block), each referencing a driver id it resolves through
+  the existing `DriverRegistry`.
+- The supervision loop resolves the driver **per task**: `agentRouter`
+  selects an agent for the current task (explicit `agent` id > `role` >
+  `capabilities` > default), and the orchestrator launches with that agent's
+  driver and its `config` deep-merged over the project. Switching agents
+  mid-mission starts a fresh engine conversation (a different engine can't
+  resume another's).
+- **The legacy guarantee**: with no `agents.json`, `agentsFor(project)`
+  returns a single *implicit* agent wrapping `project.driver`, so every task
+  routes to it — byte-for-byte the pre-Phase-9 path. This is the one
+  invariant Phase 9 must never break, and it has dedicated tests.
+- `agentHealth` records each agent's install status and task outcomes
+  (`state/agents/health.json`) for the `agents health` CLI, `GET
+  /api/agents/health`, and the desktop Agents view.
+- **Sequential by design**: one agent at a time. Concurrency (parallel
+  agents) is Phase 10; inter-agent handoff today is the shared task queue +
+  P5 memory + P4 briefing, not live message-passing.
 
 ## Design rules
 

@@ -91,6 +91,14 @@ th { color: var(--text-dim); font-weight: 500; font-size: 11.5px; text-transform
 .badge.stopped, .badge.idle { background: #2a3040; color: var(--text-dim); }
 .badge.gave-up { background: rgba(224,180,77,.18); color: var(--yellow); }
 
+.role-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; background: #2a3040; color: var(--text-dim); }
+.role-badge.role-coding { background: rgba(79,140,255,.18); color: var(--accent); }
+.role-badge.role-testing { background: rgba(224,180,77,.18); color: var(--yellow); }
+.role-badge.role-review { background: rgba(200,120,255,.18); color: #c878ff; }
+.role-badge.role-research { background: rgba(62,207,142,.18); color: var(--green); }
+.role-badge.role-documentation { background: rgba(90,160,255,.15); color: #7fb0ff; }
+.role-badge.role-planner { background: rgba(255,140,200,.15); color: #ff8cc8; }
+
 .btn {
   background: var(--bg-panel-alt); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 7px 12px; font-size: 13px; cursor: pointer;

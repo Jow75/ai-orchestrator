@@ -60,10 +60,16 @@ listed in `preload.js`; every one maps 1:1 to an `OrchestratorBridge` method.
 | Dashboard | `ConfigManager.listProjects()` + `SessionManager` | `GET /api/status`, `/api/health` |
 | Missions | spawns `bin/ai-orchestrator.js start <project>`; `ConfigManager.saveProject()` to create | `POST /api/control/stop` |
 | Tasks | `TaskQueue` methods directly | `/api/tasks/:project/*` (token-gated mutations) |
+| Agents (P9) | `AgentRegistry`/`AgentHealth` directly | `GET /api/agents[/health]` |
 | Timeline | `MissionTimeline.read()` | `GET /api/timeline/:project` |
 | Memory | `MemoryStore` methods directly | `/api/memory/:project` + mutations (token-gated) |
 | Logs | tails `logs/*.log` | same — log files, not the live process |
 | Settings | `loadOrCreateToken()`, `configManager.getPaths()` | same |
+
+The **Agents** view (Phase 9) shows the multi-agent roster — per-agent role,
+engine install status, capabilities, and task performance — with the agent
+handling the current task highlighted. The Tasks view shows each task's
+routed agent/role and its Add-task form offers role + agent selectors.
 
 Starting a mission spawns the real `bin/ai-orchestrator.js start <project>`
 CLI entry point as a detached child process (using Electron's bundled Node

@@ -40,7 +40,14 @@ export { MemoryStore } from './memory/memoryStore.js';
 export { AIDriver, AgentRun } from './drivers/aiDriver.js';
 export { ClaudeDriver } from './drivers/claudeDriver.js';
 export { MockDriver } from './drivers/mockDriver.js';
+export { CliDriver } from './drivers/cliDriver.js';
 export { DriverRegistry } from './drivers/driverRegistry.js';
+export {
+  ROLES, isKnownRole, validateAgentProfile, validateAgentList,
+} from './agents/agentProfile.js';
+export { AgentRegistry, implicitDefaultAgent } from './agents/agentRegistry.js';
+export { selectAgent } from './agents/agentRouter.js';
+export { AgentHealth } from './agents/agentHealth.js';
 export { ConfigManager, ConfigError } from './config/configManager.js';
 export { SessionManager, SessionState } from './state/sessionManager.js';
 export { StatusManager } from './state/statusManager.js';

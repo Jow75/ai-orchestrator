@@ -221,3 +221,51 @@ test('getApiToken() / rotateApiToken() persist a token file, rotate invalidates 
   assert.notEqual(rotated, token1);
   assert.equal(await bridge.getApiToken(), rotated);
 });
+
+// ── Phase 9: agents ────────────────────────────────────────────────────
+
+test('getAgents() idle path returns the implicit default for an agent-less project', async () => {
+  const root = makeRoot();
+  defineProject(root, 'proj-a');
+  const bridge = new OrchestratorBridge({ rootDir: root, fetchImpl: makeFetch() });
+  const agents = await bridge.getAgents('proj-a');
+  assert.equal(agents.length, 1);
+  assert.equal(agents[0].id, 'default');
+  assert.equal(agents[0].implicit, true);
+});
+
+test('getAgents() idle path loads a configured global roster', async () => {
+  const root = makeRoot();
+  defineProject(root, 'proj-a');
+  fs.mkdirSync(path.join(root, 'config'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'config', 'agents.json'),
+    JSON.stringify({ agents: [{ id: 'coder', role: 'coding', driver: 'claude' }] })
+  );
+  const bridge = new OrchestratorBridge({ rootDir: root, fetchImpl: makeFetch() });
+  const agents = await bridge.getAgents('proj-a');
+  assert.equal(agents.find((a) => a.id === 'coder').role, 'coding');
+});
+
+test('getAgents() live path calls GET /api/agents with the project query', async () => {
+  const root = makeRoot();
+  markLive(root);
+  const fetchImpl = makeFetch((url) => {
+    assert.match(url, /\/api\/agents\?project=proj-a$/);
+    return { status: 200, body: [{ id: 'coder', role: 'coding' }] };
+  });
+  const bridge = new OrchestratorBridge({ rootDir: root, fetchImpl });
+  const agents = await bridge.getAgents('proj-a');
+  assert.equal(agents[0].id, 'coder');
+  assert.equal(fetchImpl.calls.length, 1);
+});
+
+test('getAgentHealth() idle path reports zeroed tallies for the roster', async () => {
+  const root = makeRoot();
+  defineProject(root, 'proj-a');
+  const bridge = new OrchestratorBridge({ rootDir: root, fetchImpl: makeFetch() });
+  const health = await bridge.getAgentHealth('proj-a');
+  assert.equal(health.length, 1);
+  assert.equal(health[0].agentId, 'default');
+  assert.equal(health[0].tasksDone, 0);
+});

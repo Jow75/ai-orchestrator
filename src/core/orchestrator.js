@@ -48,6 +48,9 @@ import { buildCheckpoint } from '../mission/checkpoint.js';
 import { runVerifiers } from '../verify/verifierRegistry.js';
 import { buildLegacyContinuation, buildTaskContinuation } from '../briefing/continuationBuilder.js';
 import { MemoryStore } from '../memory/memoryStore.js';
+import { AgentRegistry } from '../agents/agentRegistry.js';
+import { AgentHealth } from '../agents/agentHealth.js';
+import { selectAgent } from '../agents/agentRouter.js';
 
 /**
  * Domain events emitted by the orchestrator.
@@ -66,6 +69,7 @@ export const EVENTS = Object.freeze([
   'mission:blocked', //   { project, session, reason, category, reportPath }
   'mission:complete', //  { project, session, summary }
   'task:done', //         { project, session, taskId, checkpoint }
+  'agent:assigned', //    Phase 9: { project, session, taskId, agentId, role, reason }
 ]);
 
 export class Orchestrator extends EventEmitter {
@@ -142,6 +146,19 @@ export class Orchestrator extends EventEmitter {
     this.missionMode = false;
     this.taskQueueState = null;
 
+    // Phase 9: multi-agent layer. AgentRegistry sits on top of the driver
+    // registry; when no agents are configured (paths.agentsFile absent, or
+    // no agents.json), every project routes to a single implicit agent
+    // wrapping project.driver — byte-for-byte legacy behavior. AgentHealth
+    // degrades to a safe no-op when paths.agentHealthFile is unset.
+    this.agentRegistry = new AgentRegistry({
+      driverRegistry: this.driverRegistry, logger, agentsFile: this.paths.agentsFile,
+    });
+    this.agentHealth = new AgentHealth({ healthFile: this.paths.agentHealthFile, logger });
+    // The driver of the agent handling the current run — used for
+    // engine-specific blocked-state patterns (see blockedPatternsFor).
+    this.currentDriver = null;
+
     // Phase P4: the Continuation Builder. Off (falls back to the static
     // continuePrompt string) in hand-built test configs that omit it.
     this.briefingConfig = config.briefing ?? { enabled: false, recentRunCount: 0 };
@@ -162,22 +179,28 @@ export class Orchestrator extends EventEmitter {
    */
   async runProject(projectName, { recoveredAfter } = {}) {
     const project = this.configManager.getProject(projectName);
-    const driver = this.driverRegistry.getDriver(project.driver);
 
     // Effective progress config: a project may override the global settings
     // (P1). Re-init the loop breaker with the merged threshold.
     this.progressConfig = { ...this.globalProgressConfig, ...(project.progress ?? {}) };
     this.loopBreaker = new LoopBreaker({ config: this.progressConfig, logger: this.logger });
 
-    // Fail fast, before touching any session state, if the engine is absent.
-    const installation = await driver.checkInstallation(
-      project[project.driver]?.executable
+    // Phase 9: the driver is now resolved PER TASK from the routed agent
+    // (see the loop below). Before touching any session state, fail fast if
+    // the DEFAULT agent's engine is absent — this preserves the existing
+    // upfront installation guarantee for the common single-agent case. Other
+    // agents (mission mode) are verified lazily on first use.
+    const defaultAgent = this.agentRegistry.defaultFor(project);
+    const defaultDriver = this.agentRegistry.driverFor(defaultAgent);
+    const installation = await this.agentHealth.check(
+      defaultAgent, defaultDriver, this.agentRegistry.effectiveProject(project, defaultAgent)
     );
     if (!installation.ok) {
       throw new Error(installation.error);
     }
     this.logger.info('Engine verified', {
-      driver: driver.id,
+      agent: defaultAgent.id,
+      driver: defaultDriver.id,
       version: installation.version,
     });
 
@@ -248,6 +271,11 @@ export class Orchestrator extends EventEmitter {
     let consecutiveCrashes = 0;
     let lastActivity = resumedExisting ? 'resumed after interruption' : 'starting mission';
 
+    // Phase 9: agents whose engine we've verified this process-lifetime (the
+    // default was checked upfront) — so a mid-mission agent is probed once,
+    // not on every launch.
+    const verifiedAgents = new Set([defaultAgent.id]);
+
     while (!this.stopRequested) {
       // Safety valve: bounded number of launches when the project asks for it.
       const { maxRuns } = project.mission;
@@ -259,20 +287,64 @@ export class Orchestrator extends EventEmitter {
         ).result;
       }
 
+      // ── Phase 9: route this launch to an agent ──────────────────────────
+      // Mission mode routes per the CURRENT task's hints (agent/role/
+      // capabilities); legacy mode always uses the project's default agent.
+      // For an agent-less project both resolve to the implicit default that
+      // wraps project.driver, so nothing changes for existing projects.
+      const currentTask = this.missionMode
+        ? this.taskQueueStore.current(this.taskQueueState)
+        : null;
+      const { agent, reason: routeReason } = this.missionMode
+        ? selectAgent(currentTask, this.agentRegistry, project)
+        : { agent: defaultAgent, reason: 'default' };
+      const driver = this.agentRegistry.driverFor(agent);
+      const effProject = this.agentRegistry.effectiveProject(project, agent);
+      this.currentDriver = driver;
+
+      // Verify a newly-introduced agent's engine before its first use. A
+      // missing engine blocks clearly rather than crash-looping on launch.
+      if (!verifiedAgents.has(agent.id)) {
+        // eslint-disable-next-line no-await-in-loop
+        const health = await this.agentHealth.check(agent, driver, effProject);
+        verifiedAgents.add(agent.id);
+        if (!health.ok) {
+          return this.block(project, session, {
+            reason: `Agent "${agent.id}" engine unavailable: ${health.error}`,
+            category: 'agent-unavailable',
+            hint: `Check this agent's driver/command. ${health.error}`,
+            taskId: currentTask?.id ?? null,
+          }).result;
+        }
+      }
+
+      // Agent switch: never resume a DIFFERENT agent's engine conversation.
+      // Record the current agent on the session (and drop the stale engine id
+      // when switching) so the new agent starts a fresh conversation.
+      const agentChanged = Boolean(session.currentAgentId) && session.currentAgentId !== agent.id;
+      if (agentChanged || !session.currentAgentId) {
+        this.sessionManager.update(session, {
+          currentAgentId: agent.id,
+          ...(agentChanged ? { engineSessionId: null } : {}),
+        });
+      }
+      const engineSessionId = agentChanged ? null : session.engineSessionId;
+
       // Fresh sessions get the mission prompt; resumed conversations get the
       // continue prompt (the engine already holds the full history). In
       // mission mode, "fresh" is decided per TASK (attempts === 0), not per
       // session — a later task's first launch still resumes the same engine
-      // conversation, but introduces ITS OWN prompt rather than "continue".
-      const engineIsFresh = !session.engineSessionId;
+      // conversation (unless the agent changed), but introduces ITS OWN prompt.
+      const engineIsFresh = !engineSessionId;
       let prompt;
       let activeTaskId = null;
       if (this.missionMode) {
         // The queue entry IS the task's full definition + runtime state —
         // no lookup against static config, so a CLI-enqueued task (never
         // declared in project.tasks) works with no special-casing.
-        const taskEntry = this.taskQueueStore.current(this.taskQueueState);
+        const taskEntry = currentTask;
         activeTaskId = taskEntry.id;
+        taskEntry.assignedAgentId = agent.id; // recorded on the queue entry
         const taskIsFresh = taskEntry.attempts === 0;
         prompt = taskIsFresh
           ? fs.readFileSync(taskEntry.resolvedPromptFile, 'utf8')
@@ -285,6 +357,13 @@ export class Orchestrator extends EventEmitter {
           : this.buildContinuationPrompt({ project, reason: lastActivity });
       }
 
+      this.agentHealth.markUsed(agent.id);
+      this.statusManager.set({ mission: { currentAgent: agent.id, currentAgentRole: agent.role } });
+      this.emit('agent:assigned', {
+        project: project.name, session, taskId: activeTaskId,
+        agentId: agent.id, role: agent.role, reason: routeReason,
+      });
+
       this.sessionManager.update(session, {
         state: SessionState.RUNNING,
         runs: session.runs + 1,
@@ -296,9 +375,9 @@ export class Orchestrator extends EventEmitter {
       let run;
       try {
         run = await driver.launch({
-          project,
+          project: effProject,
           prompt,
-          engineSessionId: session.engineSessionId,
+          engineSessionId,
         });
       } catch (error) {
         return this.giveUp(project, session, `Engine launch failed: ${error.message}`).result;
@@ -577,9 +656,12 @@ export class Orchestrator extends EventEmitter {
         task: taskDef, attempts: taskEntry.attempts, changes: progress.changes,
         verifyResult, resultText: exitInfo.resultText, outcome: 'done',
       });
+      checkpoint.agentId = session.currentAgentId; // Phase 9: who did it
       this.taskQueueStore.markDone(queue, checkpoint);
+      this.agentHealth.recordOutcome(session.currentAgentId, 'done', taskEntry.attempts);
       this.logger.info('Task completed and verified', {
         project: project.name, taskId: taskDef.id, attempts: taskEntry.attempts,
+        agent: session.currentAgentId,
       });
       this.emit('task:done', { project: project.name, session, taskId: taskDef.id, checkpoint });
 
@@ -627,7 +709,9 @@ export class Orchestrator extends EventEmitter {
           task: taskDef, attempts: taskEntry.attempts, changes: progress.changes,
           verifyResult, resultText: exitInfo.resultText, outcome: 'blocked',
         });
+        checkpoint.agentId = session.currentAgentId; // Phase 9
         this.taskQueueStore.markBlocked(queue, checkpoint);
+        this.agentHealth.recordOutcome(session.currentAgentId, 'blocked', taskEntry.attempts);
         this.statusManager.syncTaskQueue(queue);
         return this.block(project, session, {
           reason: decision.reason,
@@ -656,7 +740,9 @@ export class Orchestrator extends EventEmitter {
       task: taskDef, attempts: taskEntry.attempts, changes: progress.changes,
       verifyResult, resultText: exitInfo.resultText, outcome: 'failed',
     });
+    checkpoint.agentId = session.currentAgentId; // Phase 9
     this.taskQueueStore.markFailed(queue, checkpoint);
+    this.agentHealth.recordOutcome(session.currentAgentId, 'failed', taskEntry.attempts);
     this.statusManager.syncTaskQueue(queue);
     const failedChecks = verifyResult.results.filter((r) => !r.passed)
       .map((r) => `${r.type}: ${r.detail}`).join('; ');
@@ -785,10 +871,15 @@ export class Orchestrator extends EventEmitter {
     return buildLegacyContinuation({ project, reason, recentRuns, memoryNotes, activeFailures });
   }
 
-  /** Optional engine-specific blocked-state patterns supplied by the driver. */
+  /**
+   * Optional engine-specific blocked-state patterns supplied by the driver.
+   * Phase 9: prefer the driver of the agent that handled the current run
+   * (set in the loop); fall back to the project's default driver.
+   */
   blockedPatternsFor(project) {
     try {
-      return this.driverRegistry.getDriver(project.driver).blockedPatterns ?? [];
+      const driver = this.currentDriver ?? this.driverRegistry.getDriver(project.driver);
+      return driver.blockedPatterns ?? [];
     } catch {
       return [];
     }

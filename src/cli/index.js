@@ -12,6 +12,7 @@
  *                           queue (Phase P2/P3); approve/skip are Phase P7
  *                           operator overrides for a blocked/failed task
  *   memory list|add|resolve   Manage a project's long-term memory (Phase P5)
+ *   agents list|health      Inspect the multi-agent roster & performance (Phase 9)
  *   api-token [--rotate]    Show/rotate the dashboard API's mutating-endpoint token (Phase P7)
  *   projects list|add      Manage project definitions
  *   drivers                List available AI engine drivers
@@ -37,6 +38,8 @@ import { validateSingleTask } from '../mission/missionPlan.js';
 import MemoryStore from '../memory/memoryStore.js';
 import { loadOrCreateToken } from '../api/apiAuth.js';
 import DriverRegistry from '../drivers/driverRegistry.js';
+import AgentRegistry from '../agents/agentRegistry.js';
+import AgentHealth from '../agents/agentHealth.js';
 import { readJsonSafe } from '../state/statePersistence.js';
 import { isPidAlive } from '../state/heartbeat.js';
 import { formatDuration } from '../infra/time.js';
@@ -56,6 +59,24 @@ function readOnlyContext() {
   return { configManager, paths, sessionManager };
 }
 
+/**
+ * Build the agent registry/health + resolved roster for the `agents`
+ * commands. With a project name the roster is that project's effective
+ * roster (which is the implicit default agent for an agent-less project);
+ * without one it's the global `config/agents.json` roster.
+ */
+function agentContext(projectName) {
+  const configManager = new ConfigManager();
+  const paths = configManager.getPaths();
+  const driverRegistry = new DriverRegistry({ logger: silentLogger });
+  const registry = new AgentRegistry({ driverRegistry, logger: silentLogger, agentsFile: paths.agentsFile });
+  const health = new AgentHealth({ healthFile: paths.agentHealthFile, logger: silentLogger });
+  const roster = projectName
+    ? registry.agentsFor(configManager.getProject(projectName))
+    : registry.globalAgents();
+  return { configManager, paths, registry, health, roster };
+}
+
 /** Uniform fatal-error rendering for every command. */
 function fail(error) {
   const message = error instanceof ConfigError ? error.message : (error.stack ?? error.message);
@@ -70,7 +91,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('2.1.0');
+    .version('2.2.0');
 
   program
     .command('start')
@@ -564,6 +585,63 @@ export function buildProgram() {
       }
     });
 
+  const agents = program
+    .command('agents')
+    .description('Manage the agent roster (Phase 9) — specialized agents routed per task');
+
+  agents
+    .command('list')
+    .argument('[project]', 'resolve the roster for one project (else show global agents)')
+    .description('Show the configured agents (id, role, driver, capabilities)')
+    .action((project) => {
+      try {
+        const { roster } = agentContext(project);
+        if (!roster.length) {
+          console.log('No agents configured. Add config/agents.json (see config/agents.example.json).');
+          return;
+        }
+        console.log(chalk.bold(`\nAgents${project ? ` — ${project}` : ''}\n`));
+        for (const a of roster) {
+          const impl = a.implicit ? chalk.dim(' (implicit default)') : '';
+          const caps = a.capabilities?.length ? chalk.dim(` [${a.capabilities.join(', ')}]`) : '';
+          console.log(
+            `  ${chalk.bold(a.id)} — ${roleColor(a.role)(a.role)} · driver ${a.driver}${caps}${impl}`
+          );
+        }
+        console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  agents
+    .command('health')
+    .argument('[project]', 'resolve the roster for one project (else show global agents)')
+    .description('Show each agent\'s engine install status and task performance')
+    .action((project) => {
+      try {
+        const { health, roster } = agentContext(project);
+        if (!roster.length) {
+          console.log('No agents configured.');
+          return;
+        }
+        console.log(chalk.bold(`\nAgent health${project ? ` — ${project}` : ''}\n`));
+        for (const r of health.report(roster)) {
+          const install = r.installed === null
+            ? chalk.dim('unchecked')
+            : (r.installed ? chalk.green(`installed${r.version ? ` (${r.version})` : ''}`) : chalk.red(`missing — ${r.installError ?? ''}`));
+          console.log(`  ${chalk.bold(r.agentId)} — ${roleColor(r.role)(r.role)} · ${install}`);
+          console.log(chalk.dim(
+            `      done ${r.tasksDone} · failed ${r.tasksFailed} · blocked ${r.tasksBlocked}` +
+            ` · attempts ${r.totalAttempts}` + (r.lastUsedAt ? ` · last used ${r.lastUsedAt}` : '')
+          ));
+        }
+        console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
   const scheduler = program
     .command('scheduler')
     .description('Windows Task Scheduler integration (auto-start after reboot)');
@@ -690,6 +768,21 @@ function eventColor(event) {
       blocked: chalk.red,
       'gave-up': chalk.red,
     }[event] ?? chalk.white
+  );
+}
+
+/** Colour an agent role. */
+function roleColor(role) {
+  return (
+    {
+      planner: chalk.magenta,
+      coding: chalk.cyan,
+      testing: chalk.yellow,
+      documentation: chalk.blue,
+      research: chalk.green,
+      review: chalk.magentaBright,
+      general: chalk.white,
+    }[role] ?? chalk.white
   );
 }
 

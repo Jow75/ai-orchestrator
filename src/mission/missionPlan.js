@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isKnownVerifierType, listVerifierTypes } from '../verify/verifierRegistry.js';
+import { isKnownRole, ROLES } from '../agents/agentProfile.js';
 
 /** Default launches allowed for a single task before it is marked FAILED. */
 export const DEFAULT_TASK_MAX_RUNS = 5;
@@ -91,6 +92,22 @@ export function validateSingleTask(entry, { label, workingDirectory, seenIds }) 
     }
   }
 
+  // Phase 9: optional agent routing. `role` must be a known role; `agent` is
+  // a free agent-id string (existence is checked at routing time, since
+  // agents are global config the task validator can't see). Both absent →
+  // the task runs on the project's default agent, exactly as before Phase 9.
+  if (entry.role !== undefined && !isKnownRole(entry.role)) {
+    problems.push(
+      `${label}.role "${entry.role}" is unknown. Known roles: ${ROLES.join(', ')}.`
+    );
+  }
+  if (entry.agent !== undefined && (typeof entry.agent !== 'string' || !entry.agent)) {
+    problems.push(`${label}.agent must be a non-empty agent-id string when present.`);
+  }
+  if (entry.capabilities !== undefined && !Array.isArray(entry.capabilities)) {
+    problems.push(`${label}.capabilities must be an array of strings when present.`);
+  }
+
   if (problems.length && !id) return { task: null, problems };
 
   return {
@@ -104,6 +121,12 @@ export function validateSingleTask(entry, { label, workingDirectory, seenIds }) 
       maxRuns: Number.isInteger(entry.maxRuns) && entry.maxRuns > 0
         ? entry.maxRuns
         : DEFAULT_TASK_MAX_RUNS,
+      // Phase 9 routing hints (null/[] when unspecified → default agent).
+      role: entry.role ?? null,
+      agent: entry.agent ?? null,
+      capabilities: Array.isArray(entry.capabilities)
+        ? entry.capabilities.filter((c) => typeof c === 'string')
+        : [],
     },
     problems,
   };
