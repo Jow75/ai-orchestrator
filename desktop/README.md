@@ -18,7 +18,17 @@ for which path each feature uses.
 Only one orchestrator process runs at a time, system-wide (gated by
 `state/heartbeat.json`) — this app doesn't change that constraint, it just
 makes it visible (the sidebar's Live/Idle badge, and a clear error if you
-try to start a second mission while one is running).
+try to start a second mission while one is running). (Parallel MISSIONS
+inside that one process are a Phase 10 CLI feature — `start a b`; the
+desktop starts single missions.)
+
+**Phase 10 additions**: an **Approvals** view (every pending approval
+request across projects, decidable in one click — Approve / Modify… /
+Reject, or "Done — I did it" for human-action requests) and a mission
+**lifecycle strip** at the top of the Missions view (current state +
+recent transitions, from `state/lifecycle/`). Both are dual-mode like
+everything else: live → the Phase 10 API endpoints; idle → the same
+`ApprovalStore`/`MissionLifecycle` library classes the CLI uses.
 
 ## Setup
 

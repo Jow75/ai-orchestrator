@@ -1,7 +1,7 @@
 (function () {
   const api = window.orchestrator;
   const TAB_LABELS = {
-    dashboard: 'Dashboard', missions: 'Missions', tasks: 'Tasks', agents: 'Agents',
+    dashboard: 'Dashboard', missions: 'Missions', tasks: 'Tasks', agents: 'Agents', approvals: 'Approvals',
     timeline: 'Timeline', memory: 'Memory Center', logs: 'Logs', settings: 'Settings',
   };
 

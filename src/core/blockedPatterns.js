@@ -25,6 +25,42 @@
  * @type {{category: string, pattern: RegExp, hint: string}[]}
  */
 export const BLOCKED_PATTERNS = [
+  // ── Phase 10A: human-action situations ─────────────────────────────────
+  // These categories match `approvals.humanActionCategories`, so when the
+  // Approval Manager is active they pause gracefully and notify the owner
+  // (what/why/action/where) instead of terminally blocking. Without the
+  // Approval Manager they behave exactly like every other blocked category.
+  {
+    category: 'captcha',
+    pattern: /\b(?:captcha|recaptcha|hcaptcha|prove (?:you(?:'| a)re|that you are) (?:not a robot|human))\b/i,
+    hint: 'A CAPTCHA challenge needs a human. Complete it where the agent encountered it, then reply DONE.',
+  },
+  {
+    category: 'authentication',
+    pattern: /\b(?:log ?in|sign ?in|authenticate|authentication|2fa|two-factor|verification code|otp) (?:is )?(?:required|needed|expired|failed)\b/i,
+    hint: 'Authentication is required. Log in / refresh credentials where needed, then reply DONE.',
+  },
+  {
+    category: 'external-login',
+    pattern: /\b(?:please|must|need to) (?:log ?in|sign ?in|authenticate)\b/i,
+    hint: 'An external service needs an interactive login the agent cannot perform. Log in, then reply DONE.',
+  },
+  {
+    category: 'browser-permission',
+    pattern: /\bbrowser (?:permission|prompt|dialog|popup) (?:is )?(?:required|blocking|needs?)\b/i,
+    hint: 'A browser permission prompt is blocking the agent. Accept/dismiss it, then reply DONE.',
+  },
+  {
+    category: 'desktop-confirmation',
+    pattern: /\b(?:desktop|system|os|uac) (?:confirmation|dialog|prompt) (?:is )?(?:required|blocking|waiting)\b/i,
+    hint: 'A desktop/system dialog needs a human click. Confirm it on the machine, then reply DONE.',
+  },
+  {
+    category: 'physical-interaction',
+    pattern: /\b(?:physical(?:ly)?|manual(?:ly)?) (?:interaction|intervention|action|access) (?:is )?(?:required|needed)\b/i,
+    hint: 'Physical interaction with the machine or a device is required, then reply DONE.',
+  },
+  // ── Original blocked-state patterns (P0) ────────────────────────────────
   {
     category: 'permission-denied',
     // Claude Code's headless permission-denial phrasing.

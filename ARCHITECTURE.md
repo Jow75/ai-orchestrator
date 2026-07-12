@@ -456,6 +456,95 @@ task routing without the supervision core knowing which engine ran what.
   agents) is Phase 10; inter-agent handoff today is the shared task queue +
   P5 memory + P4 briefing, not live message-passing.
 
+## The Autonomous Project Manager (Phase 10)
+
+Phase 10 layers management — approvals, lifecycle, scheduling,
+coordination, analysis, releases — AROUND the supervision loop without
+changing its safety core. The load-bearing pattern: **every new
+collaborator the Orchestrator takes is optional**; absent, supervision is
+byte-for-byte pre-Phase-10 (this is tested, and it is why all 334 prior
+tests pass unchanged).
+
+### The Approval Manager (`src/approvals/` — 10A/10B/10C)
+
+Decision pipeline: a *category* string (`'tests'`,
+`'production-deployment'`, `'implementation-plan'`, …) → `approvalPolicy`
+classifies it into one of four classes (`automatic`,
+`implementation-review`, `owner-gate`, `human-action`; unknown categories
+fail CLOSED to owner-gate) → the operating mode (`conservative` /
+`balanced` / `autonomous`, global + per-project) decides proceed-or-pause →
+pauses persist a request (`approvalStore`, ids A1, A2, … global across
+projects) and publish it through every configured provider, then
+`waitForDecision()` polls abortably (operator stop always wins, like every
+other wait in the loop).
+
+Three orchestrator integration points, all guarded:
+
+1. **Task gate** — a task with `approval: "<category>"` is evaluated
+   before its FIRST launch; rejection marks it BLOCKED (so the P7
+   approve/skip overrides apply) and blocks the mission.
+2. **Plan review** — a COMPLETED run whose output carries
+   `approvals.planMarker` is treated as *presenting a plan, not doing
+   work*: no verification; instead an implementation summary
+   (`implementationSummary.js`) is published, and APPROVE/MODIFY resumes
+   the same engine conversation with the decision (and any MODIFY note)
+   in the briefing.
+3. **Human-action pause** — blocked-state categories listed in
+   `approvals.humanActionCategories` (CAPTCHA, logins, browser prompts, …)
+   short-circuit BEFORE the loop breaker: the owner gets
+   what/why/action/where and replies `DONE <id>`; the mission continues
+   with the no-progress streak reset. Every other blocked category keeps
+   P0's terminal-block semantics exactly.
+
+Providers implement one interface (`publish()` + optional
+`fetchDecisions()`); the reply grammar (`APPROVE/REJECT/MODIFY/DONE <id>`)
+is shared, so a future WhatsApp/Slack/push adapter is one subclass.
+Decisions can also arrive from ANOTHER process (CLI/desktop/API writing
+the store while an orchestrator waits) — `waitForDecision` detects that
+and still announces `approval:resolved` exactly once per process.
+
+### Lifecycle, intelligence, self-improvement (10D/10E/10I)
+
+`missionLifecycle.js` is a StatusManager-style recorder (direct calls from
+the loop, dedupe on same-state, history capped) — observability, never
+load-bearing. `projectIntelligence.js` and `selfImprovement.js` are pure
+readers over state that already exists (sessions, queues, ledgers — which
+now carry `durationMs` and `agentId` per run — memory, agent health,
+approval audit) and emit **recommendations only**; nothing in Phase 10
+executes a decision the owner didn't make.
+
+### Scheduling (10G) and coordination (10H)
+
+`missionScheduler.js` never supervises: a due schedule spawns the real
+CLI (`start <project>`), exactly like the desktop app, so there is one
+supervision code path in the product. Missed occurrences are computed
+from the last completed run (first sighting anchors a new schedule), so
+a laptop that slept through 02:00 still runs the mission on wake.
+
+Parallel execution is **composition, not loop surgery**: `start a b c`
+builds one Orchestrator per project inside one process (primary keeps
+`status.json`; others write `state/status/<name>.json`). Cross-mission
+safety comes from `resourceLocks.js` (task `resources`; all-or-nothing,
+stale-reclaim, abortable waiting before launch). Task `dependsOn` is
+validated as *earlier-tasks-only*, which keeps the ordered queue's
+semantics and makes cycles structurally impossible; `dependencyGraph.js`'s
+ready-set/conflict/work-stealing planner is the declared foundation for
+within-mission parallel batches (deferred, documented). Cross-agent
+communication is the `agentMessages.js` bus: addressed messages
+(agent/role/all) fold into the recipient's next briefing or fresh prompt
+and are marked consumed; task handoffs between different agents post a
+note automatically.
+
+### Release automation (10J)
+
+`releaseManager.js` splits generation from mutation: `prepare` only reads
+mission data (checkpoints, verify results, ledger) into
+notes/report/release.json drafts under `state/releases/`; `apply` is
+approval-aware (its category decides its class — default `commit`,
+automatic in balanced mode) and performs version bump + CHANGELOG +
+git commit/tag in the TARGET project. Pushing is never automated: the
+final outward step stays human.
+
 ## Design rules
 
 1. **Dependency injection everywhere** — only `app.js` constructs concrete

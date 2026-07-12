@@ -50,12 +50,20 @@ function backend() {
       import('../../src/agents/agentRegistry.js'),
       import('../../src/agents/agentHealth.js'),
       import('../../src/app.js'),
+      // Phase 10 read/mutate surfaces.
+      import('../../src/approvals/approvalStore.js'),
+      import('../../src/mission/missionLifecycle.js'),
+      import('../../src/coordination/resourceLocks.js'),
+      import('../../src/coordination/agentMessages.js'),
+      import('../../src/coordination/dependencyGraph.js'),
     ]).then(
       ([
         configManagerMod, sessionManagerMod, missionTimelineMod, taskQueueMod,
         missionPlanMod, memoryStoreMod, apiAuthMod, heartbeatMod,
         statePersistenceMod, loggerMod, driverRegistryMod, agentRegistryMod,
         agentHealthMod, appMod,
+        approvalStoreMod, missionLifecycleMod, resourceLocksMod, agentMessagesMod,
+        dependencyGraphMod,
       ]) => ({
         ConfigManager: configManagerMod.ConfigManager,
         ConfigError: configManagerMod.ConfigError,
@@ -72,6 +80,12 @@ function backend() {
         AgentRegistry: agentRegistryMod.AgentRegistry,
         AgentHealth: agentHealthMod.AgentHealth,
         STOP_REQUEST_FILENAME: appMod.STOP_REQUEST_FILENAME,
+        ApprovalStore: approvalStoreMod.ApprovalStore,
+        MissionLifecycle: missionLifecycleMod.MissionLifecycle,
+        ResourceLockManager: resourceLocksMod.ResourceLockManager,
+        AgentMessageBus: agentMessagesMod.AgentMessageBus,
+        readyTasks: dependencyGraphMod.readyTasks,
+        blockedByDependencies: dependencyGraphMod.blockedByDependencies,
       })
     );
   }
@@ -487,6 +501,91 @@ class OrchestratorBridge {
     } catch (error) {
       return { ok: false, reason: error.message };
     }
+  }
+
+  // ------------------------------------------------- Phase 10 surfaces ---
+
+  /** 10A: pending approvals everywhere, or one project's history. */
+  async getApprovals(project) {
+    if (await this.isLive()) {
+      const suffix = project ? `/api/approvals/${encodeURIComponent(project)}` : '/api/approvals';
+      const result = await this.apiCall(suffix);
+      if (result.ok) return result.data;
+    }
+    const { ApprovalStore, silentLogger } = await backend();
+    const paths = await this.paths();
+    const store = new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger });
+    return project ? store.list(project) : store.pendingAll();
+  }
+
+  /** 10A: decide a request (approve/reject/modify/done). */
+  async decideApproval(project, id, decision, note) {
+    if (await this.isLive()) {
+      const result = await this.apiCall(
+        `/api/approvals/${encodeURIComponent(project)}/${encodeURIComponent(id)}/decide`,
+        { method: 'POST', auth: true, body: { decision, note } }
+      );
+      return result.data ?? { ok: false, reason: result.reason ?? 'Request failed.' };
+    }
+    const { ApprovalStore, silentLogger } = await backend();
+    const paths = await this.paths();
+    return new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger })
+      .resolve(project, id, { decision, note, by: 'owner', via: 'desktop' });
+  }
+
+  /** 10D: a mission's lifecycle record (state + history). */
+  async getLifecycle(project) {
+    if (await this.isLive()) {
+      const result = await this.apiCall(`/api/lifecycle/${encodeURIComponent(project)}`);
+      if (result.ok) return result.data;
+    }
+    const { MissionLifecycle, silentLogger } = await backend();
+    const paths = await this.paths();
+    return new MissionLifecycle({ lifecycleDir: paths.lifecycleDir, logger: silentLogger }).get(project);
+  }
+
+  /** 10H: coordination view (locks, ready set, stalls, messages). */
+  async getCoordination(project) {
+    if (await this.isLive()) {
+      const result = await this.apiCall(`/api/coordination/${encodeURIComponent(project)}`);
+      if (result.ok) return result.data;
+    }
+    const {
+      ResourceLockManager, AgentMessageBus, TaskQueue,
+      readyTasks, blockedByDependencies, silentLogger,
+    } = await backend();
+    const paths = await this.paths();
+    const queue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger }).load(project);
+    return {
+      locks: new ResourceLockManager({ coordinationDir: paths.coordinationDir, logger: silentLogger }).held(),
+      readyTasks: queue ? readyTasks(queue).map((t) => t.id) : [],
+      waitingOnDependencies: queue ? blockedByDependencies(queue) : [],
+      messages: new AgentMessageBus({ coordinationDir: paths.coordinationDir, logger: silentLogger }).list(project),
+    };
+  }
+
+  /** 10E: project intelligence (live only adds nothing — always via API when up). */
+  async getIntelligence(project) {
+    if (await this.isLive()) {
+      const result = await this.apiCall(`/api/intelligence/${encodeURIComponent(project)}`);
+      if (result.ok) return result.data;
+    }
+    // Idle: reuse the API server's own assembly through a direct import
+    // would drag many modules in; the desktop keeps this live-only and
+    // shows a hint otherwise.
+    return null;
+  }
+
+  /** 10G: schedules with next-due times. */
+  async getSchedules() {
+    if (await this.isLive()) {
+      const result = await this.apiCall('/api/schedules');
+      if (result.ok) return result.data;
+    }
+    const { readJsonSafe } = await backend();
+    const paths = await this.paths();
+    const raw = readJsonSafe(paths.schedulesFile);
+    return { schedules: Array.isArray(raw) ? raw : (raw?.schedules ?? []), problems: [] };
   }
 
   // --------------------------------------------------------- api token ---

@@ -495,6 +495,150 @@ and `ai-orchestrator agents health [project]`, or `GET /api/agents` /
 
 ---
 
+## Approvals & operating modes (Phase 10A/10B) — `approvals` block
+
+```json
+"approvals": {
+  "enabled": true,
+  "mode": "balanced",
+  "planMarker": "IMPLEMENTATION PLAN READY",
+  "decisionPollMs": 15000,
+  "decisionTimeoutMs": 0,
+  "automaticCategories": ["documentation", "tests", "lint", "formatting", "retry",
+    "refactoring", "implementation-continuation", "report", "commit", "changelog"],
+  "ownerGateCategories": ["production-deployment", "data-deletion", "repository-deletion",
+    "credentials", "financial", "production-configuration", "security", "secrets", "dangerous"],
+  "humanActionCategories": ["browser-permission", "desktop-confirmation", "authentication",
+    "captcha", "physical-interaction", "external-login"],
+  "providers": {
+    "telegram": { "enabled": false, "botToken": "", "chatId": "" },
+    "email": { "enabled": false, "smtp": {}, "from": "", "to": "" }
+  }
+}
+```
+
+- **`mode`** — `conservative` (everything requires approval), `balanced`
+  (default: routine work proceeds; implementation reviews and owner gates
+  pause), `autonomous` (only owner gates and human actions pause). A
+  project may override just the mode: `"approvals": { "mode": "autonomous" }`
+  in its project JSON — or use `ai-orchestrator approvals mode --set <mode>
+  [project]`.
+- **Categories** are free-form strings; a category in NO list is treated as
+  an owner gate (fail closed). Tasks opt in with `"approval": "<category>"`.
+- **`planMarker`** — when a run's final output contains this text, the run
+  is treated as presenting an implementation plan: a summary is published
+  for APPROVE / REJECT / MODIFY instead of continuing. Instruct planning
+  agents to print it when (and only when) presenting a plan.
+- **`decisionTimeoutMs: 0`** waits forever — a paused mission is resumable
+  and abortable at any time, exactly like a rate-limit wait.
+- **Provider fallbacks**: an enabled provider with blank credentials uses
+  the matching `notifications` channel's settings, so one Telegram bot (or
+  SMTP mailbox) serves both systems.
+- **Responding**: Telegram reply `APPROVE A7` / `REJECT A7 reason` /
+  `MODIFY A7 changes` / `DONE A7`; or `ai-orchestrator approvals
+  approve|reject|modify|done <id>`; or the desktop Approvals view; or
+  `POST /api/approvals/:project/:id/decide`.
+
+## Notifications — Phase 10F additions
+
+- New events available in `notifications.events`: `approval:required`,
+  `human-action:required`, `approval:resolved`, `task:verification-failed`,
+  `task:done`, `release:created`, `summary:daily`, `summary:weekly`.
+- **Severity**: every event has a default severity (info/warning/critical;
+  override via `notifications.eventSeverity`). `notifications.minSeverity`
+  is the global floor; each channel may set its own `minSeverity` — e.g.
+  keep the desktop chatty but only page Telegram on `critical`.
+- **Email is real now** (dependency-free SMTP):
+
+```json
+"email": {
+  "enabled": true,
+  "smtp": { "host": "smtp.gmail.com", "port": 587, "starttls": true,
+            "user": "me@gmail.com", "pass": "<app password>" },
+  "from": "me@gmail.com",
+  "to": "me@gmail.com"
+}
+```
+
+  Use `"secure": true` with port 465 for implicit TLS instead of STARTTLS.
+- **Summary digests** (sent by `schedules watch`):
+
+```json
+"summaries": {
+  "daily":  { "enabled": true, "time": "20:00" },
+  "weekly": { "enabled": true, "day": "sunday", "time": "18:00" }
+}
+```
+
+## Scheduled missions (Phase 10G) — `config/schedules.json`
+
+```json
+{
+  "schedules": [
+    { "id": "nightly", "project": "my-project", "type": "daily",  "time": "02:00" },
+    { "id": "weekly-refactor", "project": "my-project", "type": "weekly",
+      "day": "sunday", "time": "03:00", "fresh": true },
+    { "id": "one-shot", "project": "other", "type": "once", "date": "2026-08-01T05:00:00" },
+    { "id": "hourly-check", "project": "other", "type": "cron", "cron": "0 * * * *",
+      "recoverMissed": false }
+  ]
+}
+```
+
+- Types: `daily` (`time` "HH:MM"), `weekly` (`day` + `time`), `once`
+  (`date`), `cron` (5-field: minute hour day-of-month month weekday, with
+  `*`, lists, ranges, steps, and month/day names).
+- `recoverMissed` (default `true`): an occurrence missed while the machine
+  was off runs when the watcher next checks. `false` limits firing to a
+  10-minute grace window (`missedGraceMs` overrides).
+- `fresh` (default `false`): start over instead of resuming.
+- Run `ai-orchestrator schedules watch` (e.g. at logon via `scheduler
+  install`) or `schedules run-due` from your own automation. A schedule due
+  while an orchestrator is already running is deferred, not skipped.
+- Manage with `schedules list|add|remove|enable|disable` — run state lives
+  in `state/schedules.json` (machine-owned).
+
+## Coordination (Phase 10H) — `coordination` block + task fields
+
+```json
+"coordination": { "maxParallelMissions": 3, "lockPollMs": 10000, "staleLockMs": 3600000 }
+```
+
+- **Parallel missions**: `ai-orchestrator start projA projB` supervises
+  both in one process (capped by `maxParallelMissions`). The first project
+  owns `status.json`; the others write `state/status/<name>.json`.
+- **Per-task coordination fields** (all optional):
+  - `"resources": ["database", "shared-lib"]` — opaque lock names; the task
+    waits until every one is free (cross-mission), locks them, and releases
+    on completion. Stale locks (dead process / older than `staleLockMs`)
+    are reclaimed automatically.
+  - `"dependsOn": ["T1"]` — must name EARLIER tasks in the plan (validated;
+    this also makes dependency cycles impossible).
+  - `"approval": "<category>"` — approval gate before the task's first
+    launch (see the approvals block above).
+- **Cross-agent messages**: `ai-orchestrator agents message <project>
+  --from coder --to tester --text "..."` (also `role:<role>` or `all`);
+  unread messages appear in the recipient agent's next briefing. Handoffs
+  between different agents post a note automatically.
+- Inspect everything with `ai-orchestrator coordination <project>`.
+
+## Release automation (Phase 10J) — `release` block
+
+```json
+"release": { "tagPrefix": "v", "approvalCategory": "commit" }
+```
+
+- `ai-orchestrator release prepare <project> <version>` writes
+  RELEASE_NOTES.md, VERIFICATION_REPORT.md, and release.json under
+  `state/releases/<project>/<version>/` from mission data. Edit them freely.
+- `ai-orchestrator release apply <project> <version>` bumps the target's
+  package.json, prepends the CHANGELOG entry, and creates a git commit +
+  tag in the TARGET project. It never pushes.
+- `approvalCategory` decides the gate: the default `commit` is automatic in
+  balanced mode; set an owner-gate category (e.g. `production-deployment`)
+  to require an explicit decision. An approval is consumed by exactly one
+  apply.
+
 ## Environment notes
 
 - Paths in JSON may use forward slashes (`C:/Users/...`) — recommended, as

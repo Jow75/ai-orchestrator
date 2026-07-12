@@ -25,6 +25,7 @@ import SessionManager from './state/sessionManager.js';
 import StatusManager from './state/statusManager.js';
 import MissionTimeline from './state/missionTimeline.js';
 import TaskQueue from './mission/taskQueue.js';
+import MissionLifecycle from './mission/missionLifecycle.js';
 import MemoryStore from './memory/memoryStore.js';
 import AgentRegistry from './agents/agentRegistry.js';
 import AgentHealth from './agents/agentHealth.js';
@@ -35,6 +36,12 @@ import NotificationEngine from './notifications/notificationEngine.js';
 import PluginManager from './plugins/pluginManager.js';
 import DashboardServer from './api/dashboardServer.js';
 import { loadOrCreateToken } from './api/apiAuth.js';
+import ApprovalStore from './approvals/approvalStore.js';
+import ApprovalManager from './approvals/approvalManager.js';
+import TelegramApprovalProvider from './approvals/providers/telegramProvider.js';
+import EmailApprovalProvider from './approvals/providers/emailProvider.js';
+import ResourceLockManager from './coordination/resourceLocks.js';
+import AgentMessageBus from './coordination/agentMessages.js';
 
 /** Cadence for checking the CLI stop-request file while supervising. */
 const STOP_FILE_POLL_MS = 5_000;
@@ -77,6 +84,36 @@ export class App {
 
     this.driverRegistry = new DriverRegistry({ logger: this.logger });
 
+    // Phase 10A/10C: the Approval Manager — store + remote providers.
+    this.approvalStore = new ApprovalStore({
+      approvalsDir: this.paths.approvalsDir,
+      logger: childLogger(this.logger, 'approvals'),
+    });
+    this.approvalManager = new ApprovalManager({
+      config: this.config.approvals,
+      store: this.approvalStore,
+      providers: this.buildApprovalProviders(),
+      logger: childLogger(this.logger, 'approvals'),
+    });
+
+    // Phase 10D: the mission lifecycle recorder.
+    this.lifecycle = new MissionLifecycle({
+      lifecycleDir: this.paths.lifecycleDir,
+      logger: childLogger(this.logger, 'lifecycle'),
+    });
+    this.lifecycle.attachApprovals(this.approvalManager);
+
+    // Phase 10H: cross-mission resource locks + cross-agent message bus.
+    this.resourceLocks = new ResourceLockManager({
+      coordinationDir: this.paths.coordinationDir,
+      logger: childLogger(this.logger, 'coordination'),
+      staleMs: this.config.coordination?.staleLockMs,
+    });
+    this.messageBus = new AgentMessageBus({
+      coordinationDir: this.paths.coordinationDir,
+      logger: childLogger(this.logger, 'coordination'),
+    });
+
     this.orchestrator = new Orchestrator({
       configManager: this.configManager,
       driverRegistry: this.driverRegistry,
@@ -84,19 +121,28 @@ export class App {
       statusManager: this.statusManager,
       paths: this.paths,
       logger: childLogger(this.logger, 'orchestrator'),
+      approvalManager: this.approvalManager,
+      lifecycle: this.lifecycle,
+      resourceLocks: this.resourceLocks,
+      messageBus: this.messageBus,
     });
+    // Phase 10H: every orchestrator supervising a mission this process runs
+    // (parallel missions each get their own instance — see start()).
+    this.orchestrators = [this.orchestrator];
 
     this.notifications = new NotificationEngine({
       config: this.config.notifications,
       logger: childLogger(this.logger, 'notifications'),
     });
     this.notifications.attach(this.orchestrator);
+    this.notifications.attach(this.approvalManager); // Phase 10A events
 
     this.timeline = new MissionTimeline({
       timelineDir: this.paths.timelineDir,
       logger: childLogger(this.logger, 'timeline'),
     });
     this.timeline.attach(this.orchestrator);
+    this.timeline.attachApprovals(this.approvalManager);
 
     // Read-only view for the dashboard API; the orchestrator owns its own
     // TaskQueue instance for actually driving mission-mode supervision.
@@ -148,6 +194,14 @@ export class App {
       configManagerForAgents: this.configManager,
       orchestrator: this.orchestrator,
       apiToken: this.apiToken,
+      // Phase 10 surfaces.
+      approvalStore: this.approvalStore,
+      approvalManager: this.approvalManager,
+      lifecycle: this.lifecycle,
+      resourceLocks: this.resourceLocks,
+      messageBus: this.messageBus,
+      paths: this.paths,
+      stopAll: (reason) => this.stopAll(reason),
     });
 
     this.stopFilePath = path.join(this.paths.stateDir, STOP_REQUEST_FILENAME);
@@ -156,18 +210,74 @@ export class App {
   }
 
   /**
+   * Phase 10C: construct the enabled approval providers. Provider config
+   * falls back to the matching notification channel's settings when its own
+   * fields are blank — one bot/mailbox serves both systems by default.
+   */
+  buildApprovalProviders() {
+    const providers = [];
+    const providerConfig = this.config.approvals?.providers ?? {};
+    const logger = childLogger(this.logger, 'approvals');
+
+    if (providerConfig.telegram?.enabled) {
+      const fallback = this.config.notifications?.telegram ?? {};
+      providers.push(new TelegramApprovalProvider({
+        config: {
+          botToken: providerConfig.telegram.botToken || fallback.botToken,
+          chatId: providerConfig.telegram.chatId || fallback.chatId,
+        },
+        logger,
+        offsetFile: path.join(this.paths.approvalsDir, 'telegram.offset'),
+      }));
+    }
+    if (providerConfig.email?.enabled) {
+      const fallback = this.config.notifications?.email ?? {};
+      providers.push(new EmailApprovalProvider({
+        config: {
+          smtp: Object.keys(providerConfig.email.smtp ?? {}).length
+            ? providerConfig.email.smtp
+            : fallback.smtp,
+          from: providerConfig.email.from || fallback.from,
+          to: providerConfig.email.to || fallback.to,
+        },
+        logger,
+      }));
+    }
+    return providers;
+  }
+
+  /** Stop every orchestrator this process is supervising (Phase 10H). */
+  async stopAll(reason) {
+    await Promise.allSettled(this.orchestrators.map((o) => o.stop(reason)));
+  }
+
+  /**
    * Run supervision for a project until done.
    *
    * @param {object} params
    * @param {string} [params.projectName] - Project to supervise. Falls back
    *   to config `defaultProject`, then to the single defined project.
+   * @param {string[]} [params.projectNames] - Phase 10H: several projects to
+   *   supervise IN PARALLEL, each on its own Orchestrator instance. The
+   *   first is the primary (owns status.json); the rest write per-project
+   *   snapshots under state/status/. Capped by coordination.maxParallelMissions.
    * @param {boolean} [params.onlyIfResumable] - `resume` mode: exit quietly
    *   when nothing was interrupted (used by the Task Scheduler boot task).
    * @param {boolean} [params.fresh] - Abandon any interrupted session and
    *   start the mission from the beginning (explicit operator choice).
    * @returns {Promise<{complete: boolean, reason: string}|null>}
    */
-  async start({ projectName, onlyIfResumable = false, fresh = false } = {}) {
+  async start({ projectName, projectNames, onlyIfResumable = false, fresh = false } = {}) {
+    const requested = [...new Set(projectNames ?? [])];
+    if (requested.length > 1) {
+      return this.startParallel({ projectNames: requested, fresh });
+    }
+    if (requested.length === 1) projectName = requested[0];
+    return this.startSingle({ projectName, onlyIfResumable, fresh });
+  }
+
+  /** The single-mission path — everything before Phase 10H, unchanged. */
+  async startSingle({ projectName, onlyIfResumable = false, fresh = false } = {}) {
     // Guard against double launch / detect unclean shutdown.
     const previous = this.heartbeat.inspectPrevious();
     if (previous.kind === 'already-running') {
@@ -246,6 +356,123 @@ export class App {
   }
 
   /**
+   * Phase 10H: supervise several projects IN PARALLEL in one process —
+   * true parallel mission execution by composition: each project gets its
+   * own untouched Orchestrator instance (all the P0–P9 guarantees intact
+   * per mission), while resource locks (`task.resources`) synchronize the
+   * missions wherever they declare shared resources.
+   *
+   * The first project is the primary: it owns status.json and the main
+   * orchestrator instance. Additional missions write their status to
+   * `state/status/<project>.json`.
+   *
+   * @param {object} params
+   * @param {string[]} params.projectNames
+   * @param {boolean} [params.fresh]
+   * @returns {Promise<{project: string, complete: boolean, reason: string}[]>}
+   */
+  async startParallel({ projectNames, fresh = false }) {
+    const cap = this.config.coordination?.maxParallelMissions ?? 3;
+    if (projectNames.length > cap) {
+      throw new Error(
+        `Refusing to start ${projectNames.length} parallel missions ` +
+        `(coordination.maxParallelMissions is ${cap}). Raise the cap or start fewer.`
+      );
+    }
+    // Validate every project (and warn on shared working directories —
+    // parallel agents in one workspace confuse per-project progress
+    // signatures) BEFORE touching any session state.
+    const seenDirs = new Map();
+    for (const name of projectNames) {
+      const project = this.configManager.getProject(name);
+      const dir = path.resolve(project.workingDirectory);
+      if (seenDirs.has(dir)) {
+        this.logger.warn('Two parallel missions share a working directory', {
+          projects: [seenDirs.get(dir), name], directory: dir,
+        });
+      }
+      seenDirs.set(dir, name);
+    }
+
+    // Same double-launch guard as a single start.
+    const previous = this.heartbeat.inspectPrevious();
+    if (previous.kind === 'already-running') {
+      throw new Error(
+        `Another AI-Orchestrator instance is already running (pid ${previous.previous.pid}).`
+      );
+    }
+
+    if (fresh) {
+      for (const name of projectNames) {
+        const interrupted = this.sessionManager.getResumableSession(name);
+        if (interrupted) this.sessionManager.closeSession(interrupted, 'stopped');
+      }
+    }
+
+    // The primary keeps this.orchestrator/statusManager; each additional
+    // mission gets its own Orchestrator + StatusManager (per-project
+    // status snapshot), with the same engines attached.
+    const missions = [{ project: projectNames[0], orchestrator: this.orchestrator }];
+    for (const name of projectNames.slice(1)) {
+      const statusManager = new StatusManager({
+        statusFile: path.join(this.paths.statusDir, `${name}.json`),
+        logger: childLogger(this.logger, 'status'),
+        updateIntervalMs: this.config.supervision.statusUpdateIntervalMs,
+      });
+      const orchestrator = new Orchestrator({
+        configManager: this.configManager,
+        driverRegistry: this.driverRegistry,
+        sessionManager: this.sessionManager,
+        statusManager,
+        paths: this.paths,
+        logger: childLogger(this.logger, `orchestrator:${name}`),
+        approvalManager: this.approvalManager,
+        lifecycle: this.lifecycle,
+        resourceLocks: this.resourceLocks,
+        messageBus: this.messageBus,
+      });
+      this.notifications.attach(orchestrator);
+      this.timeline.attach(orchestrator);
+      this.orchestrators.push(orchestrator);
+      missions.push({ project: name, orchestrator, statusManager });
+    }
+
+    if (this.config.plugins?.enabled !== false) {
+      await this.pluginManager.loadAll({
+        orchestrator: this.orchestrator, // plugins attach to the primary
+        driverRegistry: this.driverRegistry,
+        config: this.config,
+        logger: this.logger,
+      });
+    }
+    await this.dashboard.start();
+    this.statusManager.startUpdates();
+    for (const mission of missions.slice(1)) mission.statusManager.startUpdates();
+    this.heartbeat.start({ project: projectNames[0], projects: projectNames });
+    this.installSignalHandlers();
+    this.watchStopFile();
+
+    this.logger.info('AI-Orchestrator started (parallel missions)', {
+      projects: projectNames, pid: process.pid,
+    });
+
+    try {
+      const settled = await Promise.allSettled(
+        missions.map(({ project, orchestrator }) => orchestrator.runProject(project))
+      );
+      return settled.map((outcome, i) => ({
+        project: missions[i].project,
+        ...(outcome.status === 'fulfilled'
+          ? { complete: outcome.value.complete, reason: outcome.value.reason }
+          : { complete: false, reason: `supervision error: ${outcome.reason?.message}` }),
+      }));
+    } finally {
+      for (const mission of missions.slice(1)) mission.statusManager.stopUpdates();
+      await this.shutdown();
+    }
+  }
+
+  /**
    * Pick the project to supervise:
    * explicit argument > previous heartbeat (recovery) > configured default >
    * the only defined project.
@@ -263,7 +490,7 @@ export class App {
     const stop = (signal) => {
       this.logger.info(`Received ${signal}; stopping gracefully`);
       // Fire and forget: runProject unwinds and start()'s finally cleans up.
-      this.orchestrator.stop(`signal ${signal}`);
+      this.stopAll(`signal ${signal}`);
     };
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGBREAK']) {
       process.on(signal, stop);
@@ -292,7 +519,7 @@ export class App {
       if (fs.existsSync(this.stopFilePath)) {
         fs.rmSync(this.stopFilePath, { force: true });
         this.logger.info('Stop requested via CLI stop file');
-        this.orchestrator.stop('cli stop command');
+        this.stopAll('cli stop command');
       }
     }, STOP_FILE_POLL_MS);
     this.stopFileTimer.unref();
@@ -304,7 +531,7 @@ export class App {
     this.shuttingDown = true;
 
     if (this.stopFileTimer) clearInterval(this.stopFileTimer);
-    await this.orchestrator.stop('shutdown');
+    await this.stopAll('shutdown');
     await this.dashboard.stop();
     await this.pluginManager.shutdownAll();
     this.statusManager.stopUpdates(finalState);

@@ -12,7 +12,14 @@
  *                           queue (Phase P2/P3); approve/skip are Phase P7
  *                           operator overrides for a blocked/failed task
  *   memory list|add|resolve   Manage a project's long-term memory (Phase P5)
- *   agents list|health      Inspect the multi-agent roster & performance (Phase 9)
+ *   agents list|health|message  Inspect the roster & performance (Phase 9); post cross-agent messages (Phase 10H)
+ *   approvals ...          Approval requests + operating modes (Phase 10A/10B)
+ *   lifecycle <project>    Standardized mission lifecycle + history (Phase 10D)
+ *   intel <project>        Project intelligence recommendations (Phase 10E)
+ *   improve [project]      Self-improvement analysis from history (Phase 10I)
+ *   schedules ...          Scheduled missions incl. missed-run recovery (Phase 10G)
+ *   coordination <project> Locks, ready tasks, dependency stalls, messages (Phase 10H)
+ *   release prepare|apply  Approval-aware release automation (Phase 10J)
  *   api-token [--rotate]    Show/rotate the dashboard API's mutating-endpoint token (Phase P7)
  *   projects list|add      Manage project definitions
  *   drivers                List available AI engine drivers
@@ -44,6 +51,21 @@ import { readJsonSafe } from '../state/statePersistence.js';
 import { isPidAlive } from '../state/heartbeat.js';
 import { formatDuration } from '../infra/time.js';
 import { ROOT_DIR } from '../infra/paths.js';
+// Phase 10 surfaces.
+import ApprovalStore from '../approvals/approvalStore.js';
+import { MODES, isKnownMode, effectiveApprovalConfig } from '../approvals/approvalPolicy.js';
+import MissionLifecycle from '../mission/missionLifecycle.js';
+import ProjectIntelligence from '../intelligence/projectIntelligence.js';
+import SelfImprovement from '../intelligence/selfImprovement.js';
+import MissionScheduler from '../scheduler/missionScheduler.js';
+import { buildActivitySummary } from '../scheduler/activitySummary.js';
+import ResourceLockManager from '../coordination/resourceLocks.js';
+import AgentMessageBus from '../coordination/agentMessages.js';
+import { readyTasks, blockedByDependencies } from '../coordination/dependencyGraph.js';
+import ReleaseManager from '../release/releaseManager.js';
+import ApprovalManager from '../approvals/approvalManager.js';
+import { ProgressLedger } from '../progress/progressLedger.js';
+import NotificationEngine from '../notifications/notificationEngine.js';
 
 /** Windows Task Scheduler task name used by `scheduler` commands. */
 const SCHEDULED_TASK_NAME = 'AI-Orchestrator Auto-Resume';
@@ -91,18 +113,24 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('2.2.0');
+    .version('2.3.0');
 
   program
     .command('start')
-    .argument('[project]', 'project name (defaults to config "defaultProject")')
+    .argument('[projects...]', 'project name(s) — several names run IN PARALLEL (Phase 10H)')
     .option('--fresh', 'abandon any interrupted session and start the mission over')
-    .description('Start (or resume) supervising a project until its mission completes')
-    .action(async (project, options) => {
+    .description('Start (or resume) supervising one project — or several in parallel — until the mission(s) complete')
+    .action(async (projects, options) => {
       try {
         const app = new App();
-        const result = await app.start({ projectName: project, fresh: options.fresh });
-        if (result?.complete) {
+        const result = await app.start({ projectNames: projects, fresh: options.fresh });
+        if (Array.isArray(result)) {
+          console.log('');
+          for (const mission of result) {
+            const mark = mission.complete ? chalk.green('✔') : chalk.yellow('■');
+            console.log(`${mark} ${chalk.bold(mission.project)}: ${mission.reason}`);
+          }
+        } else if (result?.complete) {
           console.log(chalk.green(`\n✔ Mission complete: ${result.reason}`));
         } else if (result) {
           console.log(chalk.yellow(`\n■ Supervision ended: ${result.reason}`));
@@ -633,10 +661,566 @@ export function buildProgram() {
           console.log(`  ${chalk.bold(r.agentId)} — ${roleColor(r.role)(r.role)} · ${install}`);
           console.log(chalk.dim(
             `      done ${r.tasksDone} · failed ${r.tasksFailed} · blocked ${r.tasksBlocked}` +
-            ` · attempts ${r.totalAttempts}` + (r.lastUsedAt ? ` · last used ${r.lastUsedAt}` : '')
+            ` · attempts ${r.totalAttempts}` +
+            (r.totalRuns ? ` · runs ${r.totalRuns} (avg ${formatDuration(r.avgRunMs ?? 0)})` : '') +
+            (r.lastUsedAt ? ` · last used ${r.lastUsedAt}` : '')
           ));
         }
         console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  agents
+    .command('message')
+    .argument('<project>', 'project name')
+    .requiredOption('--from <agent>', 'sending agent id (or "operator")')
+    .requiredOption('--to <recipient>', 'an agent id, "role:<role>", or "all"')
+    .requiredOption('--text <text>', 'the message body')
+    .option('--topic <topic>', 'short topic tag')
+    .description('Post a cross-agent message (Phase 10H) — folded into the recipient’s next briefing')
+    .action((project, options) => {
+      try {
+        const { paths } = readOnlyContext();
+        const bus = new AgentMessageBus({ coordinationDir: paths.coordinationDir, logger: silentLogger });
+        const message = bus.post(project, {
+          from: options.from, to: options.to, topic: options.topic, text: options.text,
+        });
+        console.log(chalk.green(`Message #${message.id} posted (${options.from} → ${options.to}).`));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  // ── Phase 10A/10B: approvals ──────────────────────────────────────────
+
+  const approvals = program
+    .command('approvals')
+    .description('Manage approval requests (Phase 10A) and operating modes (10B)');
+
+  approvals
+    .command('list')
+    .argument('[project]', 'one project’s full request history (else all pending)')
+    .description('Show pending approval requests (or one project’s history)')
+    .action((project) => {
+      try {
+        const { paths } = readOnlyContext();
+        const store = new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger });
+        const requests = project ? store.list(project) : store.pendingAll();
+        if (!requests.length) {
+          console.log(project ? `No approval requests recorded for "${project}".` : 'No pending approvals.');
+          return;
+        }
+        console.log(chalk.bold(`\nApprovals${project ? ` — ${project}` : ' (pending)'}\n`));
+        for (const r of requests) {
+          const status = {
+            pending: chalk.yellow, approved: chalk.green, done: chalk.green,
+            'auto-approved': chalk.green, rejected: chalk.red,
+          }[r.status] ?? chalk.white;
+          console.log(
+            `  ${chalk.bold(r.id)} [${r.project}] ${status(r.status)} — ` +
+            `${r.category} (${r.approvalClass})${r.taskId ? chalk.dim(` task ${r.taskId}`) : ''}`
+          );
+          console.log(chalk.dim(`      ${truncateLine(r.title, 100)} — ${new Date(r.createdAt).toLocaleString()}`));
+        }
+        console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  for (const [verb, decision] of [
+    ['approve', 'approved'], ['reject', 'rejected'], ['modify', 'modified'], ['done', 'done'],
+  ]) {
+    approvals
+      .command(verb)
+      .argument('<id>', 'approval request id (e.g. A7)')
+      .argument('[note...]', 'optional note (required for modify)')
+      .description(
+        verb === 'done'
+          ? 'Report a required human action as completed — the paused mission continues'
+          : `${verb.charAt(0).toUpperCase() + verb.slice(1)} a pending approval request`
+      )
+      .action((id, noteWords) => {
+        try {
+          const note = noteWords?.length ? noteWords.join(' ') : undefined;
+          if (decision === 'modified' && !note) {
+            console.error(chalk.red('\nMODIFY needs a note: approvals modify A7 <what to change>'));
+            process.exitCode = 1;
+            return;
+          }
+          const { paths } = readOnlyContext();
+          const store = new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger });
+          const result = store.resolveById(id, { decision, note, by: 'owner', via: 'cli' });
+          if (!result.ok) {
+            console.error(chalk.red(`\n${result.reason}`));
+            process.exitCode = 1;
+            return;
+          }
+          console.log(chalk.green(
+            `Request ${id} ${decision}. A mission paused on it picks the decision up within seconds.`
+          ));
+        } catch (error) {
+          fail(error);
+        }
+      });
+  }
+
+  approvals
+    .command('mode')
+    .argument('[project]', 'show the effective mode for one project')
+    .option('--set <mode>', `change the mode (${MODES.join(' | ')})`)
+    .description('Show or set the operating mode (Phase 10B) — globally or per project')
+    .action((project, options) => {
+      try {
+        const configManager = new ConfigManager();
+        const globalConfig = configManager.getAll().approvals ?? {};
+        if (options.set) {
+          if (!isKnownMode(options.set)) {
+            console.error(chalk.red(`\nUnknown mode "${options.set}". Use: ${MODES.join(', ')}.`));
+            process.exitCode = 1;
+            return;
+          }
+          const paths = configManager.getPaths();
+          const file = project
+            ? path.join(paths.projectsDir, `${project}.json`)
+            : path.join(paths.configDir, 'orchestrator.json');
+          if (project && !fs.existsSync(file)) {
+            console.error(chalk.red(`\nProject "${project}" not found (${file}).`));
+            process.exitCode = 1;
+            return;
+          }
+          const raw = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+          raw.approvals = { ...(raw.approvals ?? {}), mode: options.set };
+          fs.writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`, 'utf8');
+          console.log(chalk.green(
+            `Operating mode ${project ? `for "${project}"` : '(global)'} set to "${options.set}".`
+          ));
+          return;
+        }
+        if (project) {
+          const projectConfig = configManager.getProject(project);
+          const effective = effectiveApprovalConfig(globalConfig, projectConfig);
+          console.log(`Effective mode for "${project}": ${chalk.bold(effective.mode ?? 'balanced')}`);
+        } else {
+          console.log(`Global operating mode: ${chalk.bold(globalConfig.mode ?? 'balanced')}`);
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  // ── Phase 10D: lifecycle ──────────────────────────────────────────────
+
+  program
+    .command('lifecycle')
+    .argument('<project>', 'project name')
+    .description('Show a mission’s lifecycle state and transition history (Phase 10D)')
+    .action((project) => {
+      try {
+        const { paths } = readOnlyContext();
+        const lifecycle = new MissionLifecycle({ lifecycleDir: paths.lifecycleDir, logger: silentLogger });
+        const record = lifecycle.get(project);
+        if (!record) {
+          console.log(`No lifecycle recorded for "${project}" yet.`);
+          return;
+        }
+        console.log(chalk.bold(`\nMission lifecycle — ${project}\n`));
+        console.log(`  Current state: ${lifecycleColor(record.state)(record.state)}\n`);
+        for (const entry of record.history.slice(-20)) {
+          console.log(
+            `  ${chalk.dim(new Date(entry.at).toLocaleString())}  ` +
+            `${entry.from ?? '(start)'} → ${lifecycleColor(entry.to)(entry.to)}` +
+            (entry.reason ? chalk.dim(` — ${truncateLine(entry.reason, 80)}`) : '')
+          );
+        }
+        console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  // ── Phase 10E/10I: intelligence & self-improvement ────────────────────
+
+  program
+    .command('intel')
+    .argument('<project>', 'project name')
+    .description('Project intelligence (Phase 10E): health, next work item, recommendations')
+    .action((project) => {
+      try {
+        const { configManager, paths, sessionManager } = readOnlyContext();
+        const intelligence = new ProjectIntelligence({
+          configManager,
+          sessionManager,
+          taskQueue: new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger }),
+          memoryStore: new MemoryStore({ memoryDir: paths.memoryDir, logger: silentLogger }),
+          ledger: new ProgressLedger({ ledgerDir: paths.ledgerDir, logger: silentLogger }),
+          agentRegistry: new AgentRegistry({
+            driverRegistry: new DriverRegistry({ logger: silentLogger }),
+            logger: silentLogger, agentsFile: paths.agentsFile,
+          }),
+          agentHealth: new AgentHealth({ healthFile: paths.agentHealthFile, logger: silentLogger }),
+          approvalStore: new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger }),
+          lifecycle: new MissionLifecycle({ lifecycleDir: paths.lifecycleDir, logger: silentLogger }),
+          logger: silentLogger,
+        });
+        const analysis = intelligence.analyze(project);
+        console.log(chalk.bold(`\nProject intelligence — ${project}\n`));
+        const healthColor = { healthy: chalk.green, attention: chalk.yellow, unhealthy: chalk.red }[analysis.health.level];
+        console.log(`  Health:   ${healthColor(analysis.health.level)} (${analysis.health.score}/100) — ${analysis.health.signals.join('; ')}`);
+        console.log(`  Running:  ${analysis.running ? chalk.green(`yes (${analysis.sessionState})`) : 'no'}`);
+        if (analysis.lifecycleState) console.log(`  Lifecycle: ${analysis.lifecycleState}`);
+        console.log(`  Next work: ${analysis.nextWorkItem ? `${analysis.nextWorkItem.taskId} — ${analysis.nextWorkItem.objective}` : chalk.dim('(nothing ready)')}`);
+        console.log(chalk.bold('\n  Recommendations:'));
+        if (!analysis.recommendations.length) console.log(chalk.dim('    (none)'));
+        for (const rec of analysis.recommendations) {
+          const priority = { high: chalk.red, medium: chalk.yellow, low: chalk.dim }[rec.priority];
+          console.log(`    ${priority(`[${rec.priority}]`)} ${chalk.bold(rec.title)}`);
+          console.log(chalk.dim(`        ${rec.detail}`));
+        }
+        console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  program
+    .command('improve')
+    .argument('[project]', 'restrict the analysis to one project')
+    .description('Self-improvement analysis (Phase 10I): patterns from historical mission data')
+    .action((project) => {
+      try {
+        const { configManager, paths } = readOnlyContext();
+        const improvement = new SelfImprovement({
+          listProjects: () => configManager.listProjects(),
+          ledger: new ProgressLedger({ ledgerDir: paths.ledgerDir, logger: silentLogger }),
+          memoryStore: new MemoryStore({ memoryDir: paths.memoryDir, logger: silentLogger }),
+          taskQueue: new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger }),
+          agentHealth: new AgentHealth({ healthFile: paths.agentHealthFile, logger: silentLogger }),
+          approvalStore: new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger }),
+          logger: silentLogger,
+        });
+        const analysis = improvement.analyze(project);
+        console.log(chalk.bold(`\nSelf-improvement analysis${project ? ` — ${project}` : ''}\n`));
+        if (!analysis.recommendations.length) {
+          console.log(chalk.dim('  No patterns strong enough to recommend anything yet — more history needed.\n'));
+          return;
+        }
+        for (const rec of analysis.recommendations) {
+          const priority = { high: chalk.red, medium: chalk.yellow, low: chalk.dim }[rec.priority];
+          console.log(`  ${priority(`[${rec.priority}]`)} ${chalk.bold(rec.title)}`);
+          console.log(chalk.dim(`      ${rec.detail}`));
+        }
+        console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  // ── Phase 10G: scheduled missions ─────────────────────────────────────
+
+  const schedules = program
+    .command('schedules')
+    .description('Scheduled missions (Phase 10G): daily/weekly/once/cron, with missed-run recovery');
+
+  const buildSchedulerCli = () => {
+    const configManager = new ConfigManager();
+    const paths = configManager.getPaths();
+    const config = configManager.getAll();
+    const notifications = new NotificationEngine({
+      config: config.notifications, logger: silentLogger,
+    });
+    const approvalStore = new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger });
+    const ledger = new ProgressLedger({ ledgerDir: paths.ledgerDir, logger: silentLogger });
+    const timeline = new MissionTimeline({ timelineDir: paths.timelineDir, logger: silentLogger });
+    const scheduler = new MissionScheduler({
+      schedulesFile: paths.schedulesFile,
+      stateFile: paths.schedulesStateFile,
+      heartbeatFile: paths.heartbeatFile,
+      rootDir: ROOT_DIR,
+      logger: silentLogger,
+      notifications,
+      buildSummary: ({ sinceMs, now }) => buildActivitySummary({
+        listProjects: () => configManager.listProjects(),
+        readTimeline: (p) => timeline.read(p),
+        recentLedger: (p, n) => ledger.recent(p, n),
+        pendingApprovals: () => approvalStore.pendingAll(),
+      }, { sinceMs, now }),
+    });
+    scheduler.configureSummaries(config.notifications?.summaries);
+    return { scheduler, paths };
+  };
+
+  schedules
+    .command('list')
+    .description('Show every schedule with its last run and next due time')
+    .action(() => {
+      try {
+        const { scheduler } = buildSchedulerCli();
+        const report = scheduler.report();
+        if (!report.schedules.length) {
+          console.log('No schedules defined. Add one with "schedules add".');
+          return;
+        }
+        console.log(chalk.bold('\nScheduled missions\n'));
+        for (const s of report.schedules) {
+          const state = s.enabled === false ? chalk.dim('disabled') : chalk.green('enabled');
+          const when = s.type === 'cron' ? s.cron
+            : s.type === 'once' ? s.date
+              : s.type === 'weekly' ? `${s.day} ${s.time}` : `daily ${s.time}`;
+          console.log(`  ${chalk.bold(s.id)} — ${s.project} · ${s.type} (${when}) · ${state}`);
+          console.log(chalk.dim(
+            `      last run: ${s.lastRunAt ? new Date(s.lastRunAt).toLocaleString() : 'never'}` +
+            `${s.lastOutcome ? ` (${s.lastOutcome})` : ''} · next due: ` +
+            `${s.nextDueAt ? new Date(s.nextDueAt).toLocaleString() : '—'}`
+          ));
+        }
+        for (const problem of report.problems) console.log(chalk.red(`  ⚠ ${problem}`));
+        console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  schedules
+    .command('add')
+    .argument('<project>', 'project the schedule launches')
+    .requiredOption('--id <id>', 'unique schedule id')
+    .requiredOption('--type <type>', 'daily | weekly | once | cron')
+    .option('--time <HH:MM>', 'time of day (daily/weekly)')
+    .option('--day <weekday>', 'weekday name (weekly)')
+    .option('--date <date>', 'date/time (once), e.g. 2026-08-01T02:00')
+    .option('--cron <expr>', '5-field cron expression (cron)')
+    .option('--fresh', 'start the mission fresh instead of resuming')
+    .option('--no-recover-missed', 'skip occurrences missed while the machine was off')
+    .description('Add a scheduled mission')
+    .action((project, options) => {
+      try {
+        const { scheduler } = buildSchedulerCli();
+        const result = scheduler.add({
+          id: options.id,
+          project,
+          type: options.type,
+          time: options.time,
+          day: options.day,
+          date: options.date,
+          cron: options.cron,
+          fresh: Boolean(options.fresh),
+          recoverMissed: options.recoverMissed !== false,
+        });
+        if (!result.ok) {
+          console.error(chalk.red(`\n${result.reason}`));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(chalk.green(`Schedule "${options.id}" added. Run "schedules watch" to activate it.`));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  schedules
+    .command('remove')
+    .argument('<id>', 'schedule id')
+    .description('Remove a schedule')
+    .action((id) => {
+      try {
+        const { scheduler } = buildSchedulerCli();
+        const result = scheduler.remove(id);
+        if (!result.ok) {
+          console.error(chalk.red(`\n${result.reason}`));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(chalk.green(`Schedule "${id}" removed.`));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  for (const [verb, enabled] of [['enable', true], ['disable', false]]) {
+    schedules
+      .command(verb)
+      .argument('<id>', 'schedule id')
+      .description(`${verb === 'enable' ? 'Enable' : 'Disable'} a schedule`)
+      .action((id) => {
+        try {
+          const { scheduler } = buildSchedulerCli();
+          const result = scheduler.setEnabled(id, enabled);
+          if (!result.ok) {
+            console.error(chalk.red(`\n${result.reason}`));
+            process.exitCode = 1;
+            return;
+          }
+          console.log(chalk.green(`Schedule "${id}" ${verb}d.`));
+        } catch (error) {
+          fail(error);
+        }
+      });
+  }
+
+  schedules
+    .command('run-due')
+    .description('Check once and launch anything due (missed occurrences included)')
+    .action(async () => {
+      try {
+        const { scheduler } = buildSchedulerCli();
+        const actions = await scheduler.runDue();
+        if (!actions.length) {
+          console.log('Nothing due.');
+          return;
+        }
+        for (const action of actions) {
+          console.log(`  ${chalk.bold(action.id)}: ${action.action}`);
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  schedules
+    .command('watch')
+    .option('--interval <seconds>', 'check cadence in seconds', '30')
+    .description('Run the schedule watcher until Ctrl+C (launches due missions, sends summaries)')
+    .action(async (options) => {
+      try {
+        const { scheduler } = buildSchedulerCli();
+        const controller = new AbortController();
+        for (const signal of ['SIGINT', 'SIGTERM', 'SIGBREAK']) {
+          process.on(signal, () => controller.abort());
+        }
+        console.log('Schedule watcher running (Ctrl+C to stop)...');
+        await scheduler.watch({
+          intervalMs: Math.max(5, Number(options.interval)) * 1000,
+          signal: controller.signal,
+        });
+        console.log('Schedule watcher stopped.');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  // ── Phase 10H: coordination ───────────────────────────────────────────
+
+  program
+    .command('coordination')
+    .argument('<project>', 'project name')
+    .description('Coordination view (Phase 10H): held locks, ready tasks, dependency stalls, agent messages')
+    .action((project) => {
+      try {
+        const { paths } = readOnlyContext();
+        const locks = new ResourceLockManager({ coordinationDir: paths.coordinationDir, logger: silentLogger });
+        const bus = new AgentMessageBus({ coordinationDir: paths.coordinationDir, logger: silentLogger });
+        const queue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger }).load(project);
+
+        console.log(chalk.bold(`\nCoordination — ${project}\n`));
+        const held = locks.held();
+        console.log(chalk.bold('  Resource locks:'));
+        if (!held.length) console.log(chalk.dim('    (none held)'));
+        for (const lock of held) {
+          console.log(`    ${lock.resource} — ${lock.holder?.project ?? '?'}${lock.holder?.taskId ? `/${lock.holder.taskId}` : ''}${lock.stale ? chalk.yellow(' (stale)') : ''}`);
+        }
+
+        console.log(chalk.bold('\n  Ready tasks (dependencies satisfied):'));
+        const ready = queue ? readyTasks(queue) : [];
+        if (!ready.length) console.log(chalk.dim('    (none)'));
+        for (const t of ready) console.log(`    ${t.id} — ${t.objective ?? ''}`);
+
+        const stalled = queue ? blockedByDependencies(queue) : [];
+        if (stalled.length) {
+          console.log(chalk.bold('\n  Waiting on dependencies:'));
+          for (const s of stalled) console.log(`    ${s.taskId} ← ${s.waitingOn.join(', ')}`);
+        }
+
+        const messages = bus.list(project);
+        console.log(chalk.bold('\n  Agent messages:'));
+        if (!messages.length) console.log(chalk.dim('    (none)'));
+        for (const m of messages.slice(-10)) {
+          console.log(`    #${m.id} ${m.from} → ${m.to}${m.topic ? ` [${m.topic}]` : ''}: ${truncateLine(m.text, 80)}`);
+        }
+        console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  // ── Phase 10J: release automation ─────────────────────────────────────
+
+  const release = program
+    .command('release')
+    .description('Release automation (Phase 10J): notes/report drafts, version bump, commit + tag');
+
+  const buildReleaseCli = () => {
+    const configManager = new ConfigManager();
+    const paths = configManager.getPaths();
+    const config = configManager.getAll();
+    const approvalStore = new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger });
+    const approvalManager = new ApprovalManager({
+      config: config.approvals, store: approvalStore, providers: [], logger: silentLogger,
+    });
+    return new ReleaseManager({
+      configManager,
+      taskQueue: new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger }),
+      ledger: new ProgressLedger({ ledgerDir: paths.ledgerDir, logger: silentLogger }),
+      approvalManager,
+      releasesDir: paths.releasesDir,
+      releaseConfig: config.release,
+      logger: silentLogger,
+    });
+  };
+
+  release
+    .command('prepare')
+    .argument('<project>', 'project name')
+    .argument('<version>', 'release version, e.g. 1.4.0')
+    .option('--highlights <text>', 'a lead paragraph for the notes')
+    .description('Generate release-notes + verification-report drafts from mission data')
+    .action((project, version, options) => {
+      try {
+        const manager = buildReleaseCli();
+        const result = manager.prepare(project, {
+          version, highlights: options.highlights,
+        });
+        if (!result.ok) {
+          console.error(chalk.red(`\n${result.reason}`));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(chalk.green(`Release ${version} drafts prepared:`));
+        console.log(`  notes:  ${result.notesPath}`);
+        console.log(`  report: ${result.reportPath}`);
+        console.log(`Review/edit them, then: release apply ${project} ${version}`);
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  release
+    .command('apply')
+    .argument('<project>', 'project name')
+    .argument('<version>', 'a version prepared with "release prepare"')
+    .description('Apply a prepared release: bump version, update CHANGELOG, git commit + tag (never pushes)')
+    .action(async (project, version) => {
+      try {
+        const manager = buildReleaseCli();
+        const result = await manager.apply(project, { version });
+        if (!result.ok && result.pendingRequest) {
+          console.log(chalk.yellow(`\n${result.reason}`));
+          console.log(`  approvals approve ${result.pendingRequest.id}`);
+          return;
+        }
+        if (!result.ok && result.reason) {
+          console.error(chalk.red(`\n${result.reason}`));
+          process.exitCode = 1;
+          return;
+        }
+        for (const step of result.steps) {
+          const mark = step.ok ? chalk.green('✔') : chalk.red('✘');
+          console.log(`  ${mark} ${step.step}${step.detail ? chalk.dim(` — ${step.detail}`) : ''}`);
+        }
+        if (!result.ok) process.exitCode = 1;
+        else console.log(chalk.green('\nRelease applied. Push the commit and tag when YOU are ready.'));
       } catch (error) {
         fail(error);
       }
@@ -783,6 +1367,27 @@ function roleColor(role) {
       review: chalk.magentaBright,
       general: chalk.white,
     }[role] ?? chalk.white
+  );
+}
+
+/** Colour a Phase 10D mission-lifecycle state. */
+function lifecycleColor(state) {
+  return (
+    {
+      completed: chalk.green,
+      approved: chalk.green,
+      executing: chalk.cyan,
+      verifying: chalk.cyan,
+      'agents-assigned': chalk.cyan,
+      planned: chalk.white,
+      analyzed: chalk.white,
+      received: chalk.white,
+      'approval-pending': chalk.yellow,
+      fixing: chalk.yellow,
+      cancelled: chalk.yellow,
+      blocked: chalk.red,
+      failed: chalk.red,
+    }[state] ?? chalk.white
   );
 }
 

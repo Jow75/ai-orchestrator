@@ -114,12 +114,129 @@ export const ORCHESTRATOR_DEFAULTS = {
       'mission:blocked',
       'mission:complete',
       'orchestrator:recovered-after-reboot',
+      // Phase 10 events (see notificationEngine.js EVENT_MESSAGES).
+      'approval:required',
+      'human-action:required',
+      'task:verification-failed',
+      'release:created',
+      'summary:daily',
+      'summary:weekly',
     ],
+    /**
+     * Phase 10F: minimum severity a notification must have to be sent at
+     * all ('info' | 'warning' | 'critical'). Each channel may set its own
+     * `minSeverity` to receive only higher-severity events (e.g. keep the
+     * desktop chatty but only page Telegram on 'critical').
+     */
+    minSeverity: 'info',
     desktop: { enabled: true },
     webhook: { enabled: false, url: '' },
     discord: { enabled: false, webhookUrl: '' },
     telegram: { enabled: false, botToken: '', chatId: '' },
-    email: { enabled: false, smtp: {}, from: '', to: '' },
+    /**
+     * Phase 10C: real SMTP delivery (dependency-free client, see
+     * src/notifications/smtpClient.js). `smtp` needs at least {host};
+     * `port` defaults to 587 with STARTTLS, or set `secure: true` for
+     * implicit TLS on 465. `user`/`pass` enable AUTH.
+     */
+    email: {
+      enabled: false,
+      smtp: { host: '', port: 587, secure: false, starttls: true, user: '', pass: '' },
+      from: '',
+      to: '',
+    },
+    /**
+     * Phase 10G: periodic digest notifications, sent by `schedules watch`.
+     * Times are local 24h "HH:MM"; weekly day is an English weekday name.
+     */
+    summaries: {
+      daily: { enabled: false, time: '20:00' },
+      weekly: { enabled: false, day: 'sunday', time: '18:00' },
+    },
+  },
+
+  /**
+   * Phase 10A/10B: the Approval Manager — classifies work into approval
+   * classes and decides, per operating mode, what proceeds automatically
+   * and what pauses for the owner (see src/approvals/).
+   */
+  approvals: {
+    /** Master switch. When false, missions behave exactly as pre-Phase-10. */
+    enabled: true,
+    /**
+     * Operating mode (10B): 'conservative' (everything requires approval),
+     * 'balanced' (routine work proceeds; reviews and owner gates pause —
+     * the default), or 'autonomous' (only owner gates and human-action
+     * situations pause). A project may override with `approvals.mode`.
+     */
+    mode: 'balanced',
+    /**
+     * When an agent's final output contains this marker, the run is treated
+     * as presenting an implementation plan: an implementation summary is
+     * generated and published for review instead of continuing blindly.
+     */
+    planMarker: 'IMPLEMENTATION PLAN READY',
+    /** How often to poll for an owner decision while paused. */
+    decisionPollMs: 15_000,
+    /**
+     * Give up waiting for a decision after this long (0 = wait forever —
+     * a paused mission is recoverable at any time, matching rate-limit waits).
+     */
+    decisionTimeoutMs: 0,
+    /**
+     * Category lists per approval class. Categories are free-form strings
+     * used on tasks (`approval: "<category>"`), by the plan marker
+     * ('implementation-plan') and by human-action detection. A category in
+     * none of these lists fails CLOSED (treated as an owner gate).
+     */
+    automaticCategories: [
+      'documentation', 'tests', 'lint', 'formatting', 'retry', 'refactoring',
+      'implementation-continuation', 'report', 'commit', 'changelog',
+    ],
+    ownerGateCategories: [
+      'production-deployment', 'data-deletion', 'repository-deletion',
+      'credentials', 'financial', 'production-configuration', 'security',
+      'secrets', 'dangerous',
+    ],
+    humanActionCategories: [
+      'browser-permission', 'desktop-confirmation', 'authentication',
+      'captcha', 'physical-interaction', 'external-login',
+    ],
+    /**
+     * Phase 10C: remote approval providers. Telegram is two-way (APPROVE /
+     * REJECT / MODIFY / DONE replies are polled); email is publish-only
+     * (respond via CLI, API, desktop, or Telegram). Provider config falls
+     * back to the matching `notifications` channel block when left empty,
+     * so one bot/mailbox serves both systems.
+     */
+    providers: {
+      telegram: { enabled: false, botToken: '', chatId: '' },
+      email: { enabled: false, smtp: {}, from: '', to: '' },
+    },
+  },
+
+  /**
+   * Phase 10H: multi-agent/multi-mission coordination — resource locks and
+   * parallel mission supervision (`start` with several projects).
+   */
+  coordination: {
+    /** Max missions one `start` may supervise in parallel. */
+    maxParallelMissions: 3,
+    /** How often a mission re-checks a resource lock another mission holds. */
+    lockPollMs: 10_000,
+    /** A lock whose holding process died is reclaimable after this long. */
+    staleLockMs: 3_600_000,
+  },
+
+  /**
+   * Phase 10J: release automation (see src/release/releaseManager.js).
+   * `apply` is approval-aware: `approvalCategory` decides its class
+   * ('commit' is automatic in balanced mode; set an owner-gate category to
+   * always require sign-off). Pushing to a remote is never automated.
+   */
+  release: {
+    tagPrefix: 'v',
+    approvalCategory: 'commit',
   },
 
   /** Plugin system (see src/plugins/pluginManager.js). */
@@ -176,6 +293,13 @@ export const PROJECT_DEFAULTS = {
    * `maxConsecutiveNoProgress` for that project alone rather than globally.
    */
   progress: {},
+
+  /**
+   * Phase 10B: per-project approval overrides — any key from the global
+   * `approvals` block (most usefully `mode`). Empty by default: every key
+   * you omit falls back to the global setting.
+   */
+  approvals: {},
 
   /** Claude Code driver settings (see src/drivers/claudeDriver.js). */
   claude: {

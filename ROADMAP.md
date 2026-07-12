@@ -19,6 +19,7 @@ points:
 | `v2.0.0` | **P7 complete** — desktop backend (mutating API + auth token); v2 stable |
 | `v2.1.0` | **Phase 8 complete** — operator desktop application (Electron) |
 | `v2.2.0` | **Phase 9 complete** — multi-agent intelligence (agent roster, role routing, health) |
+| `v2.3.0` | **Phase 10 complete** — Autonomous Project Manager (approvals, modes, remote providers, lifecycle, intelligence, notifications, schedules, coordination, self-improvement, releases) |
 
 ### Architectural principle for every phase: **engine-agnostic**
 
@@ -307,23 +308,71 @@ here).
 
 ---
 
-## Phase 10 — True autonomous project management (next, not started)
+## Phase 10 — Autonomous Project Manager ✅ (`v2.3.0`, complete)
 
-Goal → milestones → tasks → agent assignment → execute → monitor, all
-self-generated; scheduled/overnight missions with automatic resume;
-self-improvement from project history; an automated git/release/changelog/
-docs workflow; and richer notification channels (email/Discord/Slack). This
-is where concurrency (parallel agents, multi-project) and the carried-over
-v1.x items below finally land.
+The transformation phase: from autonomous coding engine to autonomous
+software engineering MANAGER — plan, assign, monitor, recover, communicate,
+escalate, learn — owner-controllable from a phone. Ten sub-phases, all
+shipped (see CHANGELOG 2.3.0 for full detail):
+
+- **10A — Approval Manager** (`src/approvals/`, the centerpiece): four
+  approval classes — `automatic` (routine work continues), `implementation-
+  review` (a detected plan becomes an owner-facing summary: objective,
+  estimated duration/files, tasks, risks, affected systems — APPROVE /
+  REJECT / MODIFY), `owner-gate` (deploys, deletions, credentials, secrets,
+  … always ask; configurable), `human-action` (CAPTCHA/login/browser
+  prompts pause gracefully with what/why/action/where and resume on DONE).
+  Unknown categories fail CLOSED to owner-gate. Full persisted audit trail.
+- **10B — Operating modes**: `conservative` (everything asks) / `balanced`
+  (default: routine proceeds, reviews + gates pause) / `autonomous` (only
+  gates + human actions pause) — global and per-project.
+- **10C — Remote approvals**: provider-independent interface; Telegram
+  (two-way: APPROVE A7 from the phone) + email (publish-only, real SMTP via
+  a new dependency-free client that also made the email notification
+  channel real). WhatsApp/Discord/Slack/push = one subclass each, later.
+- **10D — Mission lifecycle**: received → analyzed → planned →
+  [approval-pending → approved] → agents-assigned → executing ⇄ verifying ⇄
+  fixing → completed | blocked | cancelled | failed; recorded with history,
+  exposed via CLI/API/desktop.
+- **10E — Project intelligence** (`intel`): health score, what-to-work-on-
+  next, is-something-running, pause-vs-continue, agent gaps — always
+  recommendations, never actions.
+- **10F — Notifications**: approval/human-action/verification-failed/
+  release/summary events + severity levels with global and per-channel
+  `minSeverity` policies.
+- **10G — Scheduled missions** (`schedules`): daily/weekly/once/cron
+  (dependency-free parser), missed-run recovery, busy deferral, daily/
+  weekly digests; due missions spawn the real CLI.
+- **10H — Coordination**: parallel missions in one process (`start a b`),
+  each on its own untouched Orchestrator (concurrency by composition —
+  every P0–P9 guarantee intact per mission); cross-mission resource locks
+  (task `resources`); task dependencies (`dependsOn`, earlier-only ⇒ cycle-
+  free); cross-agent message bus wired into briefings (automatic handoff
+  notes); utilization stats; conflict detection; work-stealing assignment
+  planner (recommendation-only — the foundation for distributed execution).
+- **10I — Self-improvement** (`improve`): recurring failures, reliable/slow
+  agents, verification bottlenecks, always-approved categories, dominant
+  no-progress patterns → recommendations, never automatic rewrites.
+- **10J — Release automation** (`release prepare/apply`): notes +
+  verification report from mission data; approval-aware version bump,
+  CHANGELOG entry, git commit + tag. Never pushes.
+
+**Deliberately deferred** (honest scope): within-mission parallel task
+batches (mission-level parallelism shipped; the coordination primitives are
+the declared foundation); two-way email (IMAP) and further approval
+providers; `schedules watch` as a true service (run it via the existing
+Task Scheduler integration).
 
 ---
 
 ## Carried over from v1.x (fold into the phases above)
 
-- Email notification channel (SMTP); Windows service mode (run without logon)
+- ~~Email notification channel (SMTP)~~ — **done in Phase 10C** (dependency-
+  free SMTP client). Windows service mode (run without logon) still open.
 - More drivers: OpenAI Codex, Gemini CLI, Aider, OpenCode, Qwen, local LLMs,
   plus a driver conformance test-kit every driver must pass
-- Concurrent multi-project supervision in one process
+- ~~Concurrent multi-project supervision in one process~~ — **done in Phase
+  10H** (`start <a> <b>`, per-project status snapshots, shared locks)
 - Cross-machine status aggregation
 
 ## Non-goals

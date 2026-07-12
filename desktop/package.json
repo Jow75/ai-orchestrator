@@ -1,7 +1,7 @@
 {
   "name": "ai-orchestrator-desktop",
-  "version": "0.1.0",
-  "description": "Operator desktop application for AI-Orchestrator (Phase 8) — an Electron shell that talks to the existing dashboard API/library, never duplicating supervision logic.",
+  "version": "2.3.0",
+  "description": "Operator desktop application for AI-Orchestrator (Phase 8) \u2014 an Electron shell that talks to the existing dashboard API/library, never duplicating supervision logic.",
   "private": true,
   "main": "main/main.js",
   "scripts": {

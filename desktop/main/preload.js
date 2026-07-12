@@ -45,6 +45,14 @@ contextBridge.exposeInMainWorld('orchestrator', {
   getApiToken: invoke('token:get'),
   rotateApiToken: invoke('token:rotate'),
 
+  // Phase 10 surfaces.
+  getApprovals: invoke('approvals:list'),
+  decideApproval: invoke('approvals:decide'),
+  getLifecycle: invoke('lifecycle:get'),
+  getCoordination: invoke('coordination:get'),
+  getIntelligence: invoke('intelligence:get'),
+  getSchedules: invoke('schedules:get'),
+
   listLogFiles: invoke('logs:files'),
   getDefaultLogFile: invoke('logs:default-file'),
   pollLog: invoke('logs:poll'),

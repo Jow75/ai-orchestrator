@@ -95,11 +95,14 @@ export function buildLegacyContinuation({
  *   `MemoryStore#taskHistoryFor()`), oldest to newest. Distinct from
  *   `task.attempts`/`task.lastVerifyResult`, which cover the *current*
  *   queue's own attempts on this task.
+ * @param {object[]} [params.agentMessages] - Phase 10H: unread cross-agent
+ *   messages addressed to the agent handling this task (see
+ *   `AgentMessageBus#unreadFor()`), oldest to newest.
  * @returns {string}
  */
 export function buildTaskContinuation({
   project, queue, task, reason, recentRuns = [],
-  memoryNotes = [], activeFailures = [], priorAttempts = [],
+  memoryNotes = [], activeFailures = [], priorAttempts = [], agentMessages = [],
 }) {
   const currentIndex = queue.tasks.indexOf(task);
   const completed = queue.tasks.filter((t) => t.state === 'done');
@@ -159,6 +162,15 @@ export function buildTaskContinuation({
       `final response contains the exact text: ${project.mission.completionMarker}`,
       ''
     );
+  }
+
+  if (agentMessages.length) {
+    lines.push('### Messages from other agents on this mission', '');
+    for (const m of agentMessages) {
+      const topic = m.topic ? ` [${m.topic}]` : '';
+      lines.push(`- **from ${m.from}**${topic}: ${truncate(m.text, MAX_QUOTED_CHARS)}`);
+    }
+    lines.push('');
   }
 
   appendMemory(lines, memoryNotes, activeFailures);

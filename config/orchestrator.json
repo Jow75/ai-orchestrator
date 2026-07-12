@@ -30,7 +30,13 @@
       "session:gave-up",
       "mission:blocked",
       "mission:complete",
-      "orchestrator:recovered-after-reboot"
+      "orchestrator:recovered-after-reboot",
+      "approval:required",
+      "human-action:required",
+      "task:verification-failed",
+      "release:created",
+      "summary:daily",
+      "summary:weekly"
     ],
     "desktop": { "enabled": true },
     "webhook": { "enabled": false, "url": "" },

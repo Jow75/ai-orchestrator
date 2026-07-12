@@ -3,6 +3,197 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.3.0] — 2026-07-12 — Phase 10: Autonomous Project Manager
+
+From autonomous coding engine to autonomous software engineering MANAGER:
+the orchestrator now plans around approvals, communicates through remote
+channels, records a standardized mission lifecycle, schedules its own
+missions, coordinates parallel missions with shared-resource locks,
+analyzes its own history, and automates releases — while the owner keeps
+strict control over owner-gated decisions from a phone.
+
+### Added — 10A/10B: the Approval Manager & operating modes
+
+- **`src/approvals/`** — the centerpiece:
+  - `approvalPolicy.js`: four approval classes (`automatic`,
+    `implementation-review`, `owner-gate`, `human-action`) × three operating
+    modes (`conservative` | `balanced` (default) | `autonomous`), decided per
+    category. Category lists are configurable; an UNKNOWN category fails
+    CLOSED to owner-gate. Modes settable globally and per project
+    (`approvals.mode`), via config or `approvals mode --set`.
+  - `approvalStore.js`: persisted requests at `state/approvals/<project>.json`
+    with globally-unique phone-friendly ids (A1, A2, …), full decision audit
+    trail (who/when/via/note), including auto-approved work.
+  - `approvalManager.js`: classify → auto-continue or publish-and-pause;
+    abortable `waitForDecision()` polling (store + two-way providers);
+    emits `approval:required` / `approval:resolved` / `human-action:required`
+    exactly once each (deduped across processes).
+  - `implementationSummary.js`: a detected plan (output containing
+    `approvals.planMarker`, default `IMPLEMENTATION PLAN READY`) becomes an
+    owner-facing summary — objective, estimated duration (explicit or tasks ×
+    ledger-average run time), estimated files changed, tasks, risks, affected
+    systems — published for **APPROVE / REJECT / MODIFY** (MODIFY notes are
+    carried into the agent's next briefing).
+- **Owner gates**: a task may declare `approval: "<category>"`; owner-gated
+  categories (production deployment, data/repo deletion, credentials,
+  financial, production config, security, secrets, dangerous — configurable)
+  never launch without a decision. Rejection marks the task BLOCKED (the P7
+  approve/skip overrides apply) and blocks the mission.
+- **Human interaction required**: new blocked-state patterns (CAPTCHA,
+  authentication, external login, browser permission, desktop confirmation,
+  physical interaction) now pause GRACEFULLY instead of terminally blocking:
+  the owner is told exactly what happened, why it stopped, what to do, and
+  where — replying `DONE <id>` resumes the mission. With approvals disabled
+  the old terminal-block behavior is byte-for-byte preserved.
+
+### Added — 10C: remote approval providers
+
+- **`src/approvals/providers/`** — provider-independent interface
+  (`approvalProvider.js`: `publish()` + optional `fetchDecisions()`; shared
+  reply grammar `APPROVE/REJECT/MODIFY/DONE <id>`), with two adapters:
+  - `telegramProvider.js` (two-way): publishes requests, polls `getUpdates`
+    for owner replies (offset persisted; only the configured chat may decide).
+  - `emailProvider.js` (publish-only by design — no IMAP dependency): sends
+    the request with instructions to respond via Telegram/CLI/desktop.
+  - Future WhatsApp/Discord/Slack/push adapters = one subclass each.
+- **`src/notifications/smtpClient.js`** — dependency-free SMTP client
+  (implicit TLS / STARTTLS / plaintext-for-local-relays, AUTH PLAIN/LOGIN,
+  dot-stuffing, header-injection guard). The long-promised **email
+  notification channel is now real** (`channels/email.js` placeholder
+  replaced) — closes the v1.x "email channel (SMTP)" carry-over.
+
+### Added — 10D: standardized mission lifecycle
+
+- **`src/mission/missionLifecycle.js`**: received → analyzed → planned →
+  [approval-pending → approved] → agents-assigned → executing ⇄ verifying ⇄
+  fixing → completed | blocked | cancelled | failed. Every transition
+  recorded with reason + history at `state/lifecycle/<project>.json`,
+  exposed via `GET /api/lifecycle/:project`, the `lifecycle` CLI command,
+  and the desktop Missions view.
+
+### Added — 10E/10I: project intelligence & self-improvement
+
+- **`src/intelligence/projectIntelligence.js`** (`intel <project>`,
+  `GET /api/intelligence/:project`): health score with named signals,
+  is-something-running, next highest-value ready work item, aging approvals,
+  blocked-task decisions, dependency stalls, pause-vs-continue advice, agent
+  assignment gaps. **Recommendations only — never executes.**
+- **`src/intelligence/selfImprovement.js`** (`improve [project]`,
+  `GET /api/improvement`): mines ledgers (now with per-run `durationMs` +
+  `agentId`), the failure catalog, verification results, agent tallies, and
+  the approval audit trail for recurring failures, reliable agents, slow
+  agents, verification bottlenecks, always-approved categories (suggests
+  automating them), and dominant no-progress patterns. Recommendations only.
+
+### Added — 10F: notification engine expansion
+
+- New events: `approval:required` (critical), `human-action:required`
+  (critical), `approval:resolved`, `task:verification-failed` (warning),
+  `task:done`, `release:created`, `summary:daily`, `summary:weekly`.
+- **Severity policy**: every event has a severity (info/warning/critical,
+  overridable via `notifications.eventSeverity`); a global
+  `notifications.minSeverity` plus per-channel `minSeverity` decide who gets
+  paged for what.
+
+### Added — 10G: scheduled missions
+
+- **`src/scheduler/`** — `cronExpression.js` (dependency-free 5-field cron:
+  lists/ranges/steps/names, POSIX dom-vs-dow rule) and
+  `missionScheduler.js`: `daily` / `weekly` / `once` / `cron` schedules in
+  user-owned `config/schedules.json`, run state in machine-owned
+  `state/schedules.json`. Due missions spawn the REAL CLI (`start
+  <project>`), never a re-implementation; a running orchestrator defers the
+  launch. **Missed-schedule recovery** by default (first sighting anchors a
+  schedule; `recoverMissed: false` + grace window opts out).
+- CLI: `schedules list|add|remove|enable|disable|run-due|watch`; API:
+  `GET /api/schedules`, `POST /api/schedules/...` (auth).
+- **Daily/weekly summary digests** (`notifications.summaries`): the watcher
+  builds an activity digest (runs, progress, tasks done, blocks, pending
+  approvals) and sends it through the notification engine.
+
+### Added — 10H: multi-agent & multi-mission coordination
+
+- **Parallel mission execution by composition**: `start <a> <b> [<c>]`
+  supervises several projects in ONE process — each on its own untouched
+  Orchestrator instance (every P0–P9 guarantee intact per mission), capped
+  by `coordination.maxParallelMissions`. The first project owns
+  `status.json`; the rest write `state/status/<project>.json`; one
+  heartbeat records all (`projects: [...]`).
+- **`src/coordination/`**:
+  - `resourceLocks.js`: cross-mission resource locks (task `resources`
+    field) — all-or-nothing acquisition, abortable waiting, stale-lock
+    reclaim (dead pid / age), release on task completion AND mission end.
+  - `dependencyGraph.js`: task `dependsOn` validation (earlier-tasks-only —
+    cycles structurally impossible), ready-set computation, conflict
+    detection, and an assignment planner with **work stealing**
+    (recommendation-only — the declared foundation for distributed
+    execution).
+  - `agentMessages.js`: durable cross-agent message bus
+    (`agent id` / `role:<role>` / `all` addressing); unread messages are
+    folded into the recipient's next briefing (or fresh prompt) and marked
+    consumed. The orchestrator posts automatic **handoff notes** when the
+    next task routes to a different agent; `agents message` CLI +
+    `POST /api/messages/:project` post manually.
+- **Agent utilization stats**: per-agent `totalRuns`/`totalRunMs`/`avgRunMs`
+  in the health report (`agents health`, API, desktop).
+- CLI `coordination <project>`: held locks, ready tasks, dependency stalls,
+  recent messages. API `GET /api/coordination/:project`.
+
+### Added — 10J: release automation
+
+- **`src/release/releaseManager.js`**: `release prepare <project> <version>`
+  generates RELEASE_NOTES.md + VERIFICATION_REPORT.md + release.json under
+  `state/releases/` from task checkpoints, verification results, and ledger
+  stats. `release apply` is **approval-aware** (`release.approvalCategory`,
+  default `commit` → automatic in balanced mode; set an owner-gate category
+  to force sign-off; an approval is consumed exactly once): bumps the
+  target's package.json, prepends the CHANGELOG entry, git commit + tag.
+  **Pushing to a remote is never automated.**
+
+### Changed
+
+- `Orchestrator` accepts four new OPTIONAL collaborators (approvalManager,
+  lifecycle, resourceLocks, messageBus) — absent ⇒ byte-for-byte pre-Phase-10
+  behavior (all 334 prior tests unchanged and green).
+- `validateSingleTask` gains optional `dependsOn`, `resources`, `approval`.
+- Progress-ledger records now carry `durationMs` and `agentId`.
+- Desktop app: new **Approvals** view (decide requests in one click),
+  lifecycle strip in Missions, six new bridge/IPC surfaces.
+- `config/orchestrator.json` notification events extended with the Phase 10
+  events.
+- Release CLI: `--version` collided with commander's program-level version
+  flag (found in the live smoke run) — release commands take the version as
+  a positional argument instead.
+
+### Fixed
+
+- `approval:resolved` is now announced exactly once even when the decision
+  is written by ANOTHER process (CLI/desktop while the orchestrator waits) —
+  found live when the lifecycle skipped the `approved` state.
+
+### Verified
+
+- **429/429 tests** (334 prior + 95 new across 12 new test files) plus 18
+  desktop-bridge tests.
+- **Live smoke pass** (real processes, not mocks): a mission paused on a
+  detected implementation plan, was approved via a second CLI process, and
+  completed; a past-due `once` schedule was recovered by `schedules
+  run-due`, launched a real detached mission, paused on review, and
+  completed after approval; `release prepare`+`apply` produced a real
+  commit + `v0.1.0` tag in a real git repo; two parallel missions in one
+  process serialized on a shared `resources` lock (log-verified:
+  "Waiting for locked resources … held by p10-par-a") and both completed.
+
+### Deliberately deferred (documented, not hidden)
+
+- Within-mission parallel task batches (multiple concurrent runs inside ONE
+  mission): parallelism ships at mission level; the coordination layer
+  (ready sets, locks, assignment planner) is the declared foundation.
+- Telegram is the only two-way approval provider; email is publish-only.
+- WhatsApp/Discord/Slack/push approval adapters: interface ready, not built.
+- The `schedules watch` daemon is a foreground process (pair it with the
+  Windows Task Scheduler integration to run at logon).
+
 ## [2.2.0] — 2026-07-10 — Phase 9: Multi-Agent Intelligence System
 
 A team of specialized agents in place of a single one. An *agent* is a

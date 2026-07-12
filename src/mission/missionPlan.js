@@ -108,6 +108,35 @@ export function validateSingleTask(entry, { label, workingDirectory, seenIds }) 
     problems.push(`${label}.capabilities must be an array of strings when present.`);
   }
 
+  // Phase 10H: optional coordination fields. `dependsOn` must name EARLIER
+  // tasks (ids already in seenIds) — that single rule keeps the ordered
+  // queue's semantics intact and makes dependency cycles structurally
+  // impossible. `resources` are opaque lock names (see resourceLocks.js).
+  if (entry.dependsOn !== undefined) {
+    if (!Array.isArray(entry.dependsOn)) {
+      problems.push(`${label}.dependsOn must be an array of earlier task ids when present.`);
+    } else {
+      for (const dep of entry.dependsOn) {
+        if (dep === id) {
+          problems.push(`${label} ("${id}") cannot depend on itself.`);
+        } else if (!seenIds.has(dep)) {
+          problems.push(
+            `${label}.dependsOn "${dep}" must reference an EARLIER task in the plan/queue.`
+          );
+        }
+      }
+    }
+  }
+  if (entry.resources !== undefined && !Array.isArray(entry.resources)) {
+    problems.push(`${label}.resources must be an array of resource-name strings when present.`);
+  }
+  // Phase 10A: optional approval category — checked against policy at run
+  // time (categories are global config this validator can't see); here we
+  // only require a non-empty string.
+  if (entry.approval !== undefined && (typeof entry.approval !== 'string' || !entry.approval)) {
+    problems.push(`${label}.approval must be a non-empty category string when present.`);
+  }
+
   if (problems.length && !id) return { task: null, problems };
 
   return {
@@ -127,6 +156,14 @@ export function validateSingleTask(entry, { label, workingDirectory, seenIds }) 
       capabilities: Array.isArray(entry.capabilities)
         ? entry.capabilities.filter((c) => typeof c === 'string')
         : [],
+      // Phase 10 coordination/approval fields ([]/null → exactly pre-P10).
+      dependsOn: Array.isArray(entry.dependsOn)
+        ? entry.dependsOn.filter((d) => typeof d === 'string')
+        : [],
+      resources: Array.isArray(entry.resources)
+        ? entry.resources.filter((r) => typeof r === 'string')
+        : [],
+      approval: entry.approval ?? null,
     },
     problems,
   };

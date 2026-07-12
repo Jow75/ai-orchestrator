@@ -51,6 +51,8 @@ import { MemoryStore } from '../memory/memoryStore.js';
 import { AgentRegistry } from '../agents/agentRegistry.js';
 import { AgentHealth } from '../agents/agentHealth.js';
 import { selectAgent } from '../agents/agentRouter.js';
+import { effectiveApprovalConfig } from '../approvals/approvalPolicy.js';
+import { buildImplementationSummary } from '../approvals/implementationSummary.js';
 
 /**
  * Domain events emitted by the orchestrator.
@@ -70,6 +72,7 @@ export const EVENTS = Object.freeze([
   'mission:complete', //  { project, session, summary }
   'task:done', //         { project, session, taskId, checkpoint }
   'agent:assigned', //    Phase 9: { project, session, taskId, agentId, role, reason }
+  'task:verification-failed', // Phase 10F: { project, session, taskId, attempt, maxRuns, failedChecks }
 ]);
 
 export class Orchestrator extends EventEmitter {
@@ -84,8 +87,20 @@ export class Orchestrator extends EventEmitter {
    * @param {import('../state/statusManager.js').StatusManager} deps.statusManager
    * @param {object} deps.paths - Resolved runtime paths (ledgerDir, diagnosticsDir).
    * @param {object} deps.logger - Module logger.
+   * @param {import('../approvals/approvalManager.js').ApprovalManager} [deps.approvalManager] -
+   *   Phase 10A: optional. Absent ⇒ no approval gating anywhere (pre-P10
+   *   behavior, byte-for-byte — every existing harness constructs without it).
+   * @param {import('../mission/missionLifecycle.js').MissionLifecycle} [deps.lifecycle] -
+   *   Phase 10D: optional lifecycle recorder (observability only).
+   * @param {import('../coordination/resourceLocks.js').ResourceLockManager} [deps.resourceLocks] -
+   *   Phase 10H: optional cross-mission resource locks.
+   * @param {import('../coordination/agentMessages.js').AgentMessageBus} [deps.messageBus] -
+   *   Phase 10H: optional cross-agent message bus.
    */
-  constructor({ configManager, driverRegistry, sessionManager, statusManager, paths, logger }) {
+  constructor({
+    configManager, driverRegistry, sessionManager, statusManager, paths, logger,
+    approvalManager, lifecycle, resourceLocks, messageBus,
+  }) {
     super();
     this.configManager = configManager;
     this.driverRegistry = driverRegistry;
@@ -163,6 +178,16 @@ export class Orchestrator extends EventEmitter {
     // continuePrompt string) in hand-built test configs that omit it.
     this.briefingConfig = config.briefing ?? { enabled: false, recentRunCount: 0 };
 
+    // Phase 10: all optional — absent collaborators degrade to exactly the
+    // pre-Phase-10 behavior (no gates, no lifecycle records, no locks, no
+    // messages), which is what keeps all prior tests and projects intact.
+    this.approvalManager = approvalManager ?? null;
+    this.lifecycle = lifecycle ?? null;
+    this.resourceLocks = resourceLocks ?? null;
+    this.messageBus = messageBus ?? null;
+    this.approvalsConfig = config.approvals ?? { enabled: false };
+    this.coordinationConfig = config.coordination ?? {};
+
     this.stopRequested = false;
     this.stopController = new AbortController();
     this.activeRun = null;
@@ -177,8 +202,23 @@ export class Orchestrator extends EventEmitter {
    *   detected an unclean shutdown ('reboot-or-power-loss').
    * @returns {Promise<{complete: boolean, session: object, reason: string}>}
    */
-  async runProject(projectName, { recoveredAfter } = {}) {
+  async runProject(projectName, options = {}) {
+    try {
+      return await this.superviseProject(projectName, options);
+    } finally {
+      // Phase 10H: whatever ended this mission (completion, block, stop,
+      // crash of the supervision code itself), never leave locks behind.
+      this.resourceLocks?.releaseAll({ project: projectName });
+    }
+  }
+
+  /** The supervision loop proper (see {@link runProject}). */
+  async superviseProject(projectName, { recoveredAfter } = {}) {
+    this.lifecycle?.transition(projectName, 'received',
+      recoveredAfter ? `recovered after ${recoveredAfter}` : 'mission start requested');
     const project = this.configManager.getProject(projectName);
+    this.lifecycle?.transition(projectName, 'analyzed',
+      `project validated; mode: ${this.approvalManager?.modeFor(project) ?? 'n/a'}`);
 
     // Effective progress config: a project may override the global settings
     // (P1). Re-init the loop breaker with the merged threshold.
@@ -251,6 +291,9 @@ export class Orchestrator extends EventEmitter {
       ? this.taskQueueStore.getOrInitialize(project.name, project.tasks, session.id)
       : null;
     this.statusManager.syncTaskQueue(this.taskQueueState);
+    this.lifecycle?.transition(project.name, 'planned', this.missionMode
+      ? `plan loaded: ${this.taskQueueState.tasks.length} task(s)`
+      : 'single-prompt mission');
 
     // Defensive: a fully-advanced queue with a still-open session means the
     // mission finished but the session was never closed out (e.g. a crash
@@ -318,6 +361,26 @@ export class Orchestrator extends EventEmitter {
         }
       }
 
+      // ── Phase 10A: approval gate before a task's FIRST launch ──────────
+      // A task carrying an `approval` category asks the Approval Manager
+      // before it ever runs; owner-gated categories pause here until the
+      // owner decides. Absent manager / no category ⇒ nothing changes.
+      if (this.missionMode && currentTask) {
+        // eslint-disable-next-line no-await-in-loop
+        const gate = await this.gateTaskApproval({ project, session, taskEntry: currentTask });
+        if (!gate.proceed) return gate.result;
+      }
+
+      // ── Phase 10H: cross-mission resource locks ─────────────────────────
+      // A task declaring `resources` waits (abortably) until every one is
+      // free — this is what keeps two parallel missions out of the same
+      // shared resource.
+      if (this.missionMode && currentTask?.resources?.length) {
+        // eslint-disable-next-line no-await-in-loop
+        const locked = await this.acquireTaskResources({ project, session, task: currentTask });
+        if (!locked) break; // operator stop while waiting; loop exit handles it
+      }
+
       // Agent switch: never resume a DIFFERENT agent's engine conversation.
       // Record the current agent on the session (and drop the stale engine id
       // when switching) so the new agent starts a fresh conversation.
@@ -336,6 +399,11 @@ export class Orchestrator extends EventEmitter {
       // session — a later task's first launch still resumes the same engine
       // conversation (unless the agent changed), but introduces ITS OWN prompt.
       const engineIsFresh = !engineSessionId;
+      // Phase 10H: unread cross-agent messages for the routed agent are
+      // folded into whatever prompt this launch uses, then marked consumed.
+      const inbox = this.messageBus
+        ? this.messageBus.unreadFor(project.name, { agentId: agent.id, role: agent.role })
+        : [];
       let prompt;
       let activeTaskId = null;
       if (this.missionMode) {
@@ -348,13 +416,20 @@ export class Orchestrator extends EventEmitter {
         const taskIsFresh = taskEntry.attempts === 0;
         prompt = taskIsFresh
           ? fs.readFileSync(taskEntry.resolvedPromptFile, 'utf8')
-          : this.buildContinuationPrompt({ project, task: taskEntry, reason: lastActivity });
+            + freshPromptAppendix({ messages: inbox, approvalNote: taskEntry.approvalNote })
+          : this.buildContinuationPrompt({
+            project, task: taskEntry, reason: lastActivity, agentMessages: inbox,
+          });
         this.taskQueueStore.recordAttempt(this.taskQueueState);
         this.statusManager.syncTaskQueue(this.taskQueueState);
       } else {
         prompt = engineIsFresh
           ? fs.readFileSync(project.resolvedPromptFile, 'utf8')
+            + freshPromptAppendix({ messages: inbox })
           : this.buildContinuationPrompt({ project, reason: lastActivity });
+      }
+      if (inbox.length) {
+        this.messageBus.markRead(project.name, inbox.map((m) => m.id), agent.id);
       }
 
       this.agentHealth.markUsed(agent.id);
@@ -363,6 +438,8 @@ export class Orchestrator extends EventEmitter {
         project: project.name, session, taskId: activeTaskId,
         agentId: agent.id, role: agent.role, reason: routeReason,
       });
+      this.lifecycle?.transition(project.name, 'agents-assigned',
+        `${agent.id} (${agent.role}) ← ${routeReason}`);
 
       this.sessionManager.update(session, {
         state: SessionState.RUNNING,
@@ -391,6 +468,8 @@ export class Orchestrator extends EventEmitter {
         resumed: !engineIsFresh,
         taskId: activeTaskId,
       });
+      this.lifecycle?.transition(project.name, 'executing',
+        activeTaskId ? `task "${activeTaskId}" running on ${agent.id}` : `running on ${agent.id}`);
 
       // ── The heart of the safety rules ─────────────────────────────────
       // The agent is alive: we wait. No timeouts, no health-kills, no
@@ -400,6 +479,7 @@ export class Orchestrator extends EventEmitter {
 
       this.activeRun = null;
       this.supervisor.unwatch();
+      this.agentHealth.recordRun(agent.id, exitInfo.durationMs); // Phase 10H utilization
       lastActivity = this.statusManager.get().activity.currentTask ?? lastActivity;
 
       const verdict = classifyExit(exitInfo, driver.exitPatterns);
@@ -462,6 +542,8 @@ export class Orchestrator extends EventEmitter {
       sessionId: session.id,
       state: session.state,
     });
+    this.lifecycle?.transition(project.name, 'cancelled',
+      'stopped by operator (session preserved — the next start resumes)');
     return { complete: false, session, reason: 'stopped by operator' };
   }
 
@@ -483,6 +565,18 @@ export class Orchestrator extends EventEmitter {
           return this.handleTaskCompletion({ project, session, exitInfo, finalText, progress, signal });
         }
 
+        // Phase 10A (legacy missions get the same protections as tasks): a
+        // presented plan pauses for review; a human-action situation pauses
+        // for the owner instead of terminally blocking.
+        const plan = await this.maybeReviewPlan({
+          project, session, finalText, taskId: null, signal,
+        });
+        if (plan.handled) return plan.outcome;
+        const human = await this.maybePauseForHumanAction({
+          project, session, blocked: progress.blocked, taskId: null, signal,
+        });
+        if (human.handled) return human.outcome;
+
         // Did the agent declare the whole MISSION finished (not just this run)?
         const marker = project.mission.completionMarker;
         if (marker && finalText.includes(marker)) {
@@ -491,6 +585,7 @@ export class Orchestrator extends EventEmitter {
           this.statusManager.set({ orchestrator: { state: 'mission-complete' } });
           const summary = exitInfo.resultText ?? 'Mission complete.';
           this.logger.info('Mission complete', { project: project.name });
+          this.lifecycle?.transition(project.name, 'completed', 'completion marker found');
           this.emit('mission:complete', { project: project.name, session, summary });
           return {
             done: true,
@@ -637,6 +732,24 @@ export class Orchestrator extends EventEmitter {
     const taskEntry = this.taskQueueStore.current(queue);
     const taskDef = taskEntry;
 
+    // Phase 10A: a run that PRESENTED AN IMPLEMENTATION PLAN is reviewed,
+    // not verified — the plan marker explicitly means "nothing implemented
+    // yet; here is what I intend to do".
+    const plan = await this.maybeReviewPlan({
+      project, session, finalText, taskId: taskDef.id, signal,
+    });
+    if (plan.handled) return plan.outcome;
+
+    // Phase 10A: a human-action situation (login, CAPTCHA, browser prompt,
+    // ...) pauses gracefully — notify the owner, wait for DONE, continue —
+    // instead of the terminal block those categories used to hit.
+    const human = await this.maybePauseForHumanAction({
+      project, session, blocked: progress.blocked, taskId: taskDef.id, signal,
+    });
+    if (human.handled) return human.outcome;
+
+    this.lifecycle?.transition(project.name, 'verifying', `task "${taskDef.id}" run finished`);
+
     const verifyResult = taskDef.verify.length > 0
       ? runVerifiers(taskDef.verify, {
         workingDirectory: project.workingDirectory,
@@ -650,6 +763,18 @@ export class Orchestrator extends EventEmitter {
     // Continuation Builder can tell the agent exactly why its last attempt
     // on THIS task wasn't accepted, even mid-retry.
     this.taskQueueStore.recordVerifyResult(queue, verifyResult);
+
+    // Phase 10F: verification failures are notifiable events (severity:
+    // warning), computed once here for the event, the exhausted-path block
+    // reason, and the logs.
+    const failedChecks = verifyResult.passed ? '' : verifyResult.results
+      .filter((r) => !r.passed).map((r) => `${r.type}: ${r.detail}`).join('; ');
+    if (!verifyResult.passed) {
+      this.emit('task:verification-failed', {
+        project: project.name, session, taskId: taskDef.id,
+        attempt: taskEntry.attempts, maxRuns: taskDef.maxRuns, failedChecks,
+      });
+    }
 
     if (verifyResult.passed) {
       const checkpoint = buildCheckpoint({
@@ -665,6 +790,9 @@ export class Orchestrator extends EventEmitter {
       });
       this.emit('task:done', { project: project.name, session, taskId: taskDef.id, checkpoint });
 
+      // Phase 10H: release this task's resource locks the moment it is done.
+      this.resourceLocks?.releaseAll({ project: project.name, taskId: taskDef.id });
+
       this.taskQueueStore.advance(queue);
       this.statusManager.syncTaskQueue(queue);
 
@@ -674,6 +802,7 @@ export class Orchestrator extends EventEmitter {
         this.statusManager.set({ orchestrator: { state: 'mission-complete' } });
         const summary = exitInfo.resultText ?? 'Mission complete.';
         this.logger.info('Mission complete (all tasks done)', { project: project.name });
+        this.lifecycle?.transition(project.name, 'completed', 'all tasks completed and verified');
         this.emit('mission:complete', { project: project.name, session, summary });
         return {
           done: true,
@@ -685,6 +814,20 @@ export class Orchestrator extends EventEmitter {
       if (this.stopRequested) return this.stoppedMidWait(session);
 
       const nextTask = this.taskQueueStore.current(queue);
+      // Phase 10H: when the next task routes to a DIFFERENT agent, leave it
+      // an explicit handoff note (folded into that agent's first briefing).
+      if (this.messageBus && session.currentAgentId) {
+        const { agent: nextAgent } = selectAgent(nextTask, this.agentRegistry, project);
+        if (nextAgent.id !== session.currentAgentId) {
+          this.messageBus.post(project.name, {
+            from: session.currentAgentId,
+            to: nextAgent.id,
+            topic: 'handoff',
+            text: `Task "${taskDef.id}" is done after ${taskEntry.attempts} attempt(s). ` +
+              `${checkpoint.summary || 'No summary was produced.'}`,
+          });
+        }
+      }
       this.resumeSession(session, `task "${taskDef.id}" done; starting task "${nextTask.id}"`);
       return { done: false, consecutiveCrashes: 0, lastActivity: `starting task ${nextTask.id}` };
     }
@@ -727,6 +870,8 @@ export class Orchestrator extends EventEmitter {
       await this.interRunDelay(signal);
       if (this.stopRequested) return this.stoppedMidWait(session);
 
+      this.lifecycle?.transition(project.name, 'fixing',
+        `task "${taskDef.id}" attempt ${taskEntry.attempts}/${taskDef.maxRuns} failed verification`);
       this.resumeSession(
         session,
         `task "${taskDef.id}" verification failed ` +
@@ -744,8 +889,6 @@ export class Orchestrator extends EventEmitter {
     this.taskQueueStore.markFailed(queue, checkpoint);
     this.agentHealth.recordOutcome(session.currentAgentId, 'failed', taskEntry.attempts);
     this.statusManager.syncTaskQueue(queue);
-    const failedChecks = verifyResult.results.filter((r) => !r.passed)
-      .map((r) => `${r.type}: ${r.detail}`).join('; ');
     return this.block(project, session, {
       reason: `Task "${taskDef.id}" failed verification after ${taskEntry.attempts} ` +
         `attempts (max ${taskDef.maxRuns}).`,
@@ -801,6 +944,11 @@ export class Orchestrator extends EventEmitter {
       run: session.runs,
       cause: verdict.cause,
       exitReason,
+      // Phase 10: run duration + handling agent, for utilization stats,
+      // duration estimates (implementation summaries), and self-improvement
+      // analysis (slow agents, verification bottlenecks).
+      durationMs: exitInfo.durationMs,
+      agentId: session.currentAgentId ?? null,
       progressed,
       confidence: confidence.level,
       confidenceScore: confidence.score,
@@ -852,7 +1000,7 @@ export class Orchestrator extends EventEmitter {
    * failures, and (task-scoped) any archived history for this task id from
    * an earlier, now-superseded plan.
    */
-  buildContinuationPrompt({ project, task, reason }) {
+  buildContinuationPrompt({ project, task, reason, agentMessages = [] }) {
     if (!this.briefingConfig.enabled) {
       return task
         ? (task.continuePrompt ?? project.mission.continuePrompt)
@@ -865,10 +1013,243 @@ export class Orchestrator extends EventEmitter {
       const priorAttempts = this.memoryStore.taskHistoryFor(project.name, task.id);
       return buildTaskContinuation({
         project, queue: this.taskQueueState, task, reason, recentRuns,
-        memoryNotes, activeFailures, priorAttempts,
+        memoryNotes, activeFailures, priorAttempts, agentMessages,
       });
     }
     return buildLegacyContinuation({ project, reason, recentRuns, memoryNotes, activeFailures });
+  }
+
+  // ── Phase 10A/10H helpers ─────────────────────────────────────────────
+
+  /**
+   * Phase 10A: gate a task's FIRST launch behind its `approval` category.
+   * No manager / no category / already granted ⇒ proceed untouched.
+   *
+   * @returns {Promise<{proceed: boolean, result?: object}>} `result` is the
+   *   supervision outcome when the mission must end here (rejection/stop).
+   */
+  async gateTaskApproval({ project, session, taskEntry }) {
+    if (!this.approvalManager || !taskEntry?.approval) return { proceed: true };
+    if (taskEntry.approvalGranted || taskEntry.attempts > 0) return { proceed: true };
+
+    const { approved, request } = await this.approvalManager.requestApproval({
+      project: project.name,
+      category: taskEntry.approval,
+      title: `Approval required — task "${taskEntry.id}" (${project.name})`,
+      summary:
+        `Task "${taskEntry.id}"${taskEntry.objective && taskEntry.objective !== taskEntry.id
+          ? ` — ${taskEntry.objective}` : ''}\n` +
+        `Category: ${taskEntry.approval}\n` +
+        'This task will not run until you decide.',
+      taskId: taskEntry.id,
+      projectConfig: project,
+    });
+    if (approved) {
+      taskEntry.approvalGranted = true;
+      this.taskQueueStore.save(this.taskQueueState);
+      return { proceed: true };
+    }
+
+    this.statusManager.set({ orchestrator: { state: 'awaiting-approval' } });
+    const final = await this.approvalManager.waitForDecision(request, {
+      signal: this.stopController.signal,
+    });
+    this.statusManager.set({ orchestrator: { state: 'supervising' } });
+
+    if (this.stopRequested || final.status === 'pending') {
+      return { proceed: false, result: this.stoppedMidWait(session).result };
+    }
+    if (final.status === 'approved' || final.status === 'modified') {
+      taskEntry.approvalGranted = true;
+      if (final.decisionNote) taskEntry.approvalNote = final.decisionNote;
+      this.taskQueueStore.save(this.taskQueueState);
+      this.logger.info('Task approved by owner', {
+        project: project.name, taskId: taskEntry.id, decision: final.status, via: final.via,
+      });
+      return { proceed: true };
+    }
+    // Rejected / expired / cancelled: mark the task blocked (so the P7
+    // approve/skip operator overrides apply to it) and end the mission.
+    this.taskQueueStore.markBlocked(this.taskQueueState, {
+      at: new Date().toISOString(),
+      taskId: taskEntry.id,
+      objective: taskEntry.objective,
+      outcome: 'blocked',
+      attempts: taskEntry.attempts,
+      filesTouched: [],
+      filesDeleted: [],
+      verify: null,
+      summary: `Approval ${request.id} was ${final.status}` +
+        (final.decisionNote ? `: ${final.decisionNote}` : '.'),
+    });
+    this.statusManager.syncTaskQueue(this.taskQueueState);
+    return {
+      proceed: false,
+      result: this.block(project, session, {
+        reason: `Task "${taskEntry.id}" approval ${request.id} was ${final.status}` +
+          (final.decisionNote ? `: ${final.decisionNote}` : '.'),
+        category: 'approval-rejected',
+        hint: 'Adjust the task (or its approval category) and use "tasks approve" to retry, ' +
+          'or "tasks skip" to advance past it.',
+        taskId: taskEntry.id,
+      }).result,
+    };
+  }
+
+  /**
+   * Phase 10H: wait (abortably) until every resource the task declares is
+   * lockable, then lock them. Returns false only on an operator stop.
+   */
+  async acquireTaskResources({ project, session, task }) {
+    if (!this.resourceLocks || !task?.resources?.length) return true;
+    for (;;) {
+      const result = this.resourceLocks.acquireAll(task.resources, {
+        project: project.name, taskId: task.id, sessionId: session.id, pid: process.pid,
+      });
+      if (result.ok) return true;
+
+      const holders = result.conflicts
+        .map((c) => `${c.resource} (held by ${c.heldBy?.project ?? 'unknown'})`).join(', ');
+      this.logger.info('Waiting for locked resources', {
+        project: project.name, taskId: task.id, waitingOn: holders,
+      });
+      this.statusManager.set({ activity: { currentTask: `waiting for resources: ${holders}` } });
+      // eslint-disable-next-line no-await-in-loop
+      await sleep(this.coordinationConfig.lockPollMs ?? 10_000, this.stopController.signal);
+      if (this.stopRequested) return false;
+    }
+  }
+
+  /**
+   * Phase 10A: when a run's final output carries the plan marker, publish
+   * an implementation summary for review and pause until the owner
+   * decides. Returns `{handled: false}` when no plan was presented (or the
+   * approval system is absent/off) — the caller continues as before.
+   */
+  async maybeReviewPlan({ project, session, finalText, taskId, signal }) {
+    const effective = effectiveApprovalConfig(this.approvalsConfig, project);
+    if (!this.approvalManager || effective.enabled === false) return { handled: false };
+    const marker = effective.planMarker;
+    if (!marker || !finalText.includes(marker)) return { handled: false };
+
+    const summary = buildImplementationSummary({
+      project: project.name,
+      planText: finalText,
+      queue: this.taskQueueState,
+      averageRunMs: this.averageRunMs(project.name),
+    });
+    const { approved, request } = await this.approvalManager.requestImplementationReview({
+      project: project.name, summary, taskId, projectConfig: project,
+    });
+    if (approved) {
+      // Autonomous mode (or policy) let it through — continue immediately.
+      this.resumeSession(session, 'implementation plan auto-approved by policy; proceeding');
+      return {
+        handled: true,
+        outcome: { done: false, consecutiveCrashes: 0, lastActivity: 'plan approved — implement it now' },
+      };
+    }
+
+    this.statusManager.set({ orchestrator: { state: 'awaiting-approval' } });
+    const final = await this.approvalManager.waitForDecision(request, { signal });
+    this.statusManager.set({ orchestrator: { state: 'supervising' } });
+
+    if (this.stopRequested || final.status === 'pending') {
+      return { handled: true, outcome: this.stoppedMidWait(session) };
+    }
+    if (final.status === 'approved' || final.status === 'modified') {
+      const note = final.status === 'modified' && final.decisionNote
+        ? ` — apply these owner modifications: ${final.decisionNote}`
+        : '';
+      this.resumeSession(session, `implementation plan ${final.status} (${request.id})${note}`);
+      return {
+        handled: true,
+        outcome: {
+          done: false,
+          consecutiveCrashes: 0,
+          lastActivity: `plan ${final.status} by owner${note}; proceed with the implementation`,
+        },
+      };
+    }
+    return {
+      handled: true,
+      outcome: this.block(project, session, {
+        reason: `Implementation plan ${request.id} was ${final.status}` +
+          (final.decisionNote ? `: ${final.decisionNote}` : '.'),
+        category: 'plan-rejected',
+        hint: 'Revise the mission/task prompts per the owner’s feedback, then approve a retry.',
+        taskId,
+      }),
+    };
+  }
+
+  /**
+   * Phase 10A: when a run is blocked on something only a human can do
+   * (login, CAPTCHA, browser prompt, ...), pause gracefully: tell the
+   * owner what happened, why it stopped, what to do, and where — then
+   * continue the mission once they reply DONE. Categories are matched
+   * against `approvals.humanActionCategories`; everything else keeps the
+   * original terminal-block behavior.
+   */
+  async maybePauseForHumanAction({ project, session, blocked, taskId, signal }) {
+    const effective = effectiveApprovalConfig(this.approvalsConfig, project);
+    if (!this.approvalManager || effective.enabled === false) return { handled: false };
+    if (!blocked?.blocked) return { handled: false };
+    if (!(effective.humanActionCategories ?? []).includes(blocked.category)) {
+      return { handled: false };
+    }
+
+    const { approved, request } = await this.approvalManager.requestHumanAction({
+      project: project.name,
+      category: blocked.category,
+      what: `The agent cannot continue: ${blocked.category}.`,
+      why: blocked.evidence ?? 'See the run output for the agent’s own explanation.',
+      actionRequired: blocked.hint ?? 'Resolve the blocker manually.',
+      where: project.workingDirectory,
+      taskId,
+      projectConfig: project,
+    });
+    if (approved) return { handled: false }; // policy misconfigured to auto — fall through
+
+    this.statusManager.set({ orchestrator: { state: 'awaiting-human-action' } });
+    const final = await this.approvalManager.waitForDecision(request, { signal });
+    this.statusManager.set({ orchestrator: { state: 'supervising' } });
+
+    if (this.stopRequested || final.status === 'pending') {
+      return { handled: true, outcome: this.stoppedMidWait(session) };
+    }
+    if (final.status === 'done' || final.status === 'approved') {
+      // The human cleared the blocker — this pause was never "no progress".
+      this.sessionManager.update(session, { consecutiveNoProgress: 0 });
+      this.resumeSession(session, `human action ${request.id} completed; continuing`);
+      return {
+        handled: true,
+        outcome: {
+          done: false,
+          consecutiveCrashes: 0,
+          lastActivity: `the owner completed the required action (${blocked.category}); continue`,
+        },
+      };
+    }
+    return {
+      handled: true,
+      outcome: this.block(project, session, {
+        reason: `Human action ${request.id} was ${final.status} — the mission cannot continue.`,
+        category: blocked.category,
+        hint: blocked.hint,
+        evidence: blocked.evidence,
+        taskId,
+      }),
+    };
+  }
+
+  /** Average run duration from recent ledger entries (null when unknown). */
+  averageRunMs(projectName) {
+    const durations = this.progressLedger.recent(projectName, 10)
+      .map((r) => r.durationMs)
+      .filter((d) => Number.isFinite(d) && d > 0);
+    if (!durations.length) return null;
+    return Math.round(durations.reduce((sum, d) => sum + d, 0) / durations.length);
   }
 
   /**
@@ -923,6 +1304,7 @@ export class Orchestrator extends EventEmitter {
     this.sessionManager.closeSession(session, SessionState.BLOCKED);
     this.statusManager.syncSession(session);
     this.statusManager.set({ orchestrator: { state: 'blocked' } });
+    this.lifecycle?.transition(project.name, 'blocked', reason);
     this.logger.error('Mission blocked — stopping to avoid wasting usage', {
       project: project.name,
       reason,
@@ -976,6 +1358,7 @@ export class Orchestrator extends EventEmitter {
     });
     this.statusManager.syncSession(session);
     this.statusManager.set({ orchestrator: { state: 'gave-up' } });
+    this.lifecycle?.transition(project.name, 'failed', reason);
     this.logger.error('Giving up (session preserved for next start)', {
       project: project.name,
       reason,
@@ -1030,6 +1413,30 @@ export class Orchestrator extends EventEmitter {
       await this.activeRun.requestStop(reason);
     }
   }
+}
+
+/**
+ * Phase 10: extra sections appended to a FRESH prompt (first launch of a
+ * task/mission) — unread cross-agent messages and any owner note attached
+ * during approval. Continuation prompts carry these through the briefing
+ * instead; a fresh prompt is read straight from the prompt file, so the
+ * appendix is how this context reaches a first launch. Empty inputs return
+ * an empty string (the prompt is byte-for-byte unchanged — the pre-P10
+ * guarantee).
+ */
+function freshPromptAppendix({ messages = [], approvalNote } = {}) {
+  const lines = [];
+  if (approvalNote) {
+    lines.push('', '## Owner note (from the approval decision)', '', approvalNote);
+  }
+  if (messages.length) {
+    lines.push('', '## Messages from other agents on this mission', '');
+    for (const m of messages) {
+      const topic = m.topic ? ` [${m.topic}]` : '';
+      lines.push(`- from ${m.from}${topic}: ${m.text}`);
+    }
+  }
+  return lines.length ? `\n${lines.join('\n')}\n` : '';
 }
 
 /**

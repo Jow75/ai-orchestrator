@@ -62,6 +62,24 @@ export function resolvePaths(overrides = {}) {
   resolved.agentsDir = path.join(resolved.stateDir, 'agents');
   resolved.agentHealthFile = path.join(resolved.agentsDir, 'health.json');
 
+  // Phase 10: autonomous project management.
+  //  - approvals: the Approval Manager's per-project request stores (10A)
+  //  - lifecycle: standardized mission lifecycle state + history (10D)
+  //  - coordination: resource locks + cross-agent message bus (10H)
+  //  - releases: prepared release notes / verification reports (10J)
+  //  - statusDir: per-project status snapshots for parallel missions (10H)
+  //  - schedulesFile: user-editable scheduled missions (10G, config)
+  //  - schedulesStateFile: machine-owned schedule run history (10G, state)
+  resolved.approvalsDir = path.join(resolved.stateDir, 'approvals');
+  resolved.lifecycleDir = path.join(resolved.stateDir, 'lifecycle');
+  resolved.coordinationDir = path.join(resolved.stateDir, 'coordination');
+  resolved.releasesDir = path.join(resolved.stateDir, 'releases');
+  resolved.statusDir = path.join(resolved.stateDir, 'status');
+  resolved.schedulesFile = path.resolve(
+    root, overrides.schedulesFile ?? path.join(resolved.configDir, 'schedules.json')
+  );
+  resolved.schedulesStateFile = path.join(resolved.stateDir, 'schedules.json');
+
   return resolved;
 }
 
@@ -84,6 +102,11 @@ export function ensureRuntimeDirs(paths) {
     paths.memoryDir,
     paths.agentsDir,
     paths.pluginsDir,
+    paths.approvalsDir,
+    paths.lifecycleDir,
+    paths.coordinationDir,
+    paths.releasesDir,
+    paths.statusDir,
   ]) {
     fs.mkdirSync(dir, { recursive: true });
   }

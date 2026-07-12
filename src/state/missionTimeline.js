@@ -86,6 +86,29 @@ export class MissionTimeline {
 
     orchestrator.on('mission:complete', ({ project }) =>
       this.record(project, 'complete', 'Mission complete'));
+
+    orchestrator.on('task:verification-failed', ({ project, taskId, attempt, maxRuns }) =>
+      this.record(project, 'verify-failed', `Task "${taskId}" failed verification (attempt ${attempt}/${maxRuns})`));
+  }
+
+  /**
+   * Phase 10A: subscribe to an Approval Manager so approval pauses and
+   * decisions appear on the mission timeline alongside everything else.
+   * @param {import('node:events').EventEmitter} approvalManager
+   */
+  attachApprovals(approvalManager) {
+    approvalManager.on('approval:required', ({ project, request }) =>
+      this.record(project, 'approval-required',
+        `Approval required: ${request.id} (${request.category})`));
+
+    approvalManager.on('human-action:required', ({ project, request }) =>
+      this.record(project, 'human-action',
+        `Human action required: ${request.id} (${request.category})`));
+
+    approvalManager.on('approval:resolved', ({ project, request }) =>
+      this.record(project, 'approval-resolved',
+        `Approval ${request.id} ${request.status}` +
+        (request.decisionNote ? ` — ${request.decisionNote}` : '')));
   }
 
   /**

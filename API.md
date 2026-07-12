@@ -149,6 +149,62 @@ since these routes call them directly. `/api/control/stop` returns
 
 ---
 
+## 1c. Phase 10 endpoints
+
+Read endpoints are unauthenticated (local-only bind, as always); mutations
+require the same `Authorization: Bearer <token>` as P7's.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/approvals` | Pending approval requests across every project |
+| GET | `/api/approvals/:project` | One project's full request history (audit trail) |
+| POST | `/api/approvals/:project/:id/decide` 🔒 | Body `{decision, note?}` — `approved`/`rejected`/`modified`/`done` |
+| GET | `/api/lifecycle/:project` | Mission lifecycle: `{state, updatedAt, history:[{from,to,at,reason}]}` |
+| GET | `/api/coordination/:project` | `{locks, readyTasks, waitingOnDependencies, messages}` |
+| POST | `/api/messages/:project` 🔒 | Body `{from, to, topic?, text}` — post a cross-agent message |
+| GET | `/api/intelligence/:project` | 10E analysis: health, next work item, recommendations |
+| GET | `/api/improvement` | 10I analysis (optionally `?project=<name>`) |
+| GET | `/api/schedules` | Schedules merged with run state + next-due times |
+| POST | `/api/schedules/add` 🔒 | Body = one schedule definition |
+| POST | `/api/schedules/:id/remove` 🔒 | Delete a schedule |
+| POST | `/api/schedules/:id/enable` 🔒 | Body `{enabled: true\|false}` |
+
+`POST /api/control/stop` now stops EVERY parallel mission in the process
+(Phase 10H), not just the primary.
+
+### Approval request shape
+
+```json
+{
+  "id": "A7",
+  "project": "my-project",
+  "category": "implementation-plan",
+  "approvalClass": "implementation-review",
+  "title": "Implementation review — my-project",
+  "summary": "Objective: …\nEstimated duration: …",
+  "details": { "objective": "…", "tasks": ["…"], "risks": ["…"] },
+  "taskId": "T2",
+  "status": "pending",
+  "createdAt": "2026-07-12T09:00:00.000Z",
+  "decidedAt": null,
+  "decidedBy": null,
+  "decisionNote": null,
+  "via": null
+}
+```
+
+`status`: `pending` → `approved` | `rejected` | `modified` | `done` |
+`expired` | `cancelled`; policy-passed work is recorded as `auto-approved`.
+
+### Approval Manager events (subscribe like orchestrator events)
+
+- `approval:required` — `{ project, request, title, message }`
+- `approval:resolved` — `{ project, request }` (announced exactly once)
+- `human-action:required` — `{ project, request, title, message }`
+
+New orchestrator event: `task:verification-failed` —
+`{ project, session, taskId, attempt, maxRuns, failedChecks }`.
+
 ## 2. Plugin API
 
 A plugin is a module at `plugins/<name>.js` or `plugins/<name>/index.js`:

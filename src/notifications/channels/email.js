@@ -1,31 +1,43 @@
 /**
- * channels/email.js — Email channel (architecture placeholder).
+ * channels/email.js — Email channel (real SMTP delivery since Phase 10C).
  *
- * Email delivery needs an SMTP dependency and per-provider configuration
- * that this project has deliberately not taken on yet (see ROADMAP.md).
- * The channel exists so enabling it is a config change when it lands —
- * until then it reports clearly instead of failing silently.
+ * Long an architecture placeholder ("needs an SMTP dependency"), now backed
+ * by the project's own dependency-free SMTP client (../smtpClient.js —
+ * STARTTLS/implicit TLS, AUTH PLAIN/LOGIN). Configure under
+ * `notifications.email`:
  *
- * Tip: the webhook channel is the practical stand-in today (point it at an
- * email-bridge service such as ntfy.sh with email forwarding).
+ *   {
+ *     "enabled": true,
+ *     "smtp": { "host": "smtp.gmail.com", "port": 587, "starttls": true,
+ *               "user": "me@gmail.com", "pass": "<app password>" },
+ *     "from": "me@gmail.com",
+ *     "to": "me@gmail.com"
+ *   }
  */
 
+import { sendMail } from '../smtpClient.js';
+
 export class EmailChannel {
-  constructor({ config, logger }) {
+  /**
+   * @param {object} options
+   * @param {object} options.config - { smtp, from, to }.
+   * @param {object} options.logger
+   * @param {Function} [options.sendMailFn] - Injectable transport (tests).
+   */
+  constructor({ config, logger, sendMailFn }) {
     this.name = 'email';
     this.config = config;
     this.logger = logger;
-    this.warned = false;
+    this.sendMailFn = sendMailFn ?? sendMail;
   }
 
-  async send() {
-    if (!this.warned) {
-      this.warned = true; // one clear warning, not one per event
-      this.logger.warn(
-        'Email notifications are not implemented yet (see ROADMAP.md). ' +
-        'Use the webhook, discord, or telegram channel in the meantime.'
-      );
+  /** @param {{title: string, message: string}} notification */
+  async send({ title, message }) {
+    const { smtp, from, to } = this.config;
+    if (!smtp?.host || !from || !to) {
+      throw new Error('email channel enabled but "smtp.host"/"from"/"to" are not configured');
     }
+    await this.sendMailFn({ ...smtp, from, to, subject: title, text: message });
   }
 }
 

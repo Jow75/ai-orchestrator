@@ -1,13 +1,39 @@
 window.Views = window.Views || {};
 window.Views.missions = (function () {
+  // Phase 10D: the standardized lifecycle rendered as a strip + recent history.
+  const LIFECYCLE_BADGE = {
+    completed: 'done', approved: 'done', executing: 'active', verifying: 'active',
+    'agents-assigned': 'active', 'approval-pending': 'active', fixing: 'active',
+    blocked: 'failed', failed: 'failed', cancelled: 'idle',
+  };
+
+  function lifecycleSection(lifecycle, project) {
+    if (!lifecycle) return '';
+    const history = (lifecycle.history ?? []).slice(-6).reverse().map((entry) => `
+      <div class="sub">${OViz.fmtDate(entry.at)} — ${OViz.escapeHtml(entry.from ?? '(start)')} → <b>${OViz.escapeHtml(entry.to)}</b>${entry.reason ? ` · ${OViz.escapeHtml(entry.reason)}` : ''}</div>`).join('');
+    return `
+      <div class="section">
+        <div class="section-title">Mission lifecycle — ${OViz.escapeHtml(project)}</div>
+        <div class="card">
+          <div class="row">
+            <span class="badge ${LIFECYCLE_BADGE[lifecycle.state] ?? 'idle'}" style="font-size:13px">${OViz.escapeHtml(lifecycle.state)}</span>
+            <span class="sub">updated ${OViz.fmtDate(lifecycle.updatedAt)}</span>
+          </div>
+          <div style="margin-top:10px">${history || '<div class="sub">(no transitions yet)</div>'}</div>
+        </div>
+      </div>`;
+  }
+
   async function render(root, ctx) {
-    const [health, drivers, projects] = await Promise.all([
+    const [health, drivers, projects, lifecycle] = await Promise.all([
       ctx.api.getHealth(), ctx.api.listDrivers(), ctx.api.listProjects(),
+      ctx.project ? ctx.api.getLifecycle(ctx.project) : Promise.resolve(null),
     ]);
     const live = Boolean(health?.ok);
     const current = projects.find((p) => p.name === ctx.project);
 
     root.innerHTML = `
+      ${lifecycleSection(lifecycle, ctx.project)}
       <div class="section">
         <div class="section-title">Mission control</div>
         <div class="card">

@@ -50,6 +50,14 @@ const HANDLERS = {
   'token:get': () => bridge.getApiToken(),
   'token:rotate': () => bridge.rotateApiToken(),
 
+  // Phase 10 surfaces.
+  'approvals:list': (project) => bridge.getApprovals(project),
+  'approvals:decide': (project, id, decision, note) => bridge.decideApproval(project, id, decision, note),
+  'lifecycle:get': (project) => bridge.getLifecycle(project),
+  'coordination:get': (project) => bridge.getCoordination(project),
+  'intelligence:get': (project) => bridge.getIntelligence(project),
+  'schedules:get': () => bridge.getSchedules(),
+
   'logs:files': () => logTail.listFiles(),
   'logs:default-file': () => logTail.defaultFile(),
   'logs:poll': (filename) => logTail.poll(filename),

@@ -20,6 +20,11 @@ import helmet from 'helmet';
 import cors from 'cors';
 import { requireAuth } from './apiAuth.js';
 import { validateSingleTask } from '../mission/missionPlan.js';
+import { readyTasks, blockedByDependencies } from '../coordination/dependencyGraph.js';
+import { ProjectIntelligence } from '../intelligence/projectIntelligence.js';
+import { SelfImprovement } from '../intelligence/selfImprovement.js';
+import { MissionScheduler } from '../scheduler/missionScheduler.js';
+import { ProgressLedger } from '../progress/progressLedger.js';
 
 export class DashboardServer {
   /**
@@ -43,6 +48,7 @@ export class DashboardServer {
   constructor({
     config, logger, statusManager, sessionManager, configManager, timeline, taskQueue, memoryStore,
     agentRegistry, agentHealth, orchestrator, apiToken,
+    approvalStore, approvalManager, lifecycle, resourceLocks, messageBus, paths, stopAll,
   }) {
     this.config = config;
     this.logger = logger;
@@ -56,6 +62,14 @@ export class DashboardServer {
     this.agentHealth = agentHealth; // Phase 9 (optional)
     this.orchestrator = orchestrator;
     this.apiToken = apiToken;
+    // Phase 10 (all optional — endpoints 503 cleanly when absent).
+    this.approvalStore = approvalStore;
+    this.approvalManager = approvalManager;
+    this.lifecycle = lifecycle;
+    this.resourceLocks = resourceLocks;
+    this.messageBus = messageBus;
+    this.paths = paths;
+    this.stopAll = stopAll; // stops every parallel mission (10H)
     this.server = null;
     this.app = this.buildApp();
   }
@@ -141,6 +155,100 @@ export class DashboardServer {
       if (!this.agentRegistry || !this.agentHealth) return res.json([]);
       res.json(this.agentHealth.report(this.rosterFor(req.query.project)));
     });
+
+    // ── Phase 10 read surfaces ───────────────────────────────────────────
+
+    // 10A: approval requests — all pending, or one project's full history.
+    app.get('/api/approvals', (req, res) => {
+      res.json(this.approvalStore ? this.approvalStore.pendingAll() : []);
+    });
+    app.get('/api/approvals/:project', (req, res) => {
+      res.json(this.approvalStore ? this.approvalStore.list(req.params.project) : []);
+    });
+
+    // 10D: mission lifecycle — current state + transition history.
+    app.get('/api/lifecycle/:project', (req, res) => {
+      res.json(this.lifecycle ? this.lifecycle.get(req.params.project) : null);
+    });
+
+    // 10H: coordination — held locks, ready set, dependency stalls, messages.
+    app.get('/api/coordination/:project', (req, res) => {
+      const queue = this.taskQueue?.load(req.params.project) ?? null;
+      res.json({
+        locks: this.resourceLocks ? this.resourceLocks.held() : [],
+        readyTasks: queue ? readyTasks(queue).map((t) => t.id) : [],
+        waitingOnDependencies: queue ? blockedByDependencies(queue) : [],
+        messages: this.messageBus ? this.messageBus.list(req.params.project) : [],
+      });
+    });
+
+    // 10E: project intelligence (recommendations; never executes anything).
+    app.get('/api/intelligence/:project', (req, res) => {
+      const intelligence = this.buildIntelligence();
+      if (!intelligence) return res.status(503).json({ error: 'Intelligence unavailable.' });
+      try {
+        res.json(intelligence.analyze(req.params.project));
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    // 10I: self-improvement analysis (all projects, or ?project=<name>).
+    app.get('/api/improvement', (req, res) => {
+      const improvement = this.buildImprovement();
+      if (!improvement) return res.status(503).json({ error: 'Improvement analysis unavailable.' });
+      res.json(improvement.analyze(req.query.project || undefined));
+    });
+
+    // 10G: schedules — definitions merged with run state and next-due times.
+    app.get('/api/schedules', (req, res) => {
+      const scheduler = this.buildScheduler();
+      if (!scheduler) return res.status(503).json({ error: 'Scheduler unavailable.' });
+      res.json(scheduler.report());
+    });
+  }
+
+  /** Lazily assemble the 10E analyzer over the same read-only views. */
+  buildIntelligence() {
+    if (!this.paths) return null;
+    return new ProjectIntelligence({
+      configManager: this.configManager,
+      sessionManager: this.sessionManager,
+      taskQueue: this.taskQueue,
+      memoryStore: this.memoryStore,
+      ledger: new ProgressLedger({ ledgerDir: this.paths.ledgerDir, logger: this.logger }),
+      agentRegistry: this.agentRegistry,
+      agentHealth: this.agentHealth,
+      approvalStore: this.approvalStore,
+      lifecycle: this.lifecycle,
+      logger: this.logger,
+    });
+  }
+
+  /** Lazily assemble the 10I analyzer. */
+  buildImprovement() {
+    if (!this.paths) return null;
+    return new SelfImprovement({
+      listProjects: () => this.configManager.listProjects(),
+      ledger: new ProgressLedger({ ledgerDir: this.paths.ledgerDir, logger: this.logger }),
+      memoryStore: this.memoryStore,
+      taskQueue: this.taskQueue,
+      agentHealth: this.agentHealth,
+      approvalStore: this.approvalStore,
+      logger: this.logger,
+    });
+  }
+
+  /** Lazily assemble a read/report-only scheduler view. */
+  buildScheduler() {
+    if (!this.paths) return null;
+    return new MissionScheduler({
+      schedulesFile: this.paths.schedulesFile,
+      stateFile: this.paths.schedulesStateFile,
+      heartbeatFile: this.paths.heartbeatFile,
+      rootDir: this.paths.root,
+      logger: this.logger,
+    });
   }
 
   /** Resolve an agent roster for the API (project-scoped or global). */
@@ -169,12 +277,62 @@ export class DashboardServer {
     const auth = requireAuth(this.apiToken);
 
     app.post('/api/control/stop', auth, async (req, res) => {
-      if (!this.orchestrator) {
+      if (!this.orchestrator && !this.stopAll) {
         res.status(503).json({ error: 'No live orchestrator to stop.' });
         return;
       }
-      await this.orchestrator.stop(req.body?.reason ?? 'stopped via API');
+      const reason = req.body?.reason ?? 'stopped via API';
+      // Phase 10H: stop EVERY parallel mission when the App provided the
+      // aggregate; the single-orchestrator path is unchanged otherwise.
+      if (this.stopAll) await this.stopAll(reason);
+      else await this.orchestrator.stop(reason);
       res.json({ ok: true });
+    });
+
+    // ── Phase 10 mutating surfaces ───────────────────────────────────────
+
+    // 10A: decide an approval request (approve/reject/modify/done).
+    app.post('/api/approvals/:project/:id/decide', auth, (req, res) => {
+      if (!this.approvalStore) {
+        return res.status(503).json({ error: 'Approval store not available.' });
+      }
+      const { decision, note } = req.body ?? {};
+      const params = { decision, note, by: 'api', via: 'api' };
+      const result = this.approvalManager
+        ? this.approvalManager.resolve(req.params.project, req.params.id, params)
+        : this.approvalStore.resolve(req.params.project, req.params.id, params);
+      res.status(result.ok ? 200 : 400).json(result);
+    });
+
+    // 10H: post a cross-agent message.
+    app.post('/api/messages/:project', auth, (req, res) => {
+      if (!this.messageBus) return res.status(503).json({ error: 'Message bus not available.' });
+      const { from, to, topic, text } = req.body ?? {};
+      if (!from || !to || !text) {
+        return res.status(400).json({ ok: false, reason: '"from", "to", and "text" are required.' });
+      }
+      const message = this.messageBus.post(req.params.project, { from, to, topic, text });
+      res.json({ ok: true, message });
+    });
+
+    // 10G: schedule management.
+    app.post('/api/schedules/add', auth, (req, res) => {
+      const scheduler = this.buildScheduler();
+      if (!scheduler) return res.status(503).json({ error: 'Scheduler unavailable.' });
+      const result = scheduler.add(req.body ?? {});
+      res.status(result.ok ? 200 : 400).json(result);
+    });
+    app.post('/api/schedules/:id/remove', auth, (req, res) => {
+      const scheduler = this.buildScheduler();
+      if (!scheduler) return res.status(503).json({ error: 'Scheduler unavailable.' });
+      const result = scheduler.remove(req.params.id);
+      res.status(result.ok ? 200 : 404).json(result);
+    });
+    app.post('/api/schedules/:id/enable', auth, (req, res) => {
+      const scheduler = this.buildScheduler();
+      if (!scheduler) return res.status(503).json({ error: 'Scheduler unavailable.' });
+      const result = scheduler.setEnabled(req.params.id, req.body?.enabled !== false);
+      res.status(result.ok ? 200 : 404).json(result);
     });
 
     app.post('/api/tasks/:project/add', auth, (req, res) => {

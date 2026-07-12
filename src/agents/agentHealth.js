@@ -31,6 +31,10 @@ function emptyRecord(agentId) {
     totalAttempts: 0,
     lastUsedAt: null,
     lastOutcome: null,
+    // Phase 10H: utilization — how many runs this agent has executed and
+    // for how long in total (busy time), for the coordination view.
+    totalRuns: 0,
+    totalRunMs: 0,
   };
 }
 
@@ -128,6 +132,22 @@ export class AgentHealth {
   }
 
   /**
+   * Phase 10H: record one executed run's busy time for utilization stats.
+   * Never throws (same contract as recordOutcome).
+   *
+   * @param {string} agentId
+   * @param {number} durationMs
+   */
+  recordRun(agentId, durationMs) {
+    if (!this.healthFile || !Number.isFinite(durationMs)) return;
+    const record = this.get(agentId);
+    this.update(agentId, {
+      totalRuns: (record.totalRuns ?? 0) + 1,
+      totalRunMs: (record.totalRunMs ?? 0) + Math.max(0, durationMs),
+    });
+  }
+
+  /**
    * A merged view: one record per agent in `agents`, backfilled with a
    * zeroed record for any never-seen agent, for the CLI/API/UI to render.
    *
@@ -136,14 +156,18 @@ export class AgentHealth {
    */
   report(agents) {
     const all = this.load();
-    return agents.map((a) => ({
-      ...emptyRecord(a.id),
-      ...(all[a.id] ?? {}),
-      role: a.role,
-      driver: a.driver,
-      capabilities: a.capabilities,
-      enabled: a.enabled,
-    }));
+    return agents.map((a) => {
+      const record = { ...emptyRecord(a.id), ...(all[a.id] ?? {}) };
+      return {
+        ...record,
+        role: a.role,
+        driver: a.driver,
+        capabilities: a.capabilities,
+        enabled: a.enabled,
+        // Phase 10H: derived utilization convenience for CLI/API/desktop.
+        avgRunMs: record.totalRuns > 0 ? Math.round(record.totalRunMs / record.totalRuns) : null,
+      };
+    });
   }
 }
 
