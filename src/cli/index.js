@@ -70,6 +70,7 @@ import NotificationEngine from '../notifications/notificationEngine.js';
 import { createPrompter } from '../onboarding/prompts.js';
 import { runProjectWizard } from '../onboarding/projectWizard.js';
 import { runTelegramSetup, runEmailSetup } from '../onboarding/notifyWizard.js';
+import { runInit } from '../onboarding/init.js';
 
 /** Windows Task Scheduler task name used by `scheduler` commands. */
 const SCHEDULED_TASK_NAME = 'AI-Orchestrator Auto-Resume';
@@ -121,6 +122,35 @@ export function buildProgram() {
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
     .version('2.3.1');
+
+  program
+    .command('init')
+    .description('Guided first-run setup: create a project, connect your phone, and go (Phase 11)')
+    .action(async () => {
+      try {
+        const configManager = new ConfigManager();
+        const prompter = createPrompter();
+        try {
+          await runInit({
+            configManager,
+            prompter,
+            probe: probeEnvironment,
+            notifyTest: () => testNotificationChannels(configManager),
+            autoResume: process.platform === 'win32' ? {
+              isInstalled: async () => spawnSync(
+                'schtasks', ['/Query', '/TN', SCHEDULED_TASK_NAME],
+                { encoding: 'utf8', windowsHide: true }
+              ).status === 0,
+              install: async () => { runSchedulerScript('install-task.ps1'); },
+            } : null,
+          });
+        } finally {
+          prompter.close();
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
 
   program
     .command('start')
@@ -1605,6 +1635,55 @@ function runSchedulerScript(scriptName, project) {
 }
 
 /** Environment/config diagnostics for `doctor`. */
+/** Environment probes shared by `init` (and mirrored by `doctor`). */
+async function probeEnvironment() {
+  const steps = [];
+  const major = Number(process.versions.node.split('.')[0]);
+  steps.push({
+    label: `Node.js ${process.version}`,
+    ok: major >= 18,
+    detail: major >= 18 ? 'supported' : 'need >= 18',
+  });
+  try {
+    const registry = new DriverRegistry({ logger: silentLogger });
+    const installation = await registry.getDriver('claude').checkInstallation();
+    steps.push({
+      label: 'Claude Code engine',
+      ok: installation.ok,
+      detail: installation.version ?? installation.error,
+    });
+  } catch (error) {
+    steps.push({ label: 'Claude Code engine', ok: false, detail: error.message });
+  }
+  return steps;
+}
+
+/** Send a live test through every enabled channel; returns per-channel results. */
+async function testNotificationChannels(configManager) {
+  configManager.load();
+  const engine = new NotificationEngine({
+    config: configManager.get('notifications', {}),
+    logger: silentLogger,
+  });
+  const results = [];
+  for (const channel of engine.channels) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await channel.send({
+        title: 'AI-Orchestrator — setup test',
+        message: 'Setup complete — this is a test notification.',
+        event: 'notify:test',
+        payload: {},
+        severity: 'info',
+      });
+      results.push({ name: channel.name, ok: true });
+    } catch (error) {
+      results.push({ name: channel.name, ok: false, error: error.message });
+    }
+  }
+  return results;
+}
+
 async function runDoctor() {
   const check = (ok, label, detail = '') => {
     const mark = ok ? chalk.green('✔') : chalk.red('✘');
