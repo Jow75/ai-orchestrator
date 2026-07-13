@@ -1,0 +1,166 @@
+/**
+ * Tests for the Telegram/email onboarding wizards (Phase 11C/11D). All
+ * network is faked, so these run offline and fast. They assert the wizards
+ * discover the chat id, translate SMTP errors, and write exactly the
+ * config/local.json blocks the app's provider wiring expects.
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { ConfigManager } from '../src/config/configManager.js';
+import { createPrompter } from '../src/onboarding/prompts.js';
+import { runTelegramSetup, runEmailSetup } from '../src/onboarding/notifyWizard.js';
+
+function tmpRoot() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'aio-notify-'));
+}
+
+/** Prompter over a scripted answer queue + captured output. */
+function harness(root, answers) {
+  const queue = [...answers];
+  const out = [];
+  const prompter = createPrompter({
+    ask: async () => {
+      if (!queue.length) throw new Error('wizard asked for more input than supplied');
+      return queue.shift();
+    },
+    output: { write: (s) => out.push(s) },
+  });
+  return { prompter, out: () => out.join(''), configManager: new ConfigManager({ rootDir: root }) };
+}
+
+/** A fake Telegram API: per-method queues of response bodies. */
+function fakeTelegram(map) {
+  const queues = {};
+  for (const k of Object.keys(map)) queues[k] = [...map[k]];
+  return async (url) => {
+    const method = ['getMe', 'getUpdates', 'sendMessage'].find((m) => url.includes(`/${m}`)) ?? 'unknown';
+    const queue = queues[method] ?? [];
+    const body = queue.length > 1 ? queue.shift() : (queue[0] ?? { ok: true, result: {} });
+    return { ok: body.ok !== false, status: body.status ?? 200, json: async () => body };
+  };
+}
+
+function localConfig(root) {
+  const file = path.join(root, 'config', 'local.json');
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+}
+
+const immediate = async () => {};
+
+test('telegram: validates token, discovers chat id, writes local.json', async () => {
+  const root = tmpRoot();
+  const { prompter, configManager } = harness(root, ['123:ABC', '']);
+  const fetchFn = fakeTelegram({
+    getMe: [{ ok: true, result: { username: 'jowgei_bot' } }],
+    getUpdates: [{ ok: true, result: [{ message: { chat: { id: 6522731464 } } }] }],
+    sendMessage: [{ ok: true, result: {} }],
+  });
+  const result = await runTelegramSetup({ configManager, prompter, fetchFn, sleepFn: immediate, pollAttempts: 3 });
+  assert.equal(result.chatId, '6522731464');
+
+  const cfg = localConfig(root);
+  assert.deepEqual(cfg.notifications.telegram, { enabled: true, botToken: '123:ABC', chatId: '6522731464' });
+  assert.equal(cfg.approvals.providers.telegram.enabled, true);
+});
+
+test('telegram: rejects a bad token then accepts a good one', async () => {
+  const root = tmpRoot();
+  const { prompter, out, configManager } = harness(root, ['bad', 'y', 'good', '']);
+  const fetchFn = fakeTelegram({
+    getMe: [{ ok: false, description: 'Unauthorized' }, { ok: true, result: { username: 'bot' } }],
+    getUpdates: [{ ok: true, result: [{ message: { chat: { id: 42 } } }] }],
+    sendMessage: [{ ok: true, result: {} }],
+  });
+  const result = await runTelegramSetup({ configManager, prompter, fetchFn, sleepFn: immediate, pollAttempts: 3 });
+  assert.equal(result.chatId, '42');
+  assert.equal(result.botToken, 'good');
+  assert.match(out(), /Unauthorized/);
+});
+
+test('telegram: gives up cleanly when no message arrives (no config written)', async () => {
+  const root = tmpRoot();
+  const { prompter, out, configManager } = harness(root, ['tok', '']);
+  const fetchFn = fakeTelegram({
+    getMe: [{ ok: true, result: { username: 'bot' } }],
+    getUpdates: [{ ok: true, result: [] }],
+  });
+  const result = await runTelegramSetup({ configManager, prompter, fetchFn, sleepFn: immediate, pollAttempts: 2 });
+  assert.equal(result, null);
+  assert.equal(localConfig(root), null); // nothing persisted
+  assert.match(out(), /No message detected/);
+});
+
+test('telegram: detects an active webhook and explains the fix', async () => {
+  const root = tmpRoot();
+  const { prompter, out, configManager } = harness(root, ['tok', '']);
+  const fetchFn = fakeTelegram({
+    getMe: [{ ok: true, result: { username: 'bot' } }],
+    getUpdates: [{ ok: false, description: "Conflict: can't use getUpdates while webhook is active" }],
+  });
+  const result = await runTelegramSetup({ configManager, prompter, fetchFn, sleepFn: immediate, pollAttempts: 2 });
+  assert.equal(result, null);
+  assert.match(out(), /deleteWebhook/);
+});
+
+test('email: gmail happy path writes local.json with STARTTLS on 587', async () => {
+  const root = tmpRoot();
+  const { prompter, configManager } = harness(root, [
+    'gmail', 'me@gmail.com', 'apppassword16ch', '', '',
+  ]);
+  const sent = [];
+  const result = await runEmailSetup({ configManager, prompter, sendMailFn: async (m) => { sent.push(m); } });
+  assert.ok(result);
+  assert.equal(sent.length, 1);
+  const cfg = localConfig(root);
+  assert.deepEqual(cfg.notifications.email.smtp, {
+    host: 'smtp.gmail.com', port: 587, secure: false, starttls: true, user: 'me@gmail.com', pass: 'apppassword16ch',
+  });
+  assert.equal(cfg.notifications.email.from, 'me@gmail.com'); // defaulted to user
+  assert.equal(cfg.notifications.email.to, 'me@gmail.com');
+  assert.equal(cfg.approvals.providers.email.enabled, true);
+});
+
+test('email: an auth failure surfaces the App Password remedy, saves if confirmed', async () => {
+  const root = tmpRoot();
+  const { prompter, out, configManager } = harness(root, [
+    'gmail', 'me@gmail.com', 'wrongpass', '', '', 'y',
+  ]);
+  const result = await runEmailSetup({
+    configManager, prompter,
+    sendMailFn: async () => { throw new Error('535 Username and Password not accepted'); },
+  });
+  assert.ok(result); // saved anyway
+  assert.match(out(), /App Password/);
+  assert.equal(localConfig(root).notifications.email.enabled, true);
+});
+
+test('email: an auth failure not confirmed writes nothing', async () => {
+  const root = tmpRoot();
+  const { prompter, configManager } = harness(root, [
+    'gmail', 'me@gmail.com', 'wrongpass', '', '', 'n',
+  ]);
+  const result = await runEmailSetup({
+    configManager, prompter,
+    sendMailFn: async () => { throw new Error('535 auth failed'); },
+  });
+  assert.equal(result, null);
+  assert.equal(localConfig(root), null);
+});
+
+test('email: other-provider path captures host/port/implicit-TLS', async () => {
+  const root = tmpRoot();
+  const { prompter, configManager } = harness(root, [
+    'other', 'mail.example.com', '465', 'y', 'user@example.com', 'secret', 'from@example.com', 'to@example.com',
+  ]);
+  const result = await runEmailSetup({ configManager, prompter, sendMailFn: async () => {} });
+  assert.ok(result);
+  const smtp = localConfig(root).notifications.email.smtp;
+  assert.equal(smtp.host, 'mail.example.com');
+  assert.equal(smtp.port, 465);
+  assert.equal(smtp.secure, true);
+  assert.equal(smtp.starttls, false);
+});

@@ -69,6 +69,7 @@ import NotificationEngine from '../notifications/notificationEngine.js';
 // Phase 11 onboarding wizards (CLI-first).
 import { createPrompter } from '../onboarding/prompts.js';
 import { runProjectWizard } from '../onboarding/projectWizard.js';
+import { runTelegramSetup, runEmailSetup } from '../onboarding/notifyWizard.js';
 
 /** Windows Task Scheduler task name used by `scheduler` commands. */
 const SCHEDULED_TASK_NAME = 'AI-Orchestrator Auto-Resume';
@@ -732,6 +733,32 @@ export function buildProgram() {
           }
         }
         console.log('');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  notify
+    .command('setup')
+    .argument('<channel>', 'telegram | email')
+    .description('Guided setup for a remote channel — validates, sends a test, writes config/local.json')
+    .action(async (channel) => {
+      try {
+        const configManager = new ConfigManager();
+        const prompter = createPrompter();
+        try {
+          if (channel === 'telegram') {
+            await runTelegramSetup({ configManager, prompter });
+          } else if (channel === 'email') {
+            await runEmailSetup({ configManager, prompter });
+          } else {
+            const error = new Error(`Unknown channel "${channel}". Use "telegram" or "email".`);
+            error.userFacing = true;
+            throw error;
+          }
+        } finally {
+          prompter.close();
+        }
       } catch (error) {
         fail(error);
       }
