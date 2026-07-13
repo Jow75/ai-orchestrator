@@ -66,6 +66,9 @@ import ReleaseManager from '../release/releaseManager.js';
 import ApprovalManager from '../approvals/approvalManager.js';
 import { ProgressLedger } from '../progress/progressLedger.js';
 import NotificationEngine from '../notifications/notificationEngine.js';
+// Phase 11 onboarding wizards (CLI-first).
+import { createPrompter } from '../onboarding/prompts.js';
+import { runProjectWizard } from '../onboarding/projectWizard.js';
 
 /** Windows Task Scheduler task name used by `scheduler` commands. */
 const SCHEDULED_TASK_NAME = 'AI-Orchestrator Auto-Resume';
@@ -622,9 +625,10 @@ export function buildProgram() {
 
   projects
     .command('add')
-    .argument('<name>', 'project name')
-    .requiredOption('--dir <path>', 'working directory the agent operates in')
-    .requiredOption('--prompt <file>', 'mission prompt file (relative to --dir or absolute)')
+    .argument('[name]', 'project name (prompted for when --interactive)')
+    .option('-i, --interactive', 'create the project through guided prompts (recommended for a first project)')
+    .option('--dir <path>', 'working directory the agent operates in')
+    .option('--prompt <file>', 'mission prompt file (relative to --dir or absolute)')
     .option('--driver <id>', 'AI engine driver', 'claude')
     .option(
       '--permission-mode <mode>',
@@ -632,10 +636,32 @@ export function buildProgram() {
       '(acceptEdits, bypassPermissions, or "" to run read-only)',
       'acceptEdits'
     )
-    .description('Create a new project definition')
-    .action((name, options) => {
+    .description('Create a new project definition (add --interactive for a guided wizard)')
+    .action(async (name, options) => {
       try {
         const { configManager } = readOnlyContext();
+
+        // Guided path (Phase 11B): the wizard asks every question, creates
+        // the working dir / starter prompt, validates, and writes the file.
+        if (options.interactive) {
+          const prompter = createPrompter();
+          try {
+            await runProjectWizard({ configManager, prompter, name });
+          } finally {
+            prompter.close();
+          }
+          return;
+        }
+
+        // Non-interactive path (unchanged): --dir and --prompt are required.
+        if (!name || !options.dir || !options.prompt) {
+          const error = new Error(
+            'projects add needs <name>, --dir and --prompt — or run ' +
+            '"projects add --interactive" for a guided wizard.'
+          );
+          error.userFacing = true;
+          throw error;
+        }
         const definition = {
           driver: options.driver,
           workingDirectory: path.resolve(options.dir),
