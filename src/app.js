@@ -146,9 +146,12 @@ export class App {
 
     // Read-only view for the dashboard API; the orchestrator owns its own
     // TaskQueue instance for actually driving mission-mode supervision.
+    // The lifecycle recorder is shared so the API's operator overrides
+    // (approve/skip) keep the lifecycle record in sync.
     this.taskQueue = new TaskQueue({
       tasksDir: this.paths.tasksDir,
       logger: childLogger(this.logger, 'tasks'),
+      lifecycle: this.lifecycle,
     });
 
     // Read-only view for the dashboard API; the orchestrator owns its own

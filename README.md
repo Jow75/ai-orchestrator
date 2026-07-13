@@ -126,7 +126,8 @@ prompt (same conversation) → … → mission complete." See
 | `resume [project]` | Resume only if something was interrupted (used at boot) |
 | `stop` | Gracefully stop the running orchestrator (session stays resumable) |
 | `status` | Live status snapshot |
-| `sessions [project]` | Active sessions / per-project history |
+| `sessions [project] [--abandon]` | Active sessions / per-project history; `--abandon` clears a stale session |
+| `notify test` | Send a test notification through every enabled channel (✔/✘ per channel) |
 | `timeline <project>` | Key events over the mission's lifetime |
 | `tasks list <project>` | Task queue for a multi-task mission |
 | `tasks add/remove/reorder` | Build or adjust a project's task queue at runtime |
@@ -164,6 +165,8 @@ a trading bot today and a website tomorrow without touching code. See
 
 | File | Contents |
 | --- | --- |
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Zero to first completed mission, step by step |
+| [docs/](docs/) | Guides: Telegram setup, email setup, remote approvals, desktop, CLI, FAQ |
 | [INSTALL.md](INSTALL.md) | Installation, auto-start setup |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every setting, with defaults |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Modules, design rules, data flow |

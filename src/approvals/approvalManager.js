@@ -241,17 +241,20 @@ export class ApprovalManager extends EventEmitter {
 
   /**
    * Pause until the owner decides (or the wait is aborted / times out).
-   * The poll cadence and timeout come from config; timeout 0 waits forever
-   * — a paused mission is always recoverable, exactly like a rate-limit wait.
+   * The poll cadence and timeout come from config — per-project
+   * `approvals.decisionPollMs`/`decisionTimeoutMs` override the globals
+   * when `projectConfig` is supplied; timeout 0 waits forever — a paused
+   * mission is always recoverable, exactly like a rate-limit wait.
    *
    * @param {object} request - The pending request.
-   * @param {{signal?: AbortSignal}} [options]
+   * @param {{signal?: AbortSignal, projectConfig?: object}} [options]
    * @returns {Promise<object>} The final request record. Status remains
    *   'pending' only when the wait was aborted (operator stop).
    */
-  async waitForDecision(request, { signal } = {}) {
-    const pollMs = this.config.decisionPollMs ?? 15_000;
-    const timeoutMs = this.config.decisionTimeoutMs ?? 0;
+  async waitForDecision(request, { signal, projectConfig } = {}) {
+    const effective = effectiveApprovalConfig(this.config, projectConfig);
+    const pollMs = effective.decisionPollMs ?? 15_000;
+    const timeoutMs = effective.decisionTimeoutMs ?? 0;
     const startedAt = Date.now();
 
     for (;;) {

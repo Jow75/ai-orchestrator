@@ -12,6 +12,7 @@ import path from 'node:path';
 import { TaskQueue } from '../src/mission/taskQueue.js';
 import { TaskState } from '../src/mission/taskState.js';
 import { MemoryStore } from '../src/memory/memoryStore.js';
+import { MissionLifecycle } from '../src/mission/missionLifecycle.js';
 import { silentLogger } from '../src/infra/logger.js';
 
 function queue() {
@@ -145,6 +146,53 @@ test('operatorSkip() marks a FAILED current task done-via-override and advances'
   assert.equal(state.tasks[0].checkpoint.outcome, 'operator-skipped');
   assert.equal(state.tasks[0].checkpoint.summary, 'confirmed manually, moving on');
   assert.equal(q.current(state).id, 'T2'); // advanced to the next task
+});
+
+test('operatorSkip() of the FINAL task syncs the lifecycle to completed (10.5 audit defect)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-tq-'));
+  const lifecycleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-tq-lc-'));
+  const lifecycle = new MissionLifecycle({ lifecycleDir, logger: silentLogger });
+  const q = new TaskQueue({ tasksDir: dir, logger: silentLogger, lifecycle });
+
+  let state = q.initialize('proj', [{ id: 'T1' }], 'sess-1');
+  state = q.recordAttempt(state);
+  state = q.markBlocked(state, { summary: 'stuck on final task' });
+  lifecycle.transition('proj', 'blocked', 'mission blocked');
+
+  const result = q.operatorSkip(state, 'T1', 'verified manually');
+  assert.equal(result.ok, true);
+  assert.equal(q.isComplete(state), true);
+  assert.equal(lifecycle.get('proj').state, 'completed'); // no longer stuck at blocked
+});
+
+test('operatorSkip() of a NON-final task syncs the lifecycle back to planned', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-tq-'));
+  const lifecycleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-tq-lc-'));
+  const lifecycle = new MissionLifecycle({ lifecycleDir, logger: silentLogger });
+  const q = new TaskQueue({ tasksDir: dir, logger: silentLogger, lifecycle });
+
+  let state = q.initialize('proj', PLAN, 'sess-1');
+  state = q.recordAttempt(state);
+  state = q.markBlocked(state, { summary: 'stuck' });
+  lifecycle.transition('proj', 'blocked', 'mission blocked');
+
+  assert.equal(q.operatorSkip(state, 'T1').ok, true);
+  assert.equal(lifecycle.get('proj').state, 'planned');
+});
+
+test('approveRetry() syncs the lifecycle back to planned', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-tq-'));
+  const lifecycleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-tq-lc-'));
+  const lifecycle = new MissionLifecycle({ lifecycleDir, logger: silentLogger });
+  const q = new TaskQueue({ tasksDir: dir, logger: silentLogger, lifecycle });
+
+  let state = q.initialize('proj', PLAN, 'sess-1');
+  state = q.recordAttempt(state);
+  state = q.markFailed(state, { summary: 'exhausted retries' });
+  lifecycle.transition('proj', 'failed', 'gave up');
+
+  assert.equal(q.approveRetry(state, 'T1').ok, true);
+  assert.equal(lifecycle.get('proj').state, 'planned');
 });
 
 test('operatorSkip() refuses a task that is not blocked/failed', () => {

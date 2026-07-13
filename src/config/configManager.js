@@ -85,6 +85,14 @@ export class ConfigManager {
       overrides = readJsonFile(globalFile);
     }
 
+    // config/local.json — machine-local overrides merged over
+    // orchestrator.json. Git-ignored since P0, so credentials (SMTP
+    // passwords, bot tokens) belong here, never in the tracked file.
+    const localFile = path.join(paths.configDir, 'local.json');
+    if (fs.existsSync(localFile)) {
+      overrides = deepMerge(overrides, readJsonFile(localFile));
+    }
+
     this.config = deepMerge(ORCHESTRATOR_DEFAULTS, overrides);
     paths = resolvePaths({
       ...(this.rootDir ? { root: this.rootDir } : {}),

@@ -1,15 +1,41 @@
 # Configuration
 
 Everything is driven by JSON files — normal operation never requires a code
-edit. Two kinds of files:
+edit. Three kinds of files:
 
 ```text
-config/orchestrator.json        global settings (all optional)
+config/orchestrator.json        global settings (all optional, git-tracked)
+config/local.json               machine-local overrides + credentials (git-IGNORED)
 config/projects/<name>.json     one file per supervised project
 ```
 
 Any key you omit falls back to the documented default (defined in
 `src/config/defaults.js`).
+
+## `config/local.json` — where credentials belong
+
+`config/local.json` is loaded after `config/orchestrator.json` and
+deep-merged over it, so any key set here wins. It is listed in
+`.gitignore`, so **put every secret here** — SMTP passwords, Telegram bot
+tokens — and they can never be committed by accident. The tracked
+`orchestrator.json` holds only non-secret defaults. Example:
+
+```json
+{
+  "notifications": {
+    "telegram": { "enabled": true, "botToken": "<token>", "chatId": "<id>" },
+    "email": { "enabled": true, "smtp": { "host": "smtp.gmail.com", "port": 587,
+      "starttls": true, "user": "me@gmail.com", "pass": "<app password>" },
+      "from": "me@gmail.com", "to": "me@gmail.com" }
+  },
+  "approvals": { "providers": { "telegram": { "enabled": true }, "email": { "enabled": true } } }
+}
+```
+
+Verify any channel end-to-end at any time with
+`ai-orchestrator notify test` (sends a real message through every enabled
+channel and prints ✔/✘ per channel). `ai-orchestrator doctor` also lists
+the enabled channels and warns when only the local desktop toast is on.
 
 ---
 
@@ -138,7 +164,7 @@ the full briefing shape.
 | `webhook` | `enabled`, `url`, `headers` | POSTs JSON; universal integration |
 | `discord` | `enabled`, `webhookUrl` | Discord channel webhook |
 | `telegram` | `enabled`, `botToken`, `chatId` | Telegram bot |
-| `email` | `enabled` | Placeholder — see ROADMAP.md |
+| `email` | `enabled`, `smtp` (`host`, `port`, `starttls`/`secure`, `user`, `pass`), `from`, `to` | Real SMTP since Phase 10C — see "Notifications — Phase 10F additions" below and docs/EMAIL_SETUP.md |
 
 ### Other
 

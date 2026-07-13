@@ -123,7 +123,17 @@ from the mission prompt again — by design, since there is nothing to resume.
 Unattended missions must not require interactive approvals. Set
 `claude.permissionMode` (e.g. `acceptEdits`) or
 `claude.dangerouslySkipPermissions: true` in the project config — see the
-warning in [CONFIGURATION.md](CONFIGURATION.md).
+warning in [CONFIGURATION.md](CONFIGURATION.md). `projects add` sets
+`acceptEdits` by default (v2.3.1), and `doctor` warns about any claude
+project still missing write permissions.
+
+### A project is stuck `[active: waiting-retry]` from an old run
+
+A previous session was interrupted and is still resumable, so `start`
+would resume it rather than begin fresh. To discard it without launching
+anything: `ai-orchestrator sessions <project> --abandon` (archives it as
+stopped; the next `start` starts the mission over). It refuses if an
+orchestrator is actively supervising that project — use `stop` there.
 
 ---
 

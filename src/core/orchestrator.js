@@ -236,7 +236,15 @@ export class Orchestrator extends EventEmitter {
       defaultAgent, defaultDriver, this.agentRegistry.effectiveProject(project, defaultAgent)
     );
     if (!installation.ok) {
-      throw new Error(installation.error);
+      const error = new Error(
+        `Cannot start "${projectName}" — its engine is not available.\n` +
+        `${installation.error}\n` +
+        'Run "ai-orchestrator doctor" to check every project\'s engine at once.'
+      );
+      // Environment problem with a stated remedy, not a bug: the CLI
+      // renders it without a stack trace (see fail() in cli/index.js).
+      error.userFacing = true;
+      throw error;
     }
     this.logger.info('Engine verified', {
       agent: defaultAgent.id,
@@ -572,12 +580,13 @@ export class Orchestrator extends EventEmitter {
           project, session, finalText, taskId: null, signal,
         });
         if (plan.handled) return plan.outcome;
-        const human = await this.maybePauseForHumanAction({
-          project, session, blocked: progress.blocked, taskId: null, signal,
-        });
-        if (human.handled) return human.outcome;
 
-        // Did the agent declare the whole MISSION finished (not just this run)?
+        // Did the agent declare the whole MISSION finished (not just this
+        // run)? Checked BEFORE the human-action pause: the explicit
+        // completion contract outranks fuzzy blocked-pattern matching — a
+        // final message like "captcha cleared — MISSION COMPLETE" must end
+        // the mission, not page the owner on every relaunch forever (the
+        // livelock found live in the Phase 10.5 failure simulations).
         const marker = project.mission.completionMarker;
         if (marker && finalText.includes(marker)) {
           this.sessionManager.closeSession(session, SessionState.COMPLETED);
@@ -592,6 +601,14 @@ export class Orchestrator extends EventEmitter {
             result: { complete: true, session, reason: 'completion marker found' },
           };
         }
+
+        // No completion marker: a human-action situation (login, CAPTCHA,
+        // browser prompt, ...) pauses for the owner instead of terminally
+        // blocking.
+        const human = await this.maybePauseForHumanAction({
+          project, session, blocked: progress.blocked, taskId: null, signal,
+        });
+        if (human.handled) return human.outcome;
 
         // Run ended cleanly but the mission is unfinished. Before relaunching,
         // the loop breaker decides whether continuing is worthwhile — this is
@@ -740,14 +757,6 @@ export class Orchestrator extends EventEmitter {
     });
     if (plan.handled) return plan.outcome;
 
-    // Phase 10A: a human-action situation (login, CAPTCHA, browser prompt,
-    // ...) pauses gracefully — notify the owner, wait for DONE, continue —
-    // instead of the terminal block those categories used to hit.
-    const human = await this.maybePauseForHumanAction({
-      project, session, blocked: progress.blocked, taskId: taskDef.id, signal,
-    });
-    if (human.handled) return human.outcome;
-
     this.lifecycle?.transition(project.name, 'verifying', `task "${taskDef.id}" run finished`);
 
     const verifyResult = taskDef.verify.length > 0
@@ -764,9 +773,23 @@ export class Orchestrator extends EventEmitter {
     // on THIS task wasn't accepted, even mid-retry.
     this.taskQueueStore.recordVerifyResult(queue, verifyResult);
 
+    // Phase 10A: a human-action situation (login, CAPTCHA, browser prompt,
+    // ...) pauses gracefully — notify the owner, wait for DONE, continue —
+    // instead of the terminal block those categories used to hit. Checked
+    // only for runs that FAILED verification: verified work is done no
+    // matter what the output mentioned — explicit verification outranks
+    // fuzzy pattern-matching (the livelock found in the Phase 10.5 sims).
+    if (!verifyResult.passed) {
+      const human = await this.maybePauseForHumanAction({
+        project, session, blocked: progress.blocked, taskId: taskDef.id, signal,
+      });
+      if (human.handled) return human.outcome;
+    }
+
     // Phase 10F: verification failures are notifiable events (severity:
     // warning), computed once here for the event, the exhausted-path block
-    // reason, and the logs.
+    // reason, and the logs. (A run that instead paused as a human-action
+    // above already notified the owner with the actionable message.)
     const failedChecks = verifyResult.passed ? '' : verifyResult.results
       .filter((r) => !r.passed).map((r) => `${r.type}: ${r.detail}`).join('; ');
     if (!verifyResult.passed) {
@@ -1053,6 +1076,7 @@ export class Orchestrator extends EventEmitter {
     this.statusManager.set({ orchestrator: { state: 'awaiting-approval' } });
     const final = await this.approvalManager.waitForDecision(request, {
       signal: this.stopController.signal,
+      projectConfig: project,
     });
     this.statusManager.set({ orchestrator: { state: 'supervising' } });
 
@@ -1151,7 +1175,7 @@ export class Orchestrator extends EventEmitter {
     }
 
     this.statusManager.set({ orchestrator: { state: 'awaiting-approval' } });
-    const final = await this.approvalManager.waitForDecision(request, { signal });
+    const final = await this.approvalManager.waitForDecision(request, { signal, projectConfig: project });
     this.statusManager.set({ orchestrator: { state: 'supervising' } });
 
     if (this.stopRequested || final.status === 'pending') {
@@ -1212,7 +1236,7 @@ export class Orchestrator extends EventEmitter {
     if (approved) return { handled: false }; // policy misconfigured to auto — fall through
 
     this.statusManager.set({ orchestrator: { state: 'awaiting-human-action' } });
-    const final = await this.approvalManager.waitForDecision(request, { signal });
+    const final = await this.approvalManager.waitForDecision(request, { signal, projectConfig: project });
     this.statusManager.set({ orchestrator: { state: 'supervising' } });
 
     if (this.stopRequested || final.status === 'pending') {

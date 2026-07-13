@@ -3,6 +3,55 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.3.1] — 2026-07-13 — Phase 10.5: Operational Validation & Readiness
+
+An engineering-validation phase (no new architecture). The whole platform
+was exercised end-to-end under real conditions: remote notifications
+configured and live-verified (Telegram two-way + Gmail SMTP), a real
+Claude mission run from approval to commit, the phone approval workflow
+driven from an actual phone, ten failure simulations replayed, and
+multi-project isolation proven. Seven defects surfaced during the audit
+and this pass were fixed at the root.
+
+### Added
+
+- **`config/local.json`** — machine-local config, deep-merged over
+  `config/orchestrator.json` and git-ignored, so credentials (SMTP
+  passwords, bot tokens) never land in a tracked file. See CONFIGURATION.md.
+- **`ai-orchestrator notify test`** — sends a real message through every
+  enabled notification channel and prints a per-channel ✔/✘. The missing
+  onboarding verifier for remote setup.
+- **`ai-orchestrator sessions <project> --abandon`** — archive a stale
+  resumable session WITHOUT launching anything, so the next `start` begins
+  fresh (refuses if an orchestrator is actively supervising that project).
+- **`projects add --permission-mode <mode>`** — the created project now
+  includes a `claude.permissionMode` block (default `acceptEdits`); the
+  previous behaviour left every new project unable to write unattended.
+- **`doctor`** now warns on: a claude project with no write permissions,
+  no enabled notification channel beyond desktop, and incomplete
+  Telegram/email channel config.
+
+### Fixed
+
+- **Human-action livelock** (found live in the failure sims): a mission
+  whose final output merely MENTIONED a blocker word (e.g. "the captcha
+  was solved") re-triggered the human-action pause on every relaunch,
+  paging the owner forever. Completion (marker / passed verification) now
+  outranks fuzzy blocked-pattern matching — verified work never pauses.
+- **Per-project `approvals.decisionTimeoutMs`/`decisionPollMs` ignored**:
+  `waitForDecision()` read only the global config; it now honours the
+  project's effective approval config.
+- **`tasks skip`/`tasks approve` left the lifecycle stale**: skipping the
+  final blocked task now syncs the mission lifecycle to `completed`
+  (approve → `planned`) instead of leaving it stuck at `blocked`.
+- **`intel` scored a blocked legacy mission "healthy"**: health scoring
+  now also reads the mission lifecycle state, not only the task queue.
+- **Missing-engine start error was a raw stack trace**: it is now a
+  friendly, remedy-first message (the CLI suppresses the stack for
+  user-facing errors).
+- **Onboarding trap**: `projects add` + `doctor` (above) close the
+  #1 new-user failure (a project born unable to write a single file).
+
 ## [2.3.0] — 2026-07-12 — Phase 10: Autonomous Project Manager
 
 From autonomous coding engine to autonomous software engineering MANAGER:

@@ -18,7 +18,21 @@ node_modules/
 # Environment / local overrides
 .env
 config/local.json
-config/projects/*.local.json
+
+# Local project instances. The documented workflow (see config/projects/
+# example.json) is to copy example.json to <your-project>.json; those are
+# per-machine (absolute working directories, real prompts) and stay local,
+# like config/local.json. Only the shared template is tracked.
+/config/projects/*
+!/config/projects/example.json
+
+# Operator-owned schedule definitions, edited at runtime via `schedules add`.
+# The machine-owned run tracking in state/schedules.json is already ignored.
+config/schedules.json
+
+# Credentials handed over out-of-band (never commit plaintext secrets)
+*credentilas*.txt
+*credentials*.txt
 
 # OS noise
 Thumbs.db

@@ -43,11 +43,17 @@ export class TaskQueue {
    *   its DONE/FAILED/BLOCKED tasks are archived here before being
    *   discarded, rather than silently lost. Optional — omitted entirely in
    *   test harnesses/setups that predate P5.
+   * @param {import('./missionLifecycle.js').MissionLifecycle} [options.lifecycle] -
+   *   Phase 10.5: operator overrides (`approveRetry`/`operatorSkip`) change
+   *   the mission's real state while no orchestrator is running, so they
+   *   sync the lifecycle record themselves — otherwise a skip that finishes
+   *   the mission leaves it showing 'blocked' forever. Optional.
    */
-  constructor({ tasksDir, logger, memoryStore }) {
+  constructor({ tasksDir, logger, memoryStore, lifecycle }) {
     this.tasksDir = tasksDir;
     this.logger = logger;
     this.memoryStore = memoryStore;
+    this.lifecycle = lifecycle;
   }
 
   file(project) {
@@ -354,6 +360,8 @@ export class TaskQueue {
     task.task.checkpoint = null;
     task.task.lastVerifyResult = null;
     this.save(queue);
+    this.lifecycle?.transition(queue.project, 'planned',
+      `operator approved retry of task "${taskId}" — restart to continue`);
     this.logger.info('Task approved for retry by operator', { project: queue.project, taskId });
     return { ok: true };
   }
@@ -385,6 +393,16 @@ export class TaskQueue {
     };
     this.save(queue);
     this.advance(queue);
+    // The skip changed the mission's real state with no orchestrator
+    // running to notice — sync the lifecycle record here, or a skip that
+    // finishes the mission shows 'blocked' forever.
+    this.lifecycle?.transition(
+      queue.project,
+      this.isComplete(queue) ? 'completed' : 'planned',
+      this.isComplete(queue)
+        ? `operator skipped final task "${taskId}" — mission complete`
+        : `operator skipped task "${taskId}" — remaining tasks run on next start`
+    );
     this.logger.info('Task skipped by operator', { project: queue.project, taskId, reason });
     return { ok: true };
   }

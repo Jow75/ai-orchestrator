@@ -114,6 +114,18 @@ test('waitForDecision expires the request after decisionTimeoutMs', async () => 
   assert.equal(final.status, 'expired');
 });
 
+test('waitForDecision honors a per-project decisionTimeoutMs override', async () => {
+  // Global says wait forever; the project itself sets a 30ms timeout.
+  const { manager: m } = manager({ config: { decisionTimeoutMs: 0 } });
+  const { request } = await m.requestApproval({
+    project: 'proj', category: 'secrets', title: 'project-scoped timeout',
+  });
+  const final = await m.waitForDecision(request, {
+    projectConfig: { approvals: { decisionTimeoutMs: 30 } },
+  });
+  assert.equal(final.status, 'expired');
+});
+
 test('waitForDecision aborts cleanly (request stays pending) on operator stop', async () => {
   const { manager: m } = manager();
   const { request } = await m.requestApproval({

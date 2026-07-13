@@ -50,6 +50,37 @@ test('orchestrator.json overrides defaults without erasing siblings', () => {
   assert.equal(config.get('api.host'), '127.0.0.1'); // untouched sibling
 });
 
+test('config/local.json merges over orchestrator.json (credentials stay out of git)', () => {
+  const root = scaffold({
+    orchestrator: {
+      api: { port: 9999 },
+      notifications: { telegram: { enabled: false, botToken: '', chatId: '' } },
+    },
+  });
+  fs.writeFileSync(
+    path.join(root, 'config', 'local.json'),
+    JSON.stringify({
+      notifications: { telegram: { enabled: true, botToken: 'SECRET', chatId: '42' } },
+    })
+  );
+  const config = new ConfigManager({ rootDir: root });
+  assert.equal(config.get('notifications.telegram.enabled'), true);
+  assert.equal(config.get('notifications.telegram.botToken'), 'SECRET');
+  assert.equal(config.get('notifications.telegram.chatId'), '42');
+  assert.equal(config.get('api.port'), 9999); // orchestrator.json siblings untouched
+});
+
+test('config/local.json alone works with no orchestrator.json present', () => {
+  const root = scaffold();
+  fs.writeFileSync(
+    path.join(root, 'config', 'local.json'),
+    JSON.stringify({ api: { port: 1234 } })
+  );
+  const config = new ConfigManager({ rootDir: root });
+  assert.equal(config.get('api.port'), 1234);
+  assert.equal(config.get('api.host'), '127.0.0.1'); // defaults still apply
+});
+
 test('get returns the fallback for unknown paths', () => {
   const config = new ConfigManager({ rootDir: scaffold() });
   assert.equal(config.get('no.such.key', 'fallback'), 'fallback');

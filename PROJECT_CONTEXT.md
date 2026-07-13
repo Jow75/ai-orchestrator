@@ -12,9 +12,37 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-12, after completing Phase 10 (Autonomous
-Project Manager) — verified live end-to-end (see "Live verification"
-below) — ahead of committing/tagging `v2.3.0`.
+**Last updated:** 2026-07-13, after **Phase 10.5 (Operational Validation
+& Readiness), v2.3.1** — an engineering-validation phase, no new
+architecture. Remote notifications configured AND live-verified (two-way
+Telegram bot `@jowgei_orchestrator_bot`, chat id 6522731464, + Gmail SMTP
+through the built-in smtpClient); credentials now live in the new
+git-ignored `config/local.json`. Two real Haiku Claude missions run end to
+end (`validation-demo`: approval A7 → implement → 5 verifiers → commit →
+completed; `phone-demo`: **owner approved A8 from their actual phone via
+Telegram** → resumed → completed). All ten failure simulations replayed
+(reject, modify, verify-fail, crash, human-action, notify-fail, parallel,
+stop/resume, missed-schedule, lock contention). Multi-project isolation
+proven (state separation + corruption containment). **Seven defects fixed
+at the root**, each with a regression test: (1) a human-action LIVELOCK
+found live — a run mentioning a blocker word re-paused forever; completion
+now outranks fuzzy blocked-pattern matching; (2) per-project
+`approvals.decisionTimeoutMs`/`decisionPollMs` now honoured by
+waitForDecision; (3) `tasks skip`/`approve` now sync the mission
+lifecycle; (4) `intel` health now reads lifecycle state (no more "blocked
+= healthy"); (5) missing-engine start error is now friendly, not a stack
+trace; (6) `projects add` now writes `claude.permissionMode` + doctor
+warns when missing; (7) new `notify test` + `sessions --abandon`. Test
+suite: **436/436** + 18 desktop. Full write-up:
+`docs/PHASE_10.5_READINESS.md`; Phase 11 plan: `docs/PHASE_11_PROPOSAL.md`.
+Readiness verdict: **8.6/10, READY for Phase 11** (onboarding/UX is the
+frontier). THE FINISHER now has a `claude` block; still needs a real
+mission prompt before its first serious run.
+
+Previous update: 2026-07-13, after a full product-readiness audit (no new
+phase work) — the audit that seeded the Phase 10.5 objectives.
+Before that: 2026-07-12, after completing Phase 10 (Autonomous Project
+Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 
 ## Where things stand: P0–P7, Phase 8, Phase 9, Phase 10 ALL complete
 
@@ -32,8 +60,8 @@ below) — ahead of committing/tagging `v2.3.0`.
 | Phase 9 — Multi-agent intelligence (roster, role routing, health) | ✅ done | `v2.2.0` |
 | Phase 10 — Autonomous Project Manager (10A–10J) | ✅ done | `v2.3.0` |
 
-**Test suite:** 429/429 passing (`node --test` at repo root: 334
-pre-Phase-10 plus 95 new across 12 new test files), and 18 desktop-bridge
+**Test suite:** 436/436 passing (`node --test` at repo root: 429 through
+Phase 10 plus 7 new Phase 10.5 regression tests), and 18 desktop-bridge
 tests (`npm run test:desktop`).
 
 The user's master prompt arc (desktop app → multi-agent → autonomous

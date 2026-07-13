@@ -52,7 +52,7 @@ export class ProjectIntelligence {
     const running = Boolean(active && ['running', 'waiting-rate-limit', 'waiting-retry'].includes(active.state));
 
     // ── Health score ───────────────────────────────────────────────────────
-    const health = this.scoreHealth({ queue, memory, recentRuns, active });
+    const health = this.scoreHealth({ queue, memory, recentRuns, active, lifecycle });
 
     // ── What should run next? ──────────────────────────────────────────────
     const ready = queue ? readyTasks(queue) : [];
@@ -144,14 +144,24 @@ export class ProjectIntelligence {
   }
 
   /** Health level from recent evidence: healthy / attention / unhealthy. */
-  scoreHealth({ queue, memory, recentRuns, active }) {
+  scoreHealth({ queue, memory, recentRuns, active, lifecycle }) {
     const signals = [];
     let score = 100;
 
     const current = queue?.tasks[queue.currentIndex];
-    if (current && ['blocked', 'failed'].includes(current.state)) {
+    const currentBad = Boolean(current && ['blocked', 'failed'].includes(current.state));
+    if (currentBad) {
       score -= 40;
       signals.push(`current task is ${current.state}`);
+    }
+    // A blocked/failed mission with NO queue (legacy mode) or an already-
+    // archived session used to leave no trace here — a blocked project
+    // scored "healthy 95/100" (Phase 10.5 audit defect). The lifecycle
+    // record is the mission's own word for it; trust it, but don't
+    // double-count when the queue already registered the same block.
+    if (['blocked', 'failed'].includes(lifecycle?.state) && !currentBad) {
+      score -= 40;
+      signals.push(`mission lifecycle is ${lifecycle.state}`);
     }
     if (active?.state === 'blocked' || active?.state === 'gave-up') {
       score -= 30;

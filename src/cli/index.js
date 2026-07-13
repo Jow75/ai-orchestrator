@@ -38,7 +38,7 @@ import chalk from 'chalk';
 import App, { STOP_REQUEST_FILENAME } from '../app.js';
 import ConfigManager, { ConfigError } from '../config/configManager.js';
 import { silentLogger } from '../infra/logger.js';
-import SessionManager from '../state/sessionManager.js';
+import SessionManager, { SessionState } from '../state/sessionManager.js';
 import MissionTimeline from '../state/missionTimeline.js';
 import TaskQueue from '../mission/taskQueue.js';
 import { validateSingleTask } from '../mission/missionPlan.js';
@@ -101,7 +101,10 @@ function agentContext(projectName) {
 
 /** Uniform fatal-error rendering for every command. */
 function fail(error) {
-  const message = error instanceof ConfigError ? error.message : (error.stack ?? error.message);
+  // ConfigError and errors flagged `userFacing` are user-fixable problems
+  // whose message already states the remedy — a stack trace only buries it.
+  const userFacing = error instanceof ConfigError || error.userFacing === true;
+  const message = userFacing ? error.message : (error.stack ?? error.message);
   console.error(chalk.red(`\nError: ${error.message}`));
   if (message !== error.message) console.error(chalk.dim(message));
   process.exitCode = 1;
@@ -113,7 +116,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('2.3.0');
+    .version('2.3.1');
 
   program
     .command('start')
@@ -197,10 +200,39 @@ export function buildProgram() {
   program
     .command('sessions')
     .argument('[project]', 'show history for one project')
+    .option('--abandon', 'archive the project\'s stale resumable session WITHOUT launching anything (the next start begins fresh)')
     .description('List active sessions, or one project’s session history')
-    .action((project) => {
+    .action((project, options) => {
       try {
-        const { sessionManager } = readOnlyContext();
+        const { sessionManager, paths } = readOnlyContext();
+        if (options.abandon) {
+          if (!project) {
+            console.error(chalk.red('\n--abandon needs a project name: sessions <project> --abandon'));
+            process.exitCode = 1;
+            return;
+          }
+          const session = sessionManager.getResumableSession(project);
+          if (!session) {
+            console.log(`No resumable session for "${project}" — nothing to abandon.`);
+            return;
+          }
+          const heartbeat = readJsonSafe(paths.heartbeatFile);
+          if (heartbeat?.state === 'running' && isPidAlive(heartbeat.pid)
+            && heartbeat.project === project) {
+            console.error(chalk.red(
+              `\nAn orchestrator (pid ${heartbeat.pid}) is actively supervising "${project}" — ` +
+              'use "ai-orchestrator stop" instead.'
+            ));
+            process.exitCode = 1;
+            return;
+          }
+          sessionManager.closeSession(session, SessionState.STOPPED);
+          console.log(chalk.green(
+            `Session ${session.id} (${project}) abandoned — archived as stopped. ` +
+            'The next start begins the mission fresh.'
+          ));
+          return;
+        }
         if (project) {
           const history = sessionManager.getHistory(project);
           const active = sessionManager.getActiveSession(project);
@@ -406,7 +438,11 @@ export function buildProgram() {
     .action((project, taskId) => {
       try {
         const { paths } = readOnlyContext();
-        const taskQueue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger });
+        const taskQueue = new TaskQueue({
+          tasksDir: paths.tasksDir,
+          logger: silentLogger,
+          lifecycle: new MissionLifecycle({ lifecycleDir: paths.lifecycleDir, logger: silentLogger }),
+        });
         const queue = taskQueue.load(project);
         if (!queue) {
           console.log(`No task queue for "${project}".`);
@@ -433,7 +469,11 @@ export function buildProgram() {
     .action((project, taskId, options) => {
       try {
         const { paths } = readOnlyContext();
-        const taskQueue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger });
+        const taskQueue = new TaskQueue({
+          tasksDir: paths.tasksDir,
+          logger: silentLogger,
+          lifecycle: new MissionLifecycle({ lifecycleDir: paths.lifecycleDir, logger: silentLogger }),
+        });
         const queue = taskQueue.load(project);
         if (!queue) {
           console.log(`No task queue for "${project}".`);
@@ -586,17 +626,86 @@ export function buildProgram() {
     .requiredOption('--dir <path>', 'working directory the agent operates in')
     .requiredOption('--prompt <file>', 'mission prompt file (relative to --dir or absolute)')
     .option('--driver <id>', 'AI engine driver', 'claude')
+    .option(
+      '--permission-mode <mode>',
+      'claude driver only: --permission-mode passed to the engine ' +
+      '(acceptEdits, bypassPermissions, or "" to run read-only)',
+      'acceptEdits'
+    )
     .description('Create a new project definition')
     .action((name, options) => {
       try {
         const { configManager } = readOnlyContext();
-        const file = configManager.saveProject(name, {
+        const definition = {
           driver: options.driver,
           workingDirectory: path.resolve(options.dir),
           promptFile: options.prompt,
-        });
+        };
+        // An unattended headless engine cannot answer permission prompts —
+        // without a permission mode every run is effectively read-only and
+        // the mission blocks on "no progress" (the #1 new-user trap).
+        if (options.driver === 'claude' && options.permissionMode) {
+          definition.claude = { permissionMode: options.permissionMode };
+        }
+        const file = configManager.saveProject(name, definition);
         console.log(chalk.green(`Project created: ${file}`));
+        if (definition.claude) {
+          console.log(
+            `Engine permission mode: ${definition.claude.permissionMode} ` +
+            '(unattended runs must be able to write — see CONFIGURATION.md "claude")'
+          );
+        } else if (options.driver === 'claude') {
+          console.log(chalk.yellow(
+            'No permission mode set — unattended runs will be read-only and will block. ' +
+            'Set "claude.permissionMode" in the project JSON before a real mission.'
+          ));
+        }
         console.log(`Start it with:  ai-orchestrator start ${name}`);
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  const notify = program
+    .command('notify')
+    .description('Notification utilities (Phase 10.5)');
+
+  notify
+    .command('test')
+    .description('Send a test notification through every enabled channel and report each result')
+    .action(async () => {
+      try {
+        const configManager = new ConfigManager();
+        const engine = new NotificationEngine({
+          config: configManager.get('notifications', {}),
+          logger: silentLogger,
+        });
+        if (!engine.channels.length) {
+          console.log(
+            'No notification channels enabled. Enable one in config/orchestrator.json ' +
+            '(credentials belong in the git-ignored config/local.json) — see ' +
+            'docs/TELEGRAM_SETUP.md and docs/EMAIL_SETUP.md.'
+          );
+          return;
+        }
+        console.log(chalk.bold('\nNotification channel test\n'));
+        for (const channel of engine.channels) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await channel.send({
+              title: 'AI-Orchestrator — test notification',
+              message: `If you can read this, the "${channel.name}" channel works. (${new Date().toLocaleString()})`,
+              event: 'notify:test',
+              payload: {},
+              severity: 'info',
+            });
+            console.log(`  ${chalk.green('✔')} ${channel.name}`);
+          } catch (error) {
+            console.log(`  ${chalk.red('✘')} ${channel.name} — ${error.message}`);
+            process.exitCode = 1;
+          }
+        }
+        console.log('');
       } catch (error) {
         fail(error);
       }
@@ -1449,6 +1558,9 @@ async function runDoctor() {
     console.log(`  ${mark} ${label}${detail ? chalk.dim(` — ${detail}`) : ''}`);
     return ok;
   };
+  const warn = (label, detail = '') => {
+    console.log(`  ${chalk.yellow('⚠')} ${label}${detail ? chalk.dim(` — ${detail}`) : ''}`);
+  };
 
   console.log(chalk.bold('\nAI-Orchestrator doctor\n'));
 
@@ -1484,6 +1596,17 @@ async function runDoctor() {
       );
       check(installation.ok, `Engine for "${name}" (${project.driver})`,
         installation.version ?? installation.error);
+
+      // Unattended headless engines cannot answer permission prompts; a
+      // claude project without write permissions blocks on "no progress".
+      if (
+        project.driver === 'claude' &&
+        !project.claude?.permissionMode &&
+        !project.claude?.dangerouslySkipPermissions
+      ) {
+        warn(`Project "${name}" has no engine write permissions`,
+          'unattended runs will be read-only and block — set "claude.permissionMode" (e.g. "acceptEdits")');
+      }
     } catch (error) {
       check(false, `Project "${name}" is valid`, error.message);
     }
@@ -1499,6 +1622,24 @@ async function runDoctor() {
     check(true, 'State directory writable', paths.stateDir);
   } catch (error) {
     check(false, 'State directory writable', error.message);
+  }
+
+  // Notification channels — the remote/phone workflow needs at least one
+  // beyond the local desktop toast.
+  const notif = configManager.get('notifications', {});
+  const enabledChannels = ['desktop', 'webhook', 'discord', 'telegram', 'email']
+    .filter((name) => notif[name]?.enabled);
+  check(enabledChannels.length > 0, 'Notification channels enabled',
+    enabledChannels.join(', ') || 'none — see docs/TELEGRAM_SETUP.md / docs/EMAIL_SETUP.md');
+  if (!enabledChannels.some((name) => name !== 'desktop')) {
+    warn('No remote notification channel',
+      'approvals from your phone need telegram or email — see docs/REMOTE_APPROVALS.md');
+  }
+  if (notif.telegram?.enabled && (!notif.telegram.botToken || !notif.telegram.chatId)) {
+    warn('Telegram channel incomplete', '"botToken" and "chatId" are both required');
+  }
+  if (notif.email?.enabled && !notif.email.smtp?.host) {
+    warn('Email channel incomplete', '"smtp.host" is required');
   }
 
   // Running instance?

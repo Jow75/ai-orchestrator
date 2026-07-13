@@ -381,9 +381,13 @@ class OrchestratorBridge {
       });
       return result.data ?? { ok: false, reason: result.reason ?? 'Request failed.' };
     }
-    const { TaskQueue, silentLogger } = await backend();
+    const { TaskQueue, MissionLifecycle, silentLogger } = await backend();
     const paths = await this.paths();
-    const taskQueue = new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger });
+    const taskQueue = new TaskQueue({
+      tasksDir: paths.tasksDir,
+      logger: silentLogger,
+      lifecycle: new MissionLifecycle({ lifecycleDir: paths.lifecycleDir, logger: silentLogger }),
+    });
     const queue = taskQueue.load(project);
     if (!queue) return { ok: false, reason: `No task queue for "${project}".` };
     return idleMutate(taskQueue, queue);

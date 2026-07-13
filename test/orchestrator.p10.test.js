@@ -220,6 +220,31 @@ test('a human-action situation pauses gracefully and continues on DONE (10A)', a
   assert.equal(lifecycle.get('p10proj').state, 'completed');
 });
 
+test('verified work never pauses: a passing run that MENTIONS a blocker completes (10.5 livelock fix)', async () => {
+  const { orchestrator, approvalManager, lifecycle } = harness({
+    tasks: [{ id: 'T1', verify: [{ type: 'file-exists', path: 'done.txt' }] }],
+    mockRuns: [
+      // The output matches the captcha blocked-pattern, but the work is
+      // real and the verifier passes — completion must outrank the pattern
+      // (pre-fix this paused for the owner on EVERY relaunch, forever).
+      {
+        output: 'the captcha was solved earlier; work is finished',
+        writeFile: { path: 'done.txt', content: 'x' },
+        exitCode: 0,
+        delayMs: 15,
+      },
+    ],
+  });
+
+  const humanActions = [];
+  approvalManager.on('human-action:required', ({ request }) => humanActions.push(request));
+
+  const result = await orchestrator.runProject('p10proj');
+  assert.equal(result.complete, true, result.reason);
+  assert.equal(humanActions.length, 0); // never paged the owner
+  assert.equal(lifecycle.get('p10proj').state, 'completed');
+});
+
 test('an owner-gated task never launches without approval; rejection blocks it (10A/10B)', async () => {
   const { orchestrator, approvalManager, approvalStore, driverRegistry, paths } = harness({
     tasks: [{
