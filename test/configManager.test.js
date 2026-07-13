@@ -86,6 +86,41 @@ test('get returns the fallback for unknown paths', () => {
   assert.equal(config.get('no.such.key', 'fallback'), 'fallback');
 });
 
+test('writeLocalConfig creates config/local.json and it merges on load', () => {
+  const root = scaffold();
+  const config = new ConfigManager({ rootDir: root });
+  const file = config.writeLocalConfig({
+    notifications: { telegram: { enabled: true, botToken: 'TOK', chatId: '99' } },
+  });
+  assert.ok(fs.existsSync(file));
+  // A fresh manager reading the same root picks the credentials up.
+  const reloaded = new ConfigManager({ rootDir: root });
+  assert.equal(reloaded.get('notifications.telegram.enabled'), true);
+  assert.equal(reloaded.get('notifications.telegram.botToken'), 'TOK');
+  assert.equal(reloaded.get('notifications.telegram.chatId'), '99');
+});
+
+test('writeLocalConfig deep-merges, preserving unrelated existing keys', () => {
+  const root = scaffold();
+  const config = new ConfigManager({ rootDir: root });
+  config.writeLocalConfig({ notifications: { telegram: { enabled: true, botToken: 'TOK' } } });
+  // A second wizard writes an unrelated block; the first must survive.
+  config.writeLocalConfig({ approvals: { providers: { telegram: { enabled: true } } } });
+  const written = JSON.parse(
+    fs.readFileSync(path.join(root, 'config', 'local.json'), 'utf8')
+  );
+  assert.equal(written.notifications.telegram.botToken, 'TOK'); // preserved
+  assert.equal(written.approvals.providers.telegram.enabled, true); // added
+});
+
+test('writeLocalConfig creates the config dir when it does not exist', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-nocfg-'));
+  const config = new ConfigManager({ rootDir: root });
+  const file = config.writeLocalConfig({ api: { port: 5000 } });
+  assert.ok(fs.existsSync(file));
+  assert.equal(new ConfigManager({ rootDir: root }).get('api.port'), 5000);
+});
+
 test('getProject fails helpfully for an unknown project', () => {
   const config = new ConfigManager({ rootDir: scaffold() });
   assert.throws(() => config.getProject('ghost'), (error) => {

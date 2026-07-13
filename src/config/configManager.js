@@ -213,6 +213,26 @@ export class ConfigManager {
   }
 
   /**
+   * Merge a patch into config/local.json (the machine-local, git-ignored
+   * overlay that `load()` deep-merges over orchestrator.json). Existing keys
+   * are preserved; only the supplied paths are added or overwritten. This is
+   * how the Phase 11 onboarding wizards persist credentials and channel
+   * settings without ever touching the tracked orchestrator.json.
+   *
+   * @param {object} patch - Partial config to deep-merge into local.json.
+   * @returns {string} The path of config/local.json.
+   */
+  writeLocalConfig(patch) {
+    const dir = this.getPaths().configDir;
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'local.json');
+    const existing = fs.existsSync(file) ? readJsonFile(file) : {};
+    const merged = deepMerge(existing, patch);
+    fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+    return file;
+  }
+
+  /**
    * Persist a new project definition (used by `projects add`).
    *
    * @param {string} name - Project name.
