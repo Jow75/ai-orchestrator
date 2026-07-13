@@ -13,6 +13,12 @@ Uses the built-in dependency-free SMTP client
 
 **Stop at every ⏸ PAUSE — the next step needs something only you can do.**
 
+> **The fastest way is the built-in wizard:**
+> `node bin\ai-orchestrator.js notify setup email` — it collects your SMTP
+> settings, sends a real test email, translates the common errors (535 auth,
+> STARTTLS, connection) into plain-language fixes, and writes
+> `config/local.json`. The manual steps below are the by-hand route.
+
 ---
 
 ## Step 1 — Choose the sending mailbox

@@ -12,9 +12,23 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-13, after **Phase 10.5 (Operational Validation
-& Readiness), v2.3.1** — an engineering-validation phase, no new
-architecture. Remote notifications configured AND live-verified (two-way
+**Last updated:** 2026-07-14, after **Phase 11 M1 (Onboarding & first-run
+wizards), v2.4.0** — the first Phase 11 (operator-experience) milestone,
+committed + tagged. New `init` guided setup, `projects add --interactive`,
+and `notify setup telegram|email` (automatic chat-id discovery): a brand-new
+user reaches a working project AND a phone that receives approvals without
+editing a single JSON file. Every wizard only WRITES the same config an
+expert edits by hand (optional-collaborator invariant intact). New
+`src/onboarding/` (prompts harness + project/notify/init wizards) +
+`ConfigManager.writeLocalConfig`. Backend suite **468/468** + 18 desktop;
+`init` and the project wizard verified live end-to-end through real readline.
+Full plan: `docs/PHASE_11_PLAN.md` (M1→M4 shipped as `v2.4.0`→`v2.7.0`).
+**Next: M2 — phone & notification experience** (approval-reuse dedup +
+notification idempotency, executive Mission Cards, real Telegram attachments
++ safe formatting).
+
+Previous: **Phase 10.5 (v2.3.1), 2026-07-13** — an engineering-validation
+phase, no new architecture. Remote notifications configured AND live-verified (two-way
 Telegram bot `@jowgei_orchestrator_bot`, chat id 6522731464, + Gmail SMTP
 through the built-in smtpClient); credentials now live in the new
 git-ignored `config/local.json`. Two real Haiku Claude missions run end to

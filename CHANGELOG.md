@@ -3,6 +3,54 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.4.0] — 2026-07-14 — Phase 11 M1: Onboarding & first-run wizards
+
+The first milestone of Phase 11 (operator experience). A brand-new user now
+reaches a working project — and a phone that receives approvals — without
+editing a single JSON file. Every wizard is a config writer only: it writes
+the same `config/*.json` an expert edits by hand, so the optional-collaborator
+invariant is untouched (a config with none of these keys behaves exactly as
+before). CLI-first this milestone; desktop onboarding is a later phase.
+
+### Added
+
+- **`ai-orchestrator init`** — a guided first-run flow: environment probes,
+  first-project creation, Telegram + email setup, the optional auto-resume
+  task, a live channel test, and a "you're ready" summary. Idempotent and
+  re-runnable; every step is skippable.
+- **`projects add --interactive` (`-i`)** — a project-creation wizard that
+  asks the questions, creates the working directory and a starter prompt when
+  missing, and runs the result through the loader's own `validateProject`
+  before writing. Removes the #1 new-user failure (a project born unable to
+  write). `<name>`/`--dir`/`--prompt` are now optional; the non-interactive
+  path is unchanged but errors with a remedy-first message when they're
+  missing.
+- **`notify setup telegram`** — validates the BotFather token via `getMe`,
+  **discovers your chat id automatically** by polling `getUpdates` (detecting
+  an active webhook and explaining the fix), sends a live test, and writes
+  `notifications.telegram` + `approvals.providers.telegram`.
+- **`notify setup email`** — collects SMTP settings (Gmail App-Password path
+  spelled out), sends a real test email, translates the common SMTP failures
+  (535 auth, STARTTLS, connection) into plain-language remedies, and writes
+  `notifications.email` + `approvals.providers.email`.
+- **`ConfigManager.writeLocalConfig(patch)`** — deep-merges a patch into the
+  git-ignored `config/local.json` (preserving existing keys): the single
+  sanctioned way the wizards persist credentials without touching the tracked
+  `orchestrator.json`.
+- **`src/onboarding/`** — a small, TTY-free prompt harness (`prompts.js`) and
+  the wizards (`projectWizard.js`, `notifyWizard.js`, `init.js`), all
+  injectable so every flow is unit-tested with no terminal or network.
+- **Docs:** new `docs/DAY_ONE.md` (the guided "0 → first phone approval"
+  page the wizards mirror); QUICKSTART/TELEGRAM_SETUP/EMAIL_SETUP now lead
+  with the wizard and keep the manual steps as the "by hand" route.
+
+### Tests
+
+- +32 tests (prompt harness, `writeLocalConfig`, project wizard, Telegram/
+  email wizards, `init` orchestration); backend suite **468/468** green.
+- `init` and the project wizard verified live end-to-end through the real
+  readline prompter.
+
 ## [2.3.1] — 2026-07-13 — Phase 10.5: Operational Validation & Readiness
 
 An engineering-validation phase (no new architecture). The whole platform

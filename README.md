@@ -55,13 +55,22 @@ and handles everything that would normally require a human at the keyboard:
 
 ## Quick start
 
+New here? One guided command sets up a project and your phone without
+editing any JSON — see **[docs/DAY_ONE.md](docs/DAY_ONE.md)**:
+
+```bat
+npm install
+node bin\ai-orchestrator.js init
+```
+
+Or do it by hand:
+
 ```bat
 :: 1. Install dependencies (once)
 npm install
 
-:: 2. Define a project (what the agent should work on)
-node bin\ai-orchestrator.js projects add my-project ^
-    --dir "C:\path\to\your\project" --prompt prompt.md
+:: 2. Define a project (guided; or use --dir/--prompt non-interactively)
+node bin\ai-orchestrator.js projects add --interactive
 
 :: 3. Check your environment
 node bin\ai-orchestrator.js doctor

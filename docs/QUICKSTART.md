@@ -3,6 +3,11 @@
 Ten minutes, in order. Assumes the repo is at
 `C:\Users\Admin\Music\AI-Orchestrator` (adjust paths otherwise).
 
+> **Fastest path:** run `node bin\ai-orchestrator.js init` — a guided setup
+> that does steps 1–4 and the phone connection for you, without editing any
+> JSON. See [DAY_ONE.md](DAY_ONE.md). The steps below are the by-hand route,
+> useful when you want to understand or fine-tune each piece.
+
 ## 1. One-time install
 
 ```bat
@@ -23,6 +28,15 @@ line is optional — see step 7).
 - **Your windows into it** = `status`, the log files, and the desktop app.
 
 ## 3. Define a project
+
+The guided way (creates the working dir + a starter prompt, validates,
+and writes the file for you):
+
+```bat
+node bin\ai-orchestrator.js projects add --interactive
+```
+
+Or non-interactively:
 
 ```bat
 node bin\ai-orchestrator.js projects add my-project ^

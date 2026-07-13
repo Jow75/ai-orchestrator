@@ -9,6 +9,12 @@ Work through the steps in order. **Stop at every ⏸ PAUSE — the next step
 needs something only you can do.** Nothing before Step 6 changes any config,
 so you can abandon the wizard at any point with no cleanup.
 
+> **The fastest way is the built-in wizard:**
+> `node bin\ai-orchestrator.js notify setup telegram` — it validates your
+> token, **discovers your chat id automatically**, sends a test, and writes
+> `config/local.json` for you. The manual steps below are the by-hand route
+> and explain exactly what the wizard does.
+
 ---
 
 ## Step 1 — Create the bot
