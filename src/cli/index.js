@@ -3,6 +3,7 @@
  *
  * The human control surface of AI-Orchestrator:
  *
+ *   init                   Guided first-run setup: project + phone (Phase 11 M1)
  *   start [project]        Launch (or resume) supervision of a project
  *   resume [project]       Resume only if something was interrupted
  *   stop                   Ask the running orchestrator to stop gracefully
@@ -13,6 +14,7 @@
  *                           operator overrides for a blocked/failed task
  *   memory list|add|resolve   Manage a project's long-term memory (Phase P5)
  *   agents list|health|message  Inspect the roster & performance (Phase 9); post cross-agent messages (Phase 10H)
+ *   notify test|setup|tune|resend  Channel test/setup wizards, severity tuning, forced resend
  *   approvals ...          Approval requests + operating modes (Phase 10A/10B)
  *   lifecycle <project>    Standardized mission lifecycle + history (Phase 10D)
  *   intel <project>        Project intelligence recommendations (Phase 10E)
@@ -70,10 +72,13 @@ import NotificationState from '../notifications/notificationState.js';
 // Phase 11 onboarding wizards (CLI-first).
 import { createPrompter } from '../onboarding/prompts.js';
 import { runProjectWizard } from '../onboarding/projectWizard.js';
-import { runTelegramSetup, runEmailSetup } from '../onboarding/notifyWizard.js';
+import { runTelegramSetup, runEmailSetup, runNotifyTune } from '../onboarding/notifyWizard.js';
 import { runInit } from '../onboarding/init.js';
 import { buildDoctorFindings, renderDoctorFindings, applyDoctorFix, SCHEDULED_TASK_NAME } from '../doctor/doctor.js';
 import { userFacingError } from '../infra/errors.js';
+import { VERSION } from '../infra/version.js';
+import { buildStartupBanner, renderStartupBanner } from './banner.js';
+import { outcomeIcon, checkMark } from '../shared/vocabulary.js';
 
 /** Build a ConfigManager + quiet SessionManager for read-only commands. */
 function readOnlyContext() {
@@ -152,7 +157,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('2.6.0');
+    .version(VERSION);
 
   program
     .command('init')
@@ -195,17 +200,19 @@ export function buildProgram() {
     .action(async (projects, options) => {
       try {
         const app = new App();
+        console.log(`\n${renderStartupBanner(buildStartupBanner({ projectNames: projects, configManager: app.configManager }), chalk)}\n`);
         const result = await app.start({ projectNames: projects, fresh: options.fresh });
         if (Array.isArray(result)) {
           console.log('');
           for (const mission of result) {
-            const mark = mission.complete ? chalk.green('✔') : chalk.yellow('■');
+            const outcome = mission.complete ? 'complete' : 'incomplete';
+            const mark = mission.complete ? chalk.green(outcomeIcon(outcome)) : chalk.yellow(outcomeIcon(outcome));
             console.log(`${mark} ${chalk.bold(mission.project)}: ${mission.reason}`);
           }
         } else if (result?.complete) {
-          console.log(chalk.green(`\n✔ Mission complete: ${result.reason}`));
+          console.log(chalk.green(`\n${outcomeIcon('complete')} Mission complete: ${result.reason}`));
         } else if (result) {
-          console.log(chalk.yellow(`\n■ Supervision ended: ${result.reason}`));
+          console.log(chalk.yellow(`\n${outcomeIcon('incomplete')} Supervision ended: ${result.reason}`));
         }
       } catch (error) {
         fail(error);
@@ -792,9 +799,9 @@ export function buildProgram() {
               payload: {},
               severity: 'info',
             });
-            console.log(`  ${chalk.green('✔')} ${channel.name}`);
+            console.log(`  ${chalk.green(checkMark('ok'))} ${channel.name}`);
           } catch (error) {
-            console.log(`  ${chalk.red('✘')} ${channel.name} — ${error.message}`);
+            console.log(`  ${chalk.red(checkMark('fail'))} ${channel.name} — ${error.message}`);
             process.exitCode = 1;
           }
         }
@@ -828,6 +835,21 @@ export function buildProgram() {
         }
       } catch (error) {
         fail(error);
+      }
+    });
+
+  notify
+    .command('tune')
+    .description('Interactively set a channel\'s minimum notification severity (Phase 11 M4)')
+    .action(async () => {
+      const configManager = new ConfigManager();
+      const prompter = createPrompter();
+      try {
+        await runNotifyTune({ configManager, prompter });
+      } catch (error) {
+        fail(error);
+      } finally {
+        prompter.close();
       }
     });
 
@@ -1495,7 +1517,7 @@ export function buildProgram() {
           return;
         }
         for (const step of result.steps) {
-          const mark = step.ok ? chalk.green('✔') : chalk.red('✘');
+          const mark = step.ok ? chalk.green(checkMark('ok')) : chalk.red(checkMark('fail'));
           console.log(`  ${mark} ${step.step}${step.detail ? chalk.dim(` — ${step.detail}`) : ''}`);
         }
         if (!result.ok) process.exitCode = 1;
@@ -1827,7 +1849,7 @@ async function runDoctor({ fix = false } = {}) {
       const result = await applyDoctorFix(finding, ctx);
       if (result.ok) {
         fixed += 1;
-        console.log(chalk.green(`  ✔ Recovered — ${result.message}`));
+        console.log(chalk.green(`  ${checkMark('ok')} Recovered — ${result.message}`));
       } else {
         manual += 1;
         console.log(chalk.yellow(`  Manual intervention required — ${result.message}`));

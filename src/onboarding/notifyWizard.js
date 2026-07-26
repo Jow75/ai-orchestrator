@@ -17,6 +17,11 @@
 
 import { EmailChannel } from '../notifications/channels/email.js';
 import { silentLogger } from '../infra/logger.js';
+import { severityLabel } from '../shared/vocabulary.js';
+
+/** Channels `notify tune` can set a per-channel `minSeverity` for. */
+const TUNABLE_CHANNELS = ['desktop', 'webhook', 'discord', 'telegram', 'email'];
+const SEVERITIES = ['info', 'warning', 'critical'];
 
 /** Abort a hung Telegram call after this long. */
 const TELEGRAM_TIMEOUT_MS = 15_000;
@@ -222,4 +227,50 @@ export async function runEmailSetup({ configManager, prompter, sendMailFn }) {
   return { smtp, from, to, file };
 }
 
-export default { runTelegramSetup, runEmailSetup };
+/**
+ * `notify tune` — Phase 11 M4: set a channel's `minSeverity` without
+ * hand-editing `config/local.json`. The knob already existed (E10, since
+ * Phase 10F) but only via JSON; this is onboarding polish on an existing
+ * capability, the same pattern as `projects add --interactive` — the wizard
+ * writes exactly the config an expert would edit by hand, nothing new.
+ *
+ * @param {object} params
+ * @param {import('../config/configManager.js').ConfigManager} params.configManager
+ * @param {import('./prompts.js').Prompter} params.prompter
+ * @returns {Promise<{channel: string, minSeverity: string, file: string}|null>}
+ *   Null when there was nothing to tune (no channel enabled) or the operator
+ *   cancelled.
+ */
+export async function runNotifyTune({ configManager, prompter }) {
+  const p = prompter;
+  const config = configManager.get('notifications', {});
+  const enabled = TUNABLE_CHANNELS.filter((name) => config[name]?.enabled);
+
+  if (!enabled.length) {
+    p.say('\nNo notification channels are enabled yet — run "ai-orchestrator notify setup telegram|email" first.');
+    return null;
+  }
+
+  p.say('\n── Tune notification severity ─────────────────────────────');
+  p.say('Each channel only receives events at or above its own minimum severity');
+  p.say('(falling back to the global default when a channel has none set).');
+
+  const globalMin = config.minSeverity ?? 'info';
+  const channel = await p.choose('Which channel?', enabled.map((name) => ({
+    value: name,
+    label: name,
+    hint: `currently ${config[name]?.minSeverity ?? `global default (${globalMin})`}`,
+  })));
+
+  const minSeverity = await p.choose(`Minimum severity for "${channel}"`, SEVERITIES.map((s) => ({
+    value: s, label: s, hint: severityLabel(s),
+  })), { default: config[channel]?.minSeverity ?? globalMin });
+
+  const file = configManager.writeLocalConfig({
+    notifications: { [channel]: { minSeverity } },
+  });
+  p.say(`\n✅ "${channel}" will now only notify at "${minSeverity}" or above — saved to ${file}`);
+  return { channel, minSeverity, file };
+}
+
+export default { runTelegramSetup, runEmailSetup, runNotifyTune };

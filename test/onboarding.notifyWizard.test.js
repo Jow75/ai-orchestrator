@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ConfigManager } from '../src/config/configManager.js';
 import { createPrompter } from '../src/onboarding/prompts.js';
-import { runTelegramSetup, runEmailSetup } from '../src/onboarding/notifyWizard.js';
+import { runTelegramSetup, runEmailSetup, runNotifyTune } from '../src/onboarding/notifyWizard.js';
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aio-notify-'));
@@ -163,4 +163,62 @@ test('email: other-provider path captures host/port/implicit-TLS', async () => {
   assert.equal(smtp.port, 465);
   assert.equal(smtp.secure, true);
   assert.equal(smtp.starttls, false);
+});
+
+// ── notify tune (Phase 11 M4) ──────────────────────────────────────────────
+
+test('notify tune: no channel enabled → says so, writes nothing', async () => {
+  const root = tmpRoot();
+  const { prompter, out, configManager } = harness(root, []);
+  // Desktop notifications are enabled by default — disable it too so this
+  // genuinely exercises the "nothing to tune" branch.
+  configManager.writeLocalConfig({ notifications: { desktop: { enabled: false } } });
+  configManager.load(); // global config is cached after the write above reads it once
+  const result = await runNotifyTune({ configManager, prompter });
+  assert.equal(result, null);
+  assert.match(out(), /notify setup telegram\|email/);
+});
+
+test('notify tune: sets a channel\'s minSeverity, preserving its other fields', async () => {
+  const root = tmpRoot();
+  const { prompter, configManager } = harness(root, ['telegram', 'critical']);
+  configManager.writeLocalConfig({
+    notifications: { telegram: { enabled: true, botToken: 'tok', chatId: '1' } },
+  });
+  configManager.load();
+  const result = await runNotifyTune({ configManager, prompter });
+  assert.deepEqual(result, { channel: 'telegram', minSeverity: 'critical', file: result.file });
+
+  const cfg = localConfig(root);
+  assert.deepEqual(cfg.notifications.telegram, {
+    enabled: true, botToken: 'tok', chatId: '1', minSeverity: 'critical',
+  });
+});
+
+test('notify tune: only offers enabled channels', async () => {
+  const root = tmpRoot();
+  const { prompter, out, configManager } = harness(root, ['email', 'warning']);
+  configManager.writeLocalConfig({
+    notifications: {
+      telegram: { enabled: false },
+      email: { enabled: true, smtp: { host: 'smtp.example.com' }, from: 'a@b.com', to: 'a@b.com' },
+    },
+  });
+  configManager.load();
+  const result = await runNotifyTune({ configManager, prompter });
+  assert.equal(result.channel, 'email');
+  assert.match(out(), /Which channel\?/);
+  assert.ok(!out().includes('telegram'));
+});
+
+test('notify tune: Enter accepts the channel\'s current severity as the default', async () => {
+  const root = tmpRoot();
+  // Empty string ('') at the severity prompt = press Enter, accept the default.
+  const { prompter, configManager } = harness(root, ['telegram', '']);
+  configManager.writeLocalConfig({
+    notifications: { telegram: { enabled: true, botToken: 't', chatId: '1', minSeverity: 'warning' } },
+  });
+  configManager.load();
+  const result = await runNotifyTune({ configManager, prompter });
+  assert.equal(result.minSeverity, 'warning');
 });
