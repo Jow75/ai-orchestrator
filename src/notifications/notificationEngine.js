@@ -65,6 +65,16 @@ export const EVENT_ATTACHMENT = Object.freeze({
   'release:created': (payload) => payload.notesPath ?? null,
 });
 
+/**
+ * The line appended when a report/notes file exists, instead of the raw
+ * filesystem path. Found during M2 Operational Validation: a remote phone
+ * operator has no use for "C:\Users\...\report.pdf" — they can't open a
+ * Windows path from Telegram. The real file is either attached right here
+ * (see EVENT_ATTACHMENT, for channels that support it) or waiting on the
+ * machine — the text says exactly that, never the path itself.
+ */
+const REPORT_AVAILABLE_NOTE = '\n📄 Full report attached separately (or on the workstation if this channel can\'t attach files).';
+
 /** Default severity per event. Overridable via config `notifications.eventSeverity`. */
 export const EVENT_SEVERITY = Object.freeze({
   'session:launched': 'info',
@@ -118,11 +128,13 @@ const EVENT_MESSAGES = {
     // Phase 11 M2: an executive Mission Card (task/file/test/commit
     // summary + the operator's exact next command) when the orchestrator
     // supplied one; the diagnostic report is ALSO attached as a real file
-    // (see EVENT_ATTACHMENT) for channels that support it, but its path is
-    // still named here for channels that don't.
+    // (see EVENT_ATTACHMENT) for channels that support it. The text never
+    // prints the raw filesystem path — a live validation pass found a real
+    // remote operator has no use for a Windows path they can't open; the
+    // real file is either attached right here, or waiting on the machine.
     message: card
-      ? `${renderMissionCardText(card)}${reportPath ? `\nDiagnostic report: ${reportPath}` : ''}`
-      : `Stopped to avoid wasting usage: ${reason}` + (reportPath ? `\nDiagnostic report: ${reportPath}` : ''),
+      ? `${renderMissionCardText(card)}${reportPath ? REPORT_AVAILABLE_NOTE : ''}`
+      : `Stopped to avoid wasting usage: ${reason}` + (reportPath ? REPORT_AVAILABLE_NOTE : ''),
   }),
   'session:recovered': ({ project, after }) => ({
     title: `Recovered — ${project}`,
@@ -162,8 +174,10 @@ const EVENT_MESSAGES = {
   }),
   'release:created': ({ project, version, notesPath }) => ({
     title: `📦 Release prepared — ${project}`,
+    // Same fix as mission:blocked — never print the raw path to a remote
+    // operator; the notes are attached where the channel supports it.
     message: `Version ${version} release notes and verification report are ready.` +
-      (notesPath ? `\n${notesPath}` : ''),
+      (notesPath ? REPORT_AVAILABLE_NOTE : ''),
   }),
   'summary:daily': ({ text }) => ({
     title: '📊 Daily summary — AI-Orchestrator',

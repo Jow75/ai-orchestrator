@@ -177,6 +177,49 @@ test('a channel with its own minSeverity only receives events at or above it', a
   assert.equal(picky.sent.length, 1);
 });
 
+// ── Phase 11 M2 validation fix: never show a remote operator a raw path ────
+// Found live: a phone operator has no use for "C:\Users\...\report.pdf" —
+// they can't open a Windows path from Telegram. mission:blocked/
+// release:created must say the report is attached/available, never print
+// the path itself.
+
+test('mission:blocked never prints the raw reportPath, and says it is available instead', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c]);
+  const reportPath = 'C:\\Users\\Admin\\Music\\AI-Orchestrator\\state\\diagnostics\\p-123.md';
+  await engine.notify('mission:blocked', { project: 'p', reason: 'stuck', reportPath });
+  assert.ok(!c.sent[0].message.includes(reportPath));
+  assert.match(c.sent[0].message, /attached|workstation/i);
+});
+
+test('mission:blocked with no reportPath adds no report note at all', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c]);
+  await engine.notify('mission:blocked', { project: 'p', reason: 'stuck' });
+  assert.ok(!/attached|workstation/i.test(c.sent[0].message));
+});
+
+test('release:created never prints the raw notesPath, and says it is available instead', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c]);
+  const notesPath = 'C:\\Users\\Admin\\Music\\AI-Orchestrator\\state\\releases\\p\\1.0.0\\notes.md';
+  await engine.notify('release:created', { project: 'p', version: '1.0.0', notesPath });
+  assert.ok(!c.sent[0].message.includes(notesPath));
+  assert.match(c.sent[0].message, /attached|workstation/i);
+});
+
+test('a mission:blocked card also gets the report note appended, not the raw path', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c]);
+  const reportPath = 'C:\\Users\\Admin\\diagnostics\\p-1.md';
+  await engine.notify('mission:blocked', {
+    project: 'p', reason: 'stuck', reportPath,
+    card: { project: 'p', status: 'blocked', reason: 'stuck' },
+  });
+  assert.ok(!c.sent[0].message.includes(reportPath));
+  assert.match(c.sent[0].message, /attached|workstation/i);
+});
+
 // ── Phase 11 M2: approval-provider double-send prevention ─────────────────
 // A confirmed real bug: with BOTH notifications.telegram.enabled and
 // approvals.providers.telegram.enabled true (a common, even default-ish,
