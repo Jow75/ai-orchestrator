@@ -1,5 +1,13 @@
 # FAQ
 
+**Q: I'm setting this up for the first time — where do I start?**
+`node bin\ai-orchestrator.js init` — one guided command that creates a
+project, connects your phone (Telegram/email), offers the auto-resume
+task, and can start your first mission, all without hand-editing a JSON
+file. See [DAY_ONE.md](DAY_ONE.md). Prefer to do it by hand? See
+QUICKSTART.md instead — every wizard just writes the same config an
+expert would.
+
 **Q: Where do I start the whole thing from?**
 The repo root: `node bin\ai-orchestrator.js start <project>`, or
 double-click `START_AI.bat`. The desktop app (`cd desktop && npm start`)
@@ -42,6 +50,11 @@ block is there if you hand-wrote the config.
 `ai-orchestrator notify test` — it sends a real message through every
 enabled channel and prints ✔/✘ for each. `doctor` also lists the enabled
 channels.
+
+**Q: My phone buzzes on everything — can I quiet it down?**
+`ai-orchestrator notify tune` (Phase 11 M4) — pick a channel, pick a
+minimum severity (`info`/`warning`/`critical`), done. A channel with no
+severity set of its own falls back to the global `notifications.minSeverity`.
 
 **Q: Where do my SMTP password / bot token go? Won't they get committed?**
 Put them in `config/local.json` — it is git-ignored and merged over

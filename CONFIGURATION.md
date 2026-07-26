@@ -573,7 +573,9 @@ and `ai-orchestrator agents health [project]`, or `GET /api/agents` /
 - **Severity**: every event has a default severity (info/warning/critical;
   override via `notifications.eventSeverity`). `notifications.minSeverity`
   is the global floor; each channel may set its own `minSeverity` — e.g.
-  keep the desktop chatty but only page Telegram on `critical`.
+  keep the desktop chatty but only page Telegram on `critical`. Set it
+  interactively with `ai-orchestrator notify tune` (Phase 11 M4) instead of
+  hand-editing this key.
 - **Email is real now** (dependency-free SMTP):
 
 ```json

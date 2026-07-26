@@ -33,9 +33,10 @@ real `ai-orchestrator start` CLI as a detached process (survives closing
 the app). The **lifecycle strip** on top shows the mission's current state
 (received → planned → approval-pending → executing → verifying →
 completed/blocked/…) with recent transitions. Also: create a new
-(single-prompt) project entirely in-app. **After creating one, add the
-`claude.permissionMode` block to its JSON before a real unattended run —
-see [QUICKSTART.md](QUICKSTART.md) step 3.**
+(single-prompt) project entirely in-app — for a `claude` project this sets
+`claude.permissionMode: "acceptEdits"` automatically (Phase 11 M4, matching
+the CLI's `projects add`), since an unattended headless engine cannot
+answer permission prompts otherwise.
 
 ### Tasks
 The task queue for mission-mode projects: every task with its state

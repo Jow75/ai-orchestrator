@@ -352,6 +352,13 @@ Rotation is automatic (`logging.maxSize`, `logging.maxFiles`). For deep
 debugging set `logging.level` to `"debug"` — this includes child-process
 scans and stream events.
 
+### My phone buzzes on everything / doesn't buzz on what matters
+
+Each channel has its own minimum severity (`info`/`warning`/`critical`) —
+`notify tune` sets it interactively without hand-editing `config/local.json`
+(Phase 11 M4). A channel with no severity set falls back to the global
+`notifications.minSeverity` (default `info`, i.e. everything).
+
 ### Corrupt state warnings
 
 `*.corrupt-<timestamp>` files in `state/` are quarantined copies of files

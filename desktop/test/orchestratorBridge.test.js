@@ -269,3 +269,37 @@ test('getAgentHealth() idle path reports zeroed tallies for the roster', async (
   assert.equal(health[0].agentId, 'default');
   assert.equal(health[0].tasksDone, 0);
 });
+
+// Phase 11 M4: a cross-product consistency audit found createProject()
+// diverged from the CLI's `projects add`, which defaults
+// claude.permissionMode to "acceptEdits" (an unattended headless engine
+// cannot answer permission prompts, so without it a real mission blocks on
+// "no progress" — the exact new-user trap Phase 10.5/11 M1 fixed for the
+// CLI path). These pin the fix.
+test('createProject() defaults claude.permissionMode to acceptEdits, matching the CLI', async () => {
+  const root = makeRoot();
+  const workspace = path.join(root, 'workspaces', 'new-proj');
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'mission.md'), '# mission');
+
+  const bridge = new OrchestratorBridge({ rootDir: root });
+  const result = await bridge.createProject('new-proj', { dir: workspace, promptFile: 'mission.md' });
+  assert.ok(result.ok);
+
+  const saved = JSON.parse(fs.readFileSync(result.file, 'utf8'));
+  assert.deepEqual(saved.claude, { permissionMode: 'acceptEdits' });
+});
+
+test('createProject() leaves claude settings out for a non-claude driver', async () => {
+  const root = makeRoot();
+  const workspace = path.join(root, 'workspaces', 'mock-proj');
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'mission.md'), '# mission');
+
+  const bridge = new OrchestratorBridge({ rootDir: root });
+  const result = await bridge.createProject('mock-proj', { dir: workspace, promptFile: 'mission.md', driver: 'mock' });
+  assert.ok(result.ok);
+
+  const saved = JSON.parse(fs.readFileSync(result.file, 'utf8'));
+  assert.equal(saved.claude, undefined);
+});

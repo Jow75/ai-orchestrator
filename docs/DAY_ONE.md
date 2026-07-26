@@ -76,8 +76,10 @@ node bin\ai-orchestrator.js doctor
 ```
 
 `doctor` checks your environment, projects, and channels and tells you what
-to fix. See [../TROUBLESHOOTING.md](../TROUBLESHOOTING.md) for symptom →
-fix guidance.
+to fix — add `--fix` and it offers to repair what it found (safe changes
+apply on confirmation; anything needing real input hands off to the
+matching wizard). See [../TROUBLESHOOTING.md](../TROUBLESHOOTING.md) for
+symptom → fix guidance.
 
 ---
 

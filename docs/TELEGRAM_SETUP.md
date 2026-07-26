@@ -115,7 +115,8 @@ only needs the blocks you see above.)
 
 Optional noise control: `"telegram": { ..., "minSeverity": "warning" }`
 keeps chatty info events off your phone; `critical` = only approvals,
-human-action requests, and give-ups.
+human-action requests, and give-ups. Set it interactively instead with
+`ai-orchestrator notify tune`.
 
 > ⏸ **PAUSE.** Save the file. Config is read at startup only — if an
 > orchestrator is running, `ai-orchestrator stop` then start it again.

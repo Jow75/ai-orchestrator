@@ -426,15 +426,28 @@ class OrchestratorBridge {
 
   // ------------------------------------------------------------ projects --
 
-  /** Create a new (legacy single-prompt) project — mirrors `projects add`. */
+  /**
+   * Create a new (legacy single-prompt) project — mirrors `projects add`.
+   *
+   * Phase 11 M4: a cross-product consistency audit found this diverged from
+   * the CLI's own `projects add`, which defaults `claude.permissionMode` to
+   * "acceptEdits" — an unattended headless engine cannot answer permission
+   * prompts, so without it every run is effectively read-only and blocks on
+   * "no progress" (the #1 new-user trap `projects add` was fixed for back
+   * in Phase 10.5/11 M1). This in-app path had never received the same fix.
+   */
   async createProject(name, { dir, promptFile, driver = 'claude' }) {
     const cm = await this.configManager();
     try {
-      const file = cm.saveProject(name, {
+      const definition = {
         driver,
         workingDirectory: path.resolve(dir),
         promptFile,
-      });
+      };
+      if (driver === 'claude') {
+        definition.claude = { permissionMode: 'acceptEdits' };
+      }
+      const file = cm.saveProject(name, definition);
       return { ok: true, file };
     } catch (error) {
       return { ok: false, reason: error.message };

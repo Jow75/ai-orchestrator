@@ -3,6 +3,12 @@
 All commands: `node bin\ai-orchestrator.js <command>` (or plain
 `ai-orchestrator <command>` after `npm link`). `--help` works everywhere.
 
+## First run
+
+| Command | What it does |
+| --- | --- |
+| `init` | Guided first-run setup: probes Node/`claude`, offers to create a project, connect your phone (Telegram/email), install the auto-resume task, and start a mission — see [DAY_ONE.md](DAY_ONE.md) |
+
 ## Run missions
 
 | Command | What it does |
@@ -53,11 +59,21 @@ All commands: `node bin\ai-orchestrator.js <command>` (or plain
 | `schedules run-due` | Fire everything due now (for your own automation) |
 | `schedules watch` | Foreground watcher loop (pair with `scheduler install`) |
 
+## Notifications
+
+| Command | Notes |
+| --- | --- |
+| `notify test` | Send a test message through every enabled channel (✔/✘ per channel) |
+| `notify setup telegram\|email` | Guided setup: validate credentials, send a live test, save to `config/local.json` (Phase 11 M1) |
+| `notify tune` | Interactively set a channel's minimum severity (`info`/`warning`/`critical`) so it only buzzes on what matters (Phase 11 M4) |
+| `notify resend <project> <id>` | Force-resend a pending approval notification, bypassing dedup |
+
 ## Projects, agents, memory, releases
 
 | Command | Notes |
 | --- | --- |
-| `projects list` / `projects add <name> --dir <path> --prompt <file> [--driver id]` | **After `add`, set `claude.permissionMode` in the JSON** — see QUICKSTART step 3 |
+| `projects list` / `projects add <name> --dir <path> --prompt <file> [--driver id]` | Writes `claude.permissionMode: "acceptEdits"` automatically |
+| `projects add --interactive` | Guided project creation — prompts for directory, prompt file, engine, permission mode; same file shape as the flags above (Phase 11 M1) |
 | `drivers` | claude / cli / mock |
 | `agents list\|health [project]` | Roster + per-agent install/performance |
 | `agents message <project> --from a --to b --text "..."` | Cross-agent note, lands in next briefing |
@@ -72,6 +88,7 @@ All commands: `node bin\ai-orchestrator.js <command>` (or plain
 | Command | Notes |
 | --- | --- |
 | `doctor` | Full environment/config/engine diagnosis — first stop for any problem |
+| `doctor --fix` | Explains and, on confirmation, repairs what it found — safe direct fixes apply themselves; anything needing real input (a token, a project) launches the matching wizard (Phase 11 M3) |
 | `scheduler install\|uninstall\|status` | Windows auto-resume-at-logon task |
 | `api-token [--rotate]` | Token for the API's mutating endpoints |
 

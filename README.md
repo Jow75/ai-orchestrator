@@ -131,23 +131,29 @@ prompt (same conversation) → … → mission complete." See
 
 | Command | Purpose |
 | --- | --- |
+| `init` | Guided first-run setup: project + phone, no JSON editing (see [docs/DAY_ONE.md](docs/DAY_ONE.md)) |
 | `start [project] [--fresh]` | Start or resume supervising a project |
 | `resume [project]` | Resume only if something was interrupted (used at boot) |
 | `stop` | Gracefully stop the running orchestrator (session stays resumable) |
 | `status` | Live status snapshot |
 | `sessions [project] [--abandon]` | Active sessions / per-project history; `--abandon` clears a stale session |
-| `notify test` | Send a test notification through every enabled channel (✔/✘ per channel) |
+| `notify test/setup/tune/resend` | Test channels, guided setup, tune per-channel severity, force a resend |
+| `approvals list/approve/reject/modify/done` | Decide requests from any terminal (Phase 10) |
 | `timeline <project>` | Key events over the mission's lifetime |
+| `lifecycle <project>` | Standardized mission state machine + history (Phase 10) |
 | `tasks list <project>` | Task queue for a multi-task mission |
 | `tasks add/remove/reorder` | Build or adjust a project's task queue at runtime |
 | `tasks approve/skip <project> <taskId>` | Retry or bypass a blocked/failed task |
 | `memory list/add/resolve <project>` | Durable notes, failure catalog, task history |
 | `agents list/health [project]` | Inspect the multi-agent roster and per-agent performance (Phase 9) |
+| `schedules list/add/remove/watch` | Scheduled missions incl. missed-run recovery (Phase 10) |
 | `api-token [--rotate]` | Show/rotate the dashboard API's mutating-endpoint token |
-| `projects list` / `projects add` | Manage project definitions |
+| `projects list` / `projects add [--interactive]` | Manage project definitions |
 | `drivers` | List available AI engine drivers (`claude`, `cli`, `mock`) |
 | `scheduler install/uninstall/status` | Windows auto-resume task |
-| `doctor` | Diagnose environment, config, and engine installation |
+| `doctor [--fix]` | Diagnose environment, config, and engine installation — `--fix` offers to repair what it finds |
+
+See [docs/CLI_GUIDE.md](docs/CLI_GUIDE.md) for every command and flag.
 
 ## Multiple projects
 
@@ -174,8 +180,10 @@ a trading bot today and a website tomorrow without touching code. See
 
 | File | Contents |
 | --- | --- |
-| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Zero to first completed mission, step by step |
-| [docs/](docs/) | Guides: Telegram setup, email setup, remote approvals, desktop, CLI, FAQ |
+| [docs/DAY_ONE.md](docs/DAY_ONE.md) | The shortest path in: one guided command, project + phone, no JSON editing |
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | The by-hand route, step by step — useful to understand or fine-tune each piece |
+| [docs/CLI_GUIDE.md](docs/CLI_GUIDE.md) | Every command and flag, grouped by what you're trying to do |
+| [docs/](docs/) | More guides: Telegram setup, email setup, remote approvals, desktop, FAQ |
 | [INSTALL.md](INSTALL.md) | Installation, auto-start setup |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every setting, with defaults |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Modules, design rules, data flow |
