@@ -29,16 +29,27 @@ import EmailChannel from './channels/email.js';
 export const SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, critical: 2 });
 
 /**
- * Events the Approval Manager already delivers through its own two-way
- * providers (approvals.providers.telegram/email — publish + reply
- * instructions). Phase 11 M2: when a channel's matching approval provider
- * is ALSO enabled, that channel skips these events by default — otherwise
- * a single approval sends two near-identical messages (provider + channel)
- * to the very same chat/mailbox, which is exactly the "more than one
- * message per approval" duplication a live walkthrough found.
+ * Events the Approval Manager's own two-way providers (approvals.providers.
+ * telegram/email) ACTUALLY publish themselves — just the initial request
+ * (see `publish()` in telegramProvider.js/emailProvider.js). Phase 11 M2:
+ * when a channel's matching approval provider is ALSO enabled, that channel
+ * skips these two events by default — otherwise a single request sends two
+ * near-identical messages (provider + channel) to the very same
+ * chat/mailbox, which is exactly the "more than one message per approval"
+ * duplication a live walkthrough found.
+ *
+ * Deliberately does NOT include 'approval:resolved': NEITHER provider ever
+ * announces a resolution (only `publish()` exists — there is no "tell the
+ * owner it was decided" call). A live M2 validation pass caught this: an
+ * earlier version of this list included 'approval:resolved', which silently
+ * suppressed the ONLY channel that ever announces a decision made out-of-
+ * band (CLI/API/desktop) while the owner wasn't on Telegram — a real
+ * regression, not a duplicate. A decision made THROUGH Telegram needs no
+ * such echo (the owner's own reply already told them), but a decision made
+ * elsewhere must still reach them.
  */
 export const APPROVAL_PROVIDER_EVENTS = Object.freeze([
-  'approval:required', 'human-action:required', 'approval:resolved',
+  'approval:required', 'human-action:required',
 ]);
 
 /**

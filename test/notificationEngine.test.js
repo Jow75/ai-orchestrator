@@ -204,8 +204,37 @@ test('constructor auto-excludes approval events for a channel whose own provider
   const telegram = engine.channels.find((c) => c.name === 'telegram');
   assert.ok(telegram);
   assert.deepEqual(new Set(telegram.excludeEvents), new Set([
-    'approval:required', 'human-action:required', 'approval:resolved',
+    'approval:required', 'human-action:required',
   ]));
+});
+
+test('approval:resolved is NEVER auto-excluded — neither provider ever announces a resolution itself', () => {
+  // Regression caught during Phase 11 M2 live validation: an earlier
+  // version auto-excluded approval:resolved too, which silently killed the
+  // ONLY notification an owner gets when a decision is made out-of-band
+  // (CLI/API/desktop) while away from Telegram — the provider itself never
+  // announces resolutions (it only has publish(), never a "decided" call).
+  const telegramEngine = new NotificationEngine({
+    config: { telegram: { enabled: true, botToken: 't', chatId: '1' } },
+    logger: silentLogger,
+    approvalsConfig: { providers: { telegram: { enabled: true } } },
+  });
+  assert.ok(!telegramEngine.channels.find((c) => c.name === 'telegram').excludeEvents.includes('approval:resolved'));
+
+  const emailEngine = new NotificationEngine({
+    config: { email: { enabled: true, smtp: { host: 'x' }, from: 'a@b.c', to: 'a@b.c' } },
+    logger: silentLogger,
+    approvalsConfig: { providers: { email: { enabled: true } } },
+  });
+  assert.ok(!emailEngine.channels.find((c) => c.name === 'email').excludeEvents.includes('approval:resolved'));
+});
+
+test('a resolution decided via the notification channel path still delivers, even with the provider enabled', async () => {
+  const c = fakeChannel('telegram');
+  c.excludeEvents = ['approval:required', 'human-action:required']; // what the real constructor would set
+  const { engine } = engineWith([c], { withState: true });
+  await engine.notify('approval:resolved', { project: 'p', request: { id: 'A1', status: 'approved' } });
+  assert.equal(c.sent.length, 1);
 });
 
 test('no auto-exclusion when the matching approval provider is disabled', () => {
@@ -246,7 +275,7 @@ test('an explicit config excludeEvents merges with (does not replace) the auto-d
   const excluded = new Set(engine.channels.find((c) => c.name === 'telegram').excludeEvents);
   assert.ok(excluded.has('mission:complete')); // explicit
   assert.ok(excluded.has('approval:required')); // auto-derived
-  assert.equal(excluded.size, 4); // no duplicates
+  assert.equal(excluded.size, 3); // mission:complete + approval:required + human-action:required, no duplicates
 });
 
 // ── Phase 11 M2: real attachments for structured report paths ──────────────
