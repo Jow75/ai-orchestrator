@@ -71,13 +71,37 @@ A decision made in ANY surface is picked up by the waiting mission within
   it is resumable and abortable at any time, like a rate-limit wait, and
   survives reboots (the auto-resume task re-enters the same wait).
   A positive value expires the request (status `expired`) after that long.
-  **Note (audit finding):** set the timeout globally — a per-project
-  `decisionTimeoutMs`/`decisionPollMs` override is currently ignored by the
-  wait loop; only mode/category overrides are honored per project.
+  A project's own `approvals.decisionTimeoutMs`/`decisionPollMs` override
+  the global values.
 - Every request and decision (including auto-approved work) is a permanent
   audit trail: `ai-orchestrator approvals list <project>`.
 - Only the configured Telegram `chatId` can decide; API decisions need the
   local token (`ai-orchestrator api-token`).
+- **One request, one notification (Phase 11 M2).** A stop/resume or crash
+  recovery that re-enters a still-pending gate reuses the SAME request
+  instead of minting a new one and re-announcing it. And if you have both
+  `notifications.telegram.enabled` and `approvals.providers.telegram.enabled`
+  turned on (the Telegram channel AND the Telegram approval provider), the
+  notification channel automatically skips approval events on that
+  channel — the provider already delivers them with reply instructions, so
+  you get one message, not two. If a request has been sitting unanswered
+  and you want a nudge, `ai-orchestrator notify resend <project> <id>`
+  force-resends it.
+
+## Mission Cards, filenames, and attachments (Phase 11 M2)
+
+Mission-complete and mission-blocked notifications now carry an executive
+**Mission Card** — duration, tasks done, files changed, tests passed, an
+honest confidence label (`verified` / `partial` / `unverified` — a mission
+that finished without any automated check says so, never dressed up as
+verified), the real git commit the mission ended on, and — when blocked —
+your exact next command.
+
+Any message that mentions a filename (`README.md`, `DiagnosticReport.md`)
+renders it as inline code, never a clickable/dead link — a real bug a live
+walkthrough found (Telegram's `.md` happens to also be a country-code
+domain). When a real file is available (a diagnostic report, release
+notes), Telegram attaches the actual document, not just its name.
 
 ## Quick recipes
 

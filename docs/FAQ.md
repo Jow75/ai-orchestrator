@@ -54,6 +54,25 @@ Set up Telegram ([TELEGRAM_SETUP.md](TELEGRAM_SETUP.md)) — reply
 WhatsApp/Discord/Slack/push provider yet (the interface exists; each is
 "one subclass" of future work).
 
+**Q: I got two Telegram messages for the same approval — is that a bug?**
+It was, and it's fixed (Phase 11 M2). Two distinct causes: (1) a stop/resume
+or crash recovery re-entering a still-pending gate used to mint a fresh
+request and re-announce it — it now reuses the same request instead; (2)
+having both `notifications.telegram.enabled` and
+`approvals.providers.telegram.enabled` on (a common setup) used to send the
+provider's message AND the notification channel's near-identical copy —
+the channel now auto-skips approval events its own provider already
+delivers. If you still see this, check `config/orchestrator.json`'s
+`notifications.telegram.excludeEvents` hasn't been overridden to remove
+the auto-exclusion.
+
+**Q: Why did README.md show up as a link on my phone?**
+Fixed (Phase 11 M2) — it was a real bug: Telegram sent messages with no
+`parse_mode`, so its own auto-linkification ran unrestricted, and `.md`
+happens to also be a country-code domain (Moldova). Filenames now render
+as inline code, never a link; a real file (a diagnostic report, release
+notes) is attached directly instead of merely named.
+
 **Q: Can it run several projects at once?**
 Yes: `start projA projB` — one process, one orchestrator per project,
 cross-mission resource locks (`resources` on tasks). The desktop starts

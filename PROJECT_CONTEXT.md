@@ -12,22 +12,41 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-14, after **Phase 11 M1 (Onboarding & first-run
-wizards), v2.4.0** — the first Phase 11 (operator-experience) milestone,
-committed + tagged. New `init` guided setup, `projects add --interactive`,
-and `notify setup telegram|email` (automatic chat-id discovery): a brand-new
-user reaches a working project AND a phone that receives approvals without
-editing a single JSON file. Every wizard only WRITES the same config an
-expert edits by hand (optional-collaborator invariant intact). New
-`src/onboarding/` (prompts harness + project/notify/init wizards) +
-`ConfigManager.writeLocalConfig`. Backend suite **468/468** + 18 desktop;
-`init` and the project wizard verified live end-to-end through real readline.
-Full plan: `docs/PHASE_11_PLAN.md` (M1→M4 shipped as `v2.4.0`→`v2.7.0`).
-**Next: M2 — phone & notification experience** (approval-reuse dedup +
-notification idempotency, executive Mission Cards, real Telegram attachments
-+ safe formatting).
+**Last updated:** 2026-07-26, after **Phase 11 M2 (Phone & notification
+experience), v2.5.0** — committed + tagged, driven by a live operator
+walkthrough of v2.4.0. Fixed two DISTINCT causes of duplicate Telegram
+approval messages: (1) a stop/resume or crash recovery re-entering a
+still-pending gate minted a fresh request and re-published it —
+`ApprovalStore.findPending()` + reuse in `ApprovalManager.requestApproval()`
+now returns the existing request instead; (2) with both
+`notifications.telegram.enabled` and `approvals.providers.telegram.enabled`
+true (a common, even default-leaning, setup), one approval sent TWO
+near-identical messages from two different code paths — the notification
+engine now auto-excludes approval events on a channel whose own provider
+already covers them. Also fixed the confirmed `README.md`-renders-as-a-
+dead-link bug (Telegram now sends `parse_mode: 'HTML'` through a new
+`formatTelegramText()` that wraps filenames in `<code>`, leaving real URLs
+untouched), added real Telegram document attachments (`sendDocument`, no
+new dependency — Node's global FormData/Blob), formal notification
+idempotency (`state/notifications/<project>.json` + `notify resend`), and
+executive Mission Cards (duration/tasks/files/tests/confidence/commit/
+operator-action) on mission-complete and mission-blocked. Also patched a
+genuine onboarding bug the walkthrough found first: `init`'s closing
+summary printed the literal placeholder `ai-orchestrator start <project>`
+and never offered to actually launch anything — it now offers to start the
+mission right there and always names a real project in the fallback
+command. Backend suite **550/550** + 18 desktop; the formatting fix, the
+document attachment, and a realistic Mission Card were all LIVE-VERIFIED
+against the real Telegram Bot API (not just mocked fetch). Full plan:
+`docs/PHASE_11_PLAN.md` (M1→M4 shipped as `v2.4.0`→`v2.7.0`).
+**Next: M3 — doctor, recovery & operator guidance** (`doctor --fix`,
+remedy-first error catalogue, guided recovery for blocked/stale states).
 
-Previous: **Phase 10.5 (v2.3.1), 2026-07-13** — an engineering-validation
+Previous: **Phase 11 M1 (v2.4.0), 2026-07-14** — onboarding & first-run
+wizards (`init`, `projects add --interactive`, `notify setup
+telegram|email`); see CHANGELOG for full detail.
+
+Before that: **Phase 10.5 (v2.3.1), 2026-07-13** — an engineering-validation
 phase, no new architecture. Remote notifications configured AND live-verified (two-way
 Telegram bot `@jowgei_orchestrator_bot`, chat id 6522731464, + Gmail SMTP
 through the built-in smtpClient); credentials now live in the new

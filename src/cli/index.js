@@ -122,7 +122,7 @@ export function buildProgram() {
   program
     .name('ai-orchestrator')
     .description('Autonomous supervisor for AI coding agents (Claude Code and friends)')
-    .version('2.4.0');
+    .version('2.5.0');
 
   program
     .command('init')

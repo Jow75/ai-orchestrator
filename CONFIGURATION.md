@@ -596,6 +596,40 @@ and `ai-orchestrator agents health [project]`, or `GET /api/agents` /
 }
 ```
 
+## Notifications — Phase 11 M2 additions
+
+- **Idempotency.** Notifications with a stable identity (approval/human-
+  action requests) are never resent just because a poll loop or a resumed
+  process notices the request still exists. State lives at
+  `state/notifications/<project>.json` (machine-owned, never hand-edit).
+  `notifications.reminderMs` (default `0` = never remind automatically) —
+  set it to periodically re-notify about a request that's still pending
+  after that many milliseconds. To force one resend right now:
+  `ai-orchestrator notify resend <project> <id>`.
+- **`excludeEvents` (per channel).** Skip specific events on one channel.
+  Auto-populated for `telegram`/`email` with
+  `approval:required`/`human-action:required`/`approval:resolved` whenever
+  that channel's matching `approvals.providers.<name>` is ALSO enabled —
+  otherwise one approval sends two near-identical messages (the provider's
+  two-way message AND the channel's copy). Add your own on top:
+
+```json
+"telegram": { "enabled": true, "botToken": "...", "chatId": "...",
+              "excludeEvents": ["task:done"] }
+```
+
+- **Safe Telegram formatting.** Every Telegram send now uses
+  `parse_mode: 'HTML'`; a filename mentioned in text (`README.md`,
+  `report.pdf`) renders as inline code, never a clickable/dead link — real
+  `http(s)://` URLs are untouched. When a real file is available (a
+  diagnostic report, release notes), it's attached directly via
+  `sendDocument` instead of just being named.
+- **Executive Mission Cards.** `mission:complete`/`mission:blocked`
+  payloads carry a `card` (duration, tasks, files changed, tests,
+  confidence, real git commit, and — when blocked — the operator's exact
+  next command), rendered as the notification body wherever a card is
+  present.
+
 ## Scheduled missions (Phase 10G) — `config/schedules.json`
 
 ```json

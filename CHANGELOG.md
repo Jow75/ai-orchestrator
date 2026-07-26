@@ -3,6 +3,78 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.5.0] — 2026-07-26 — Phase 11 M2: Phone & notification experience
+
+The second Phase 11 milestone, driven directly by a live operator
+walkthrough of v2.4.0. Every item below traces to a confirmed defect, not
+a guess: duplicate Telegram approval messages (two distinct causes),
+`README.md` rendering as a dead link, and a plain-text mission-complete
+message with no structure.
+
+### Fixed
+
+- **Duplicate approval notification, cause 1 — resume/crash re-publishing.**
+  A stop/resume or crash recovery that re-entered a task/gate whose
+  decision never arrived called `requestApproval()` again, which always
+  minted a NEW request id and re-published it. A new
+  `ApprovalStore.findPending()`, reused by `ApprovalManager.requestApproval()`,
+  now returns the existing pending request as-is — no new id, no
+  re-publish, no re-announcement.
+  Verified with an integration test using TWO independent Orchestrator/
+  ApprovalManager instances sharing only on-disk state (a real process
+  restart), not the same in-memory instance.
+- **Duplicate approval notification, cause 2 — provider + channel both
+  firing.** Confirmed on the live config: with both
+  `notifications.telegram.enabled` and `approvals.providers.telegram.enabled`
+  true (a common setup — `approval:required` is a default subscribed
+  event), every approval sent TWO near-identical Telegram messages, from
+  two different code paths. The notification engine now auto-excludes
+  `approval:required`/`human-action:required`/`approval:resolved` on a
+  channel whose matching approval provider is already delivering them
+  (operators can still name extra exclusions via a new per-channel
+  `excludeEvents` config).
+- **`README.md`/`DiagnosticReport.md` rendering as dead links on the
+  phone.** Telegram sent every message with no `parse_mode`, so its
+  auto-linkification ran unrestricted (`.md` happens to also be a ccTLD).
+  Every Telegram send now uses `parse_mode: 'HTML'` with a new
+  `formatTelegramText()` that escapes the text and wraps filename-like
+  tokens in `<code>` — real URLs (including ones ending in a report
+  extension) are left as single, unbroken, clickable links.
+
+### Added
+
+- **Formal notification idempotency** (`state/notifications/<project>.json`):
+  once a notification with a stable identity (an approval/human-action
+  request) is sent, it is never resent unless the previous delivery
+  failed, an explicit reminder interval elapses (`notifications.reminderMs`,
+  default off), or the operator runs the new `notify resend <project> <id>`.
+- **Real Telegram document attachments.** `TelegramChannel.sendDocument()`
+  (multipart upload via Node's global `FormData`/`Blob` — no new
+  dependency) attaches a real file directly. `mission:blocked`'s diagnostic
+  report and `release:created`'s release notes are now attached as real
+  files (in addition to the safely-formatted text mention) whenever the
+  channel supports it.
+- **Executive Mission Cards.** Mission-complete and mission-blocked
+  notifications now carry a structured card — duration, tasks done, files
+  changed, tests passed, an honest confidence label (verified/partial/
+  unverified — never dressed up), the real git commit the mission ended
+  on, and (when blocked) the operator's exact next command — assembled
+  from data the orchestrator already had, nothing new tracked.
+- `notify resend <project> <id>` — force-resends one pending approval,
+  bypassing the idempotency dedup, reusing the original message rendering.
+
+### Tests
+
+- +80 tests across 7 new/updated files (approval reuse, notification
+  idempotency, provider/channel dedup, Telegram formatting, the Telegram
+  channel's send/sendDocument — both previously untested at the unit
+  level — and Mission Cards, including two real orchestrator integration
+  tests). Backend suite **550/550** + 18 desktop.
+- Live-verified against the REAL Telegram Bot API (not just mocked fetch):
+  a text message and a document attachment both delivered successfully,
+  and a realistic Mission Card rendered correctly with the actual git HEAD
+  of this repo.
+
 ## [2.4.0] — 2026-07-14 — Phase 11 M1: Onboarding & first-run wizards
 
 The first milestone of Phase 11 (operator experience). A brand-new user now
