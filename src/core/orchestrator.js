@@ -54,6 +54,7 @@ import { selectAgent } from '../agents/agentRouter.js';
 import { effectiveApprovalConfig } from '../approvals/approvalPolicy.js';
 import { buildImplementationSummary } from '../approvals/implementationSummary.js';
 import { buildMissionCard } from '../notifications/missionCard.js';
+import { userFacingError } from '../infra/errors.js';
 
 /**
  * Domain events emitted by the orchestrator.
@@ -237,15 +238,12 @@ export class Orchestrator extends EventEmitter {
       defaultAgent, defaultDriver, this.agentRegistry.effectiveProject(project, defaultAgent)
     );
     if (!installation.ok) {
-      const error = new Error(
-        `Cannot start "${projectName}" — its engine is not available.\n` +
-        `${installation.error}\n` +
-        'Run "ai-orchestrator doctor" to check every project\'s engine at once.'
-      );
       // Environment problem with a stated remedy, not a bug: the CLI
       // renders it without a stack trace (see fail() in cli/index.js).
-      error.userFacing = true;
-      throw error;
+      throw userFacingError({
+        cause: `Cannot start "${projectName}" — its engine is not available: ${installation.error}`,
+        fix: 'run "ai-orchestrator doctor" to check every project\'s engine at once.',
+      });
     }
     this.logger.info('Engine verified', {
       agent: defaultAgent.id,

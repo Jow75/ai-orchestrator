@@ -73,6 +73,7 @@ import { runProjectWizard } from '../onboarding/projectWizard.js';
 import { runTelegramSetup, runEmailSetup } from '../onboarding/notifyWizard.js';
 import { runInit } from '../onboarding/init.js';
 import { buildDoctorFindings, renderDoctorFindings, applyDoctorFix, SCHEDULED_TASK_NAME } from '../doctor/doctor.js';
+import { userFacingError } from '../infra/errors.js';
 
 /** Build a ConfigManager + quiet SessionManager for read-only commands. */
 function readOnlyContext() {
@@ -112,6 +113,37 @@ function fail(error) {
   console.error(chalk.red(`\nError: ${error.message}`));
   if (message !== error.message) console.error(chalk.dim(message));
   process.exitCode = 1;
+}
+
+/**
+ * Guided recovery (Phase 11 M3): the exact next command for a blocked/failed
+ * current task — never leave the operator to recall `tasks approve`/`tasks
+ * skip`'s syntax themselves. Pure/exported so it's unit-testable without a
+ * CLI harness (the CLI itself stays a thin shell around this).
+ *
+ * @param {string} project
+ * @param {object} [task] - The queue's current task entry, if any.
+ * @returns {string|null} Null when the task isn't blocked/failed.
+ */
+export function taskRecoveryHint(project, task) {
+  if (!task || (task.state !== 'blocked' && task.state !== 'failed')) return null;
+  return `Task "${task.id}" is ${task.state}. Retry it: ai-orchestrator tasks approve ${project} ${task.id}` +
+    ` — or skip past it: ai-orchestrator tasks skip ${project} ${task.id}`;
+}
+
+/**
+ * Guided recovery: the exact reply grammar + CLI equivalent for one pending
+ * approval request, matching ApprovalManager#renderRequestMessage's wording.
+ *
+ * @param {object} request - An approval request record.
+ * @returns {string|null} Null when the request isn't pending (nothing to reply to).
+ */
+export function approvalReplyHint(request) {
+  if (request.status !== 'pending') return null;
+  const reply = request.approvalClass === 'human-action'
+    ? `DONE ${request.id}`
+    : `APPROVE ${request.id} · REJECT ${request.id} [reason] · MODIFY ${request.id} <changes>`;
+  return `Reply: ${reply}  (or: ai-orchestrator approvals approve ${request.id})`;
 }
 
 export function buildProgram() {
@@ -351,6 +383,9 @@ export function buildProgram() {
             console.log(chalk.dim(`      ${truncateLine(task.checkpoint.summary, 100)}`));
           }
         });
+
+        const hint = taskRecoveryHint(project, queue.tasks[queue.currentIndex]);
+        if (hint) console.log(chalk.yellow(`\n  ${hint}`));
         console.log('');
       } catch (error) {
         fail(error);
@@ -689,12 +724,10 @@ export function buildProgram() {
 
         // Non-interactive path (unchanged): --dir and --prompt are required.
         if (!name || !options.dir || !options.prompt) {
-          const error = new Error(
-            'projects add needs <name>, --dir and --prompt — or run ' +
-            '"projects add --interactive" for a guided wizard.'
-          );
-          error.userFacing = true;
-          throw error;
+          throw userFacingError({
+            cause: '"projects add" needs <name>, --dir and --prompt.',
+            fix: 'run "ai-orchestrator projects add --interactive" for a guided wizard instead.',
+          });
         }
         const definition = {
           driver: options.driver,
@@ -785,9 +818,10 @@ export function buildProgram() {
           } else if (channel === 'email') {
             await runEmailSetup({ configManager, prompter });
           } else {
-            const error = new Error(`Unknown channel "${channel}". Use "telegram" or "email".`);
-            error.userFacing = true;
-            throw error;
+            throw userFacingError({
+              cause: `Unknown channel "${channel}".`,
+              fix: 'use "telegram" or "email".',
+            });
           }
         } finally {
           prompter.close();
@@ -809,16 +843,16 @@ export function buildProgram() {
         const approvalStore = new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger });
         const request = approvalStore.get(project, id);
         if (!request) {
-          const error = new Error(`No approval request "${id}" for "${project}".`);
-          error.userFacing = true;
-          throw error;
+          throw userFacingError({
+            cause: `No approval request "${id}" for "${project}".`,
+            fix: `check the id with "ai-orchestrator approvals list ${project}".`,
+          });
         }
         if (request.status !== 'pending') {
-          const error = new Error(
-            `Request "${id}" is already ${request.status} — nothing to remind the owner about.`
-          );
-          error.userFacing = true;
-          throw error;
+          throw userFacingError({
+            cause: `Request "${id}" is already ${request.status}.`,
+            impact: 'Nothing to remind the owner about — it was already decided.',
+          });
         }
 
         const notificationState = new NotificationState({
@@ -966,6 +1000,8 @@ export function buildProgram() {
             `${r.category} (${r.approvalClass})${r.taskId ? chalk.dim(` task ${r.taskId}`) : ''}`
           );
           console.log(chalk.dim(`      ${truncateLine(r.title, 100)} — ${new Date(r.createdAt).toLocaleString()}`));
+          const reply = approvalReplyHint(r);
+          if (reply) console.log(chalk.dim(`      ${reply}`));
         }
         console.log('');
       } catch (error) {
