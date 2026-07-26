@@ -15,6 +15,7 @@
 
 import { formatDuration } from '../infra/time.js';
 import { gitHead } from '../progress/progressEngine.js';
+import { outcomeIcon, outcomeLabel, confidenceLabel } from '../shared/vocabulary.js';
 
 /**
  * Build a Mission Card.
@@ -103,17 +104,14 @@ export function buildMissionCard({
  * @returns {string}
  */
 export function renderMissionCardText(card) {
-  const statusLabel = { complete: '✅ Complete', blocked: '⛔ Blocked', cancelled: '⚠️ Cancelled' }[card.status]
-    ?? card.status;
+  const statusLabel = `${outcomeIcon(card.status)} ${outcomeLabel(card.status)}`;
   const lines = [`Mission: ${card.project}`, `Status: ${statusLabel}`];
 
   if (card.duration) lines.push(`Duration: ${card.duration}`);
   if (card.tasksTotal) lines.push(`Tasks: ${card.tasksDone}/${card.tasksTotal} done`);
   if (card.tests) lines.push(`Tests: ${card.tests.passed}/${card.tests.total} passed`);
   if (card.confidence) {
-    const label = { verified: 'Verified ✔', partial: 'Partially verified ⚠️', unverified: 'Unverified (no checks ran)' }[card.confidence]
-      ?? card.confidence;
-    lines.push(`Confidence: ${label}`);
+    lines.push(`Confidence: ${confidenceLabel(card.confidence)}`);
   }
   if (card.filesChanged?.length) {
     lines.push(`Files changed (${card.filesChanged.length}): ${card.filesChanged.slice(0, 8).join(', ')}` +

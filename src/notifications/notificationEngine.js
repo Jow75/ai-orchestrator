@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import { formatDuration } from '../infra/time.js';
 import { renderMissionCardText } from './missionCard.js';
+import { outcomeIcon, decisionLabel } from '../shared/vocabulary.js';
 import DesktopChannel from './channels/desktop.js';
 import WebhookChannel from './channels/webhook.js';
 import DiscordChannel from './channels/discord.js';
@@ -72,8 +73,13 @@ export const EVENT_ATTACHMENT = Object.freeze({
  * Windows path from Telegram. The real file is either attached right here
  * (see EVENT_ATTACHMENT, for channels that support it) or waiting on the
  * machine — the text says exactly that, never the path itself.
+ *
+ * Phase 11 M4: the original wording ("attached separately") was itself
+ * inaccurate for a channel with no `sendDocument` (email has none today) —
+ * it claimed an attachment that never actually arrives. Reworded to state
+ * both outcomes without asserting which one this channel gets.
  */
-const REPORT_AVAILABLE_NOTE = '\n📄 Full report attached separately (or on the workstation if this channel can\'t attach files).';
+const REPORT_AVAILABLE_NOTE = '\n📄 Full report: arriving as a separate attachment next, or open it on the workstation if this channel can\'t attach files.';
 
 /** Default severity per event. Overridable via config `notifications.eventSeverity`. */
 export const EVENT_SEVERITY = Object.freeze({
@@ -124,7 +130,7 @@ const EVENT_MESSAGES = {
     message: `Supervision stopped: ${reason}`,
   }),
   'mission:blocked': ({ project, reason, reportPath, card }) => ({
-    title: `⛔ Blocked — ${project}`,
+    title: `${outcomeIcon('blocked')} Blocked — ${project}`,
     // Phase 11 M2: an executive Mission Card (task/file/test/commit
     // summary + the operator's exact next command) when the orchestrator
     // supplied one; the diagnostic report is ALSO attached as a real file
@@ -141,7 +147,10 @@ const EVENT_MESSAGES = {
     message: `Interrupted session found (${after}); resuming automatically.`,
   }),
   'mission:complete': ({ project, summary, card }) => ({
-    title: `🎉 Mission complete — ${project}`,
+    // Phase 11 M4: was 🎉 — a terminology audit found this was the third
+    // different "success" icon across surfaces (CLI used ✔, Mission Cards
+    // used ✅); now all three agree via outcomeIcon('complete').
+    title: `${outcomeIcon('complete')} Mission complete — ${project}`,
     message: card
       ? `${renderMissionCardText(card)}\n\n${truncate(summary ?? '', 300)}`.trim()
       : truncate(summary ?? 'The mission is complete.', 400),
@@ -156,7 +165,7 @@ const EVENT_MESSAGES = {
     message: truncate(message ?? `Request ${request?.id} (${request?.category}) awaits your decision.`, 1200),
   }),
   'approval:resolved': ({ project, request }) => ({
-    title: `Approval ${request?.status} — ${project}`,
+    title: `Approval ${decisionLabel(request?.status)} — ${project}`,
     message: `Request ${request?.id} (${request?.category}) was ${request?.status}` +
       (request?.decisionNote ? `: ${truncate(request.decisionNote, 200)}` : '.'),
   }),

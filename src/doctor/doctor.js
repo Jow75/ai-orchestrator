@@ -28,6 +28,7 @@ import ConfigManager from '../config/configManager.js';
 import DriverRegistry from '../drivers/driverRegistry.js';
 import SessionManager from '../state/sessionManager.js';
 import { readJsonSafe } from '../state/statePersistence.js';
+import { CHECK_MARK } from '../shared/vocabulary.js';
 import { isPidAlive } from '../state/heartbeat.js';
 import { silentLogger } from '../infra/logger.js';
 
@@ -358,8 +359,6 @@ export async function buildDoctorFindings({
   return findings;
 }
 
-const STATUS_MARK = { ok: '✔', warn: '⚠', fail: '✘' };
-
 /**
  * Print findings exactly as `doctor` has always looked (✔/⚠/✘ + label +
  * dim detail), one per line, in a `chalk`-colored terminal-friendly format.
@@ -378,7 +377,7 @@ export function renderDoctorFindings(findings, chalk) {
       console.log(chalk.yellow(`\n  An orchestrator is currently running (${f.label}).`));
       continue;
     }
-    const mark = color[f.status](STATUS_MARK[f.status]);
+    const mark = color[f.status](CHECK_MARK[f.status]);
     console.log(`  ${mark} ${f.label}${f.detail ? chalk.dim(` — ${f.detail}`) : ''}`);
   }
   console.log('');

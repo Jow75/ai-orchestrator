@@ -10,6 +10,7 @@
  */
 
 import { writeJsonAtomic } from './statePersistence.js';
+import { VERSION } from '../infra/version.js';
 
 export class StatusManager {
   /**
@@ -31,7 +32,7 @@ export class StatusManager {
         state: 'starting',
         pid: process.pid,
         startedAt: new Date(this.startedAt).toISOString(),
-        version: '2.6.0',
+        version: VERSION,
       },
       project: null,
       session: null,

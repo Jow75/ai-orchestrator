@@ -22,6 +22,7 @@
 
 import { runProjectWizard } from './projectWizard.js';
 import { runTelegramSetup, runEmailSetup } from './notifyWizard.js';
+import { outcomeIcon } from '../shared/vocabulary.js';
 
 /** Quote a project name for a shell command only if it needs it (has whitespace). */
 function quoteProjectName(name) {
@@ -141,8 +142,8 @@ export async function runInit({
         : await p.choose('Which project?', projectsNow, { default: justCreated ?? projectsNow[0] });
       p.say(`\nStarting "${target}" — this terminal now supervises it.`);
       const result = await startMission(target);
-      if (result?.complete) p.say(`✅ Mission complete: ${result.reason}`);
-      else if (result?.reason) p.say(`■ Supervision ended: ${result.reason}`);
+      if (result?.complete) p.say(`${outcomeIcon('complete')} Mission complete: ${result.reason}`);
+      else if (result?.reason) p.say(`${outcomeIcon('incomplete')} Supervision ended: ${result.reason}`);
       startedProject = target;
     }
   }
