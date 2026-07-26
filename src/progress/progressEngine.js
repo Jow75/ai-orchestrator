@@ -239,8 +239,12 @@ function signalsFromChanges(changes) {
   return signals;
 }
 
-/** Return the current git HEAD for a directory, or null when not a repo. */
-function gitHead(dir) {
+/**
+ * Return the current git HEAD for a directory, or null when not a repo.
+ * Exported for reuse by the Phase 11 M2 mission-card builder, which wants
+ * the real commit a mission ended on — never invented, never guessed.
+ */
+export function gitHead(dir) {
   try {
     return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], {
       encoding: 'utf8',

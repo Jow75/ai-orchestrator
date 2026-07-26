@@ -53,6 +53,7 @@ import { AgentHealth } from '../agents/agentHealth.js';
 import { selectAgent } from '../agents/agentRouter.js';
 import { effectiveApprovalConfig } from '../approvals/approvalPolicy.js';
 import { buildImplementationSummary } from '../approvals/implementationSummary.js';
+import { buildMissionCard } from '../notifications/missionCard.js';
 
 /**
  * Domain events emitted by the orchestrator.
@@ -311,10 +312,15 @@ export class Orchestrator extends EventEmitter {
       this.sessionManager.closeSession(session, SessionState.COMPLETED);
       this.statusManager.syncSession(session);
       this.statusManager.set({ orchestrator: { state: 'mission-complete' } });
+      const reason = 'all tasks already completed';
       this.emit('mission:complete', {
         project: project.name, session, summary: 'All tasks were already complete.',
+        card: buildMissionCard({
+          project: project.name, session, queue: this.taskQueueState,
+          status: 'complete', reason, workingDirectory: project.workingDirectory,
+        }),
       });
-      return { complete: true, session, reason: 'all tasks already completed' };
+      return { complete: true, session, reason };
     }
 
     // Crash counting is per-process-lifetime: a reboot or manual restart
@@ -595,7 +601,16 @@ export class Orchestrator extends EventEmitter {
           const summary = exitInfo.resultText ?? 'Mission complete.';
           this.logger.info('Mission complete', { project: project.name });
           this.lifecycle?.transition(project.name, 'completed', 'completion marker found');
-          this.emit('mission:complete', { project: project.name, session, summary });
+          this.emit('mission:complete', {
+            project: project.name, session, summary,
+            // Legacy (no-tasks) mode has no per-task queue to summarize —
+            // the card still carries duration/commit/reason, just no
+            // files/tests aggregation (there's nothing to aggregate from).
+            card: buildMissionCard({
+              project: project.name, session, status: 'complete',
+              reason: 'completion marker found', workingDirectory: project.workingDirectory,
+            }),
+          });
           return {
             done: true,
             result: { complete: true, session, reason: 'completion marker found' },
@@ -824,13 +839,17 @@ export class Orchestrator extends EventEmitter {
         this.statusManager.syncSession(session);
         this.statusManager.set({ orchestrator: { state: 'mission-complete' } });
         const summary = exitInfo.resultText ?? 'Mission complete.';
+        const reason = 'all tasks completed and verified';
         this.logger.info('Mission complete (all tasks done)', { project: project.name });
-        this.lifecycle?.transition(project.name, 'completed', 'all tasks completed and verified');
-        this.emit('mission:complete', { project: project.name, session, summary });
-        return {
-          done: true,
-          result: { complete: true, session, reason: 'all tasks completed and verified' },
-        };
+        this.lifecycle?.transition(project.name, 'completed', reason);
+        this.emit('mission:complete', {
+          project: project.name, session, summary,
+          card: buildMissionCard({
+            project: project.name, session, queue, status: 'complete',
+            reason, workingDirectory: project.workingDirectory,
+          }),
+        });
+        return { done: true, result: { complete: true, session, reason } };
       }
 
       await this.interRunDelay(signal);
@@ -1337,6 +1356,12 @@ export class Orchestrator extends EventEmitter {
     });
     this.emit('mission:blocked', {
       project: project.name, session, reason, category, reportPath,
+      card: buildMissionCard({
+        project: project.name, session,
+        queue: this.missionMode ? this.taskQueueState : undefined,
+        status: 'blocked', reason, operatorAction: hint,
+        workingDirectory: project.workingDirectory,
+      }),
     });
     return {
       done: true,

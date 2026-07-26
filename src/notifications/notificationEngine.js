@@ -18,6 +18,7 @@
 
 import fs from 'node:fs';
 import { formatDuration } from '../infra/time.js';
+import { renderMissionCardText } from './missionCard.js';
 import DesktopChannel from './channels/desktop.js';
 import WebhookChannel from './channels/webhook.js';
 import DiscordChannel from './channels/discord.js';
@@ -101,19 +102,26 @@ const EVENT_MESSAGES = {
     title: `Needs attention — ${project}`,
     message: `Supervision stopped: ${reason}`,
   }),
-  'mission:blocked': ({ project, reason, reportPath }) => ({
+  'mission:blocked': ({ project, reason, reportPath, card }) => ({
     title: `⛔ Blocked — ${project}`,
-    message:
-      `Stopped to avoid wasting usage: ${reason}` +
-      (reportPath ? `\nDiagnostic report: ${reportPath}` : ''),
+    // Phase 11 M2: an executive Mission Card (task/file/test/commit
+    // summary + the operator's exact next command) when the orchestrator
+    // supplied one; the diagnostic report is ALSO attached as a real file
+    // (see EVENT_ATTACHMENT) for channels that support it, but its path is
+    // still named here for channels that don't.
+    message: card
+      ? `${renderMissionCardText(card)}${reportPath ? `\nDiagnostic report: ${reportPath}` : ''}`
+      : `Stopped to avoid wasting usage: ${reason}` + (reportPath ? `\nDiagnostic report: ${reportPath}` : ''),
   }),
   'session:recovered': ({ project, after }) => ({
     title: `Recovered — ${project}`,
     message: `Interrupted session found (${after}); resuming automatically.`,
   }),
-  'mission:complete': ({ project, summary }) => ({
+  'mission:complete': ({ project, summary, card }) => ({
     title: `🎉 Mission complete — ${project}`,
-    message: truncate(summary ?? 'The mission is complete.', 400),
+    message: card
+      ? `${renderMissionCardText(card)}\n\n${truncate(summary ?? '', 300)}`.trim()
+      : truncate(summary ?? 'The mission is complete.', 400),
   }),
   'orchestrator:recovered-after-reboot': ({ project }) => ({
     title: 'AI-Orchestrator recovered',

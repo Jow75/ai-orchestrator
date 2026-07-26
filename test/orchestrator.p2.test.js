@@ -113,6 +113,17 @@ test('a two-task mission completes both tasks in order via file-exists verificat
     assert.equal(completeEvents.length, 1);
     assert.ok(fs.existsSync(path.join(workspace, 'a.txt')));
     assert.ok(fs.existsSync(path.join(workspace, 'b.txt')));
+
+    // Phase 11 M2: the executive Mission Card is real, wired data — not a
+    // mock. Both tasks + both created files + all verifiers show up.
+    const { card } = completeEvents[0];
+    assert.equal(card.project, 'p2proj');
+    assert.equal(card.status, 'complete');
+    assert.equal(card.tasksDone, 2);
+    assert.equal(card.tasksTotal, 2);
+    assert.deepEqual(new Set(card.filesChanged), new Set(['a.txt', 'b.txt']));
+    assert.equal(card.confidence, 'verified');
+    assert.ok(card.duration);
   });
 });
 
@@ -165,6 +176,14 @@ test('exhausting a task\'s retry budget blocks (never silently moves on)', () =>
     assert.equal(blockedEvents.length, 1);
     assert.equal(blockedEvents[0].category, 'verification-failed');
     assert.match(blockedEvents[0].reason, /T1/);
+
+    // Phase 11 M2: the card carries the SAME reason and the operator's
+    // exact remedy (block()'s hint), so a blocked-mission message is
+    // actionable on its own, not just informative.
+    const { card } = blockedEvents[0];
+    assert.equal(card.status, 'blocked');
+    assert.equal(card.reason, blockedEvents[0].reason);
+    assert.ok(card.operatorAction); // the hint text — some remedy is present
 
     // The session is archived BLOCKED (not auto-resumable).
     assert.equal(sessionManager.getResumableSession('p2proj'), null);
