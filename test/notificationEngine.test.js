@@ -165,6 +165,78 @@ test('a channel with its own minSeverity only receives events at or above it', a
   assert.equal(picky.sent.length, 1);
 });
 
+// ── Phase 11 M2: approval-provider double-send prevention ─────────────────
+// A confirmed real bug: with BOTH notifications.telegram.enabled and
+// approvals.providers.telegram.enabled true (a common, even default-ish,
+// setup), a single approval sent TWO nearly-identical Telegram messages —
+// one from the approval provider's publish(), one from this channel.
+
+test('a channel excludes an event listed in notify() via channel.excludeEvents', async () => {
+  const excluded = fakeChannel('fake');
+  excluded.excludeEvents = ['approval:required'];
+  const included = fakeChannel('other');
+  const { engine } = engineWith([excluded, included]);
+  await engine.notify('approval:required', { project: 'p', request: { id: 'A1' } });
+  assert.equal(excluded.sent.length, 0);
+  assert.equal(included.sent.length, 1);
+  await engine.notify('mission:complete', { project: 'p', summary: 'done' });
+  assert.equal(excluded.sent.length, 1); // not excluded from THIS event
+});
+
+test('constructor auto-excludes approval events for a channel whose own provider is enabled', () => {
+  const engine = new NotificationEngine({
+    config: { telegram: { enabled: true, botToken: 't', chatId: '1' } },
+    logger: silentLogger,
+    approvalsConfig: { providers: { telegram: { enabled: true } } },
+  });
+  const telegram = engine.channels.find((c) => c.name === 'telegram');
+  assert.ok(telegram);
+  assert.deepEqual(new Set(telegram.excludeEvents), new Set([
+    'approval:required', 'human-action:required', 'approval:resolved',
+  ]));
+});
+
+test('no auto-exclusion when the matching approval provider is disabled', () => {
+  const engine = new NotificationEngine({
+    config: { telegram: { enabled: true, botToken: 't', chatId: '1' } },
+    logger: silentLogger,
+    approvalsConfig: { providers: { telegram: { enabled: false } } },
+  });
+  assert.deepEqual(engine.channels.find((c) => c.name === 'telegram').excludeEvents, []);
+});
+
+test('no auto-exclusion at all when approvalsConfig is omitted (notify test / notify resend)', () => {
+  const engine = new NotificationEngine({
+    config: { telegram: { enabled: true, botToken: 't', chatId: '1' } },
+    logger: silentLogger,
+    // approvalsConfig deliberately not passed.
+  });
+  assert.deepEqual(engine.channels.find((c) => c.name === 'telegram').excludeEvents, []);
+});
+
+test('auto-exclusion is per-channel-type: a desktop channel is never auto-excluded', () => {
+  const engine = new NotificationEngine({
+    config: { desktop: { enabled: true } },
+    logger: silentLogger,
+    approvalsConfig: { providers: { telegram: { enabled: true }, email: { enabled: true } } },
+  });
+  assert.deepEqual(engine.channels.find((c) => c.name === 'desktop').excludeEvents, []);
+});
+
+test('an explicit config excludeEvents merges with (does not replace) the auto-derived list', () => {
+  const engine = new NotificationEngine({
+    config: {
+      telegram: { enabled: true, botToken: 't', chatId: '1', excludeEvents: ['mission:complete'] },
+    },
+    logger: silentLogger,
+    approvalsConfig: { providers: { telegram: { enabled: true } } },
+  });
+  const excluded = new Set(engine.channels.find((c) => c.name === 'telegram').excludeEvents);
+  assert.ok(excluded.has('mission:complete')); // explicit
+  assert.ok(excluded.has('approval:required')); // auto-derived
+  assert.equal(excluded.size, 4); // no duplicates
+});
+
 test('attach() only forwards events present in config.events', () => {
   const emitter = new EventEmitter();
   const c = fakeChannel('fake');

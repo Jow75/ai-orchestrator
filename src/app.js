@@ -139,6 +139,11 @@ export class App {
       config: this.config.notifications,
       logger: childLogger(this.logger, 'notifications'),
       notificationState: this.notificationState,
+      // Phase 11 M2: lets the engine auto-skip approval events on a channel
+      // whose own two-way provider (approvals.providers.telegram/email) is
+      // already delivering them — otherwise one approval sends two
+      // near-identical messages to the same chat/mailbox.
+      approvalsConfig: this.config.approvals,
     });
     this.notifications.attach(this.orchestrator);
     this.notifications.attach(this.approvalManager); // Phase 10A events

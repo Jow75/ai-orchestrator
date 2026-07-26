@@ -26,6 +26,19 @@ import EmailChannel from './channels/email.js';
 /** Severity ranks (10F). Anything unlisted defaults to 'info'. */
 export const SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, critical: 2 });
 
+/**
+ * Events the Approval Manager already delivers through its own two-way
+ * providers (approvals.providers.telegram/email — publish + reply
+ * instructions). Phase 11 M2: when a channel's matching approval provider
+ * is ALSO enabled, that channel skips these events by default — otherwise
+ * a single approval sends two near-identical messages (provider + channel)
+ * to the very same chat/mailbox, which is exactly the "more than one
+ * message per approval" duplication a live walkthrough found.
+ */
+export const APPROVAL_PROVIDER_EVENTS = Object.freeze([
+  'approval:required', 'human-action:required', 'approval:resolved',
+]);
+
 /** Default severity per event. Overridable via config `notifications.eventSeverity`. */
 export const EVENT_SEVERITY = Object.freeze({
   'session:launched': 'info',
@@ -138,8 +151,14 @@ export class NotificationEngine {
    *   Phase 11 M2: idempotency for events with a stable identity (approval/
    *   human-action requests). Absent ⇒ every notification is always sent —
    *   the pre-M2 behaviour, and what every existing caller/test still gets.
+   * @param {object} [options.approvalsConfig] - The global `approvals`
+   *   config block. Phase 11 M2: used ONLY to auto-derive, per channel,
+   *   which events its matching approval provider already covers (see
+   *   APPROVAL_PROVIDER_EVENTS). Omit (as every ad-hoc CLI-constructed
+   *   engine — `notify test`/`notify resend` — deliberately does) to skip
+   *   auto-exclusion entirely.
    */
-  constructor({ config, logger, notificationState = null }) {
+  constructor({ config, logger, notificationState = null, approvalsConfig = null }) {
     this.config = config;
     this.logger = logger;
     this.notificationState = notificationState;
@@ -164,6 +183,14 @@ export class NotificationEngine {
         const channel = new ChannelClass({ config: config[name], logger });
         // A channel may raise (never lower) its own severity floor.
         channel.minSeverity = config[name].minSeverity ?? null;
+        // Phase 11 M2: auto-exclude approval events this channel's own
+        // provider already delivers; an operator can still name EXTRA
+        // events to exclude via config[name].excludeEvents (merged, not
+        // replaced) for any channel/event combination.
+        const autoExcluded = ['telegram', 'email'].includes(name) && approvalsConfig?.providers?.[name]?.enabled
+          ? APPROVAL_PROVIDER_EVENTS
+          : [];
+        channel.excludeEvents = [...new Set([...(config[name].excludeEvents ?? []), ...autoExcluded])];
         this.channels.push(channel);
       }
     }
@@ -221,6 +248,7 @@ export class NotificationEngine {
     let anySent = false;
     await Promise.allSettled(
       this.channels.map(async (channel) => {
+        if (channel.excludeEvents?.includes(event)) return;
         if (channel.minSeverity && rank < (SEVERITY_RANK[channel.minSeverity] ?? 0)) return;
         try {
           const result = await channel.send({ title, message, event, payload, severity });
