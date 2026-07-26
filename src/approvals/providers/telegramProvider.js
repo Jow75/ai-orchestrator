@@ -14,6 +14,7 @@
 
 import { ApprovalProvider, parseDecisionText } from './approvalProvider.js';
 import { writeJsonAtomic, readJsonSafe } from '../../state/statePersistence.js';
+import { escapeHtml, formatTelegramText } from '../../notifications/telegramFormat.js';
 
 /** Abort a hung Telegram call after this long. */
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -46,16 +47,28 @@ export class TelegramApprovalProvider extends ApprovalProvider {
     }
   }
 
-  /** @param {{title: string, message: string}} publication */
+  /**
+   * @param {{title: string, message: string}} publication
+   * @returns {Promise<{messageId?: string}>}
+   */
   async publish({ title, message }) {
     this.requireConfig();
+    // Phase 11 M2: same fix as the notification channel — HTML parse_mode
+    // + formatTelegramText, so a plan/summary that mentions a filename
+    // ("README.md") never renders as a dead link on the owner's phone.
+    const text = `${escapeHtml(title)}\n\n${formatTelegramText(message)}`;
     const response = await this.fetchFn(this.api('sendMessage'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: this.config.chatId, text: `${title}\n\n${message}` }),
+      body: JSON.stringify({
+        chat_id: this.config.chatId, text, parse_mode: 'HTML', disable_web_page_preview: true,
+      }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`Telegram API responded ${response.status}`);
+    const body = await response.json().catch(() => ({}));
+    const id = body?.result?.message_id;
+    return { messageId: id != null ? String(id) : undefined };
   }
 
   loadOffset() {

@@ -16,6 +16,7 @@
  * disturb supervision.
  */
 
+import fs from 'node:fs';
 import { formatDuration } from '../infra/time.js';
 import DesktopChannel from './channels/desktop.js';
 import WebhookChannel from './channels/webhook.js';
@@ -38,6 +39,19 @@ export const SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, critical: 2 })
 export const APPROVAL_PROVIDER_EVENTS = Object.freeze([
   'approval:required', 'human-action:required', 'approval:resolved',
 ]);
+
+/**
+ * Where to find a REAL, attachable file for an event's payload — only
+ * events with a STRUCTURED file reference qualify (not freeform agent
+ * prose, which formatTelegramText already protects as text). When a
+ * channel supports `sendDocument` (currently only Telegram) and the path
+ * resolves to a real file, the actual artifact is attached as a follow-up
+ * to the text notification — never just a bare filename mention.
+ */
+export const EVENT_ATTACHMENT = Object.freeze({
+  'mission:blocked': (payload) => payload.reportPath ?? null,
+  'release:created': (payload) => payload.notesPath ?? null,
+});
 
 /** Default severity per event. Overridable via config `notifications.eventSeverity`. */
 export const EVENT_SEVERITY = Object.freeze({
@@ -244,6 +258,11 @@ export class NotificationEngine {
 
     const { title, message } = render(payload);
 
+    // Phase 11 M2: a REAL, attachable file for this event (a structured
+    // reportPath/notesPath, never freeform agent prose — see EVENT_ATTACHMENT).
+    const attachmentPath = EVENT_ATTACHMENT[event]?.(payload) ?? null;
+    const hasAttachment = attachmentPath && fs.existsSync(attachmentPath);
+
     const channelIds = {};
     let anySent = false;
     await Promise.allSettled(
@@ -260,6 +279,19 @@ export class NotificationEngine {
             event,
             error: error.message,
           });
+          return; // don't attempt the attachment if the text itself failed
+        }
+        // Attach the real file as a follow-up — never just a bare filename
+        // mention — when this channel supports it. Best-effort: a failed
+        // attachment never undoes the text notification that already sent.
+        if (hasAttachment && channel.sendDocument) {
+          try {
+            await channel.sendDocument({ filePath: attachmentPath, caption: title });
+          } catch (error) {
+            this.logger.warn('Attachment delivery failed; text notification still sent', {
+              channel: channel.name, event, attachmentPath, error: error.message,
+            });
+          }
         }
       })
     );

@@ -16,13 +16,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { NotificationEngine, dedupeKeyFor } from '../src/notifications/notificationEngine.js';
+import { NotificationEngine, dedupeKeyFor, EVENT_ATTACHMENT } from '../src/notifications/notificationEngine.js';
 import { NotificationState } from '../src/notifications/notificationState.js';
 import { silentLogger } from '../src/infra/logger.js';
 
 /** A fake channel: records every send; `behavior` controls success/failure/messageId. */
 function fakeChannel(name, behavior = {}) {
-  return {
+  const c = {
     name,
     minSeverity: behavior.minSeverity ?? null,
     sent: [],
@@ -32,6 +32,18 @@ function fakeChannel(name, behavior = {}) {
       return behavior.messageId ? { messageId: behavior.messageId } : undefined;
     },
   };
+  // Only channels that actually support attachments (Telegram) get this —
+  // omit `withDocuments` to simulate desktop/webhook/discord/email, which
+  // never receive an attachment follow-up.
+  if (behavior.withDocuments) {
+    c.docsSent = [];
+    c.sendDocument = async ({ filePath, caption }) => {
+      c.docsSent.push({ filePath, caption });
+      if (behavior.docFail) throw new Error(behavior.docFail);
+      return { messageId: 'doc-1' };
+    };
+  }
+  return c;
 }
 
 function engineWith(channels, { config = {}, withState = false } = {}) {
@@ -235,6 +247,81 @@ test('an explicit config excludeEvents merges with (does not replace) the auto-d
   assert.ok(excluded.has('mission:complete')); // explicit
   assert.ok(excluded.has('approval:required')); // auto-derived
   assert.equal(excluded.size, 4); // no duplicates
+});
+
+// ── Phase 11 M2: real attachments for structured report paths ──────────────
+
+function tmpReport(content = '# Diagnostic report\n...') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-report-'));
+  const file = path.join(dir, 'report.md');
+  fs.writeFileSync(file, content);
+  return file;
+}
+
+test('EVENT_ATTACHMENT resolves the structured path per event, and nothing for others', () => {
+  const reportPath = '/tmp/report.md';
+  assert.equal(EVENT_ATTACHMENT['mission:blocked']({ reportPath }), reportPath);
+  assert.equal(EVENT_ATTACHMENT['release:created']({ notesPath: reportPath }), reportPath);
+  assert.equal(EVENT_ATTACHMENT['mission:blocked']({}), null);
+  assert.equal(EVENT_ATTACHMENT['mission:complete'], undefined); // no mapping at all
+});
+
+test('mission:blocked with a real reportPath attaches the file on a channel that supports it', async () => {
+  const c = fakeChannel('telegram', { withDocuments: true });
+  const { engine } = engineWith([c]);
+  const reportPath = tmpReport();
+  await engine.notify('mission:blocked', { project: 'p', reason: 'stuck', reportPath });
+  assert.equal(c.sent.length, 1); // text notification still sent
+  assert.equal(c.docsSent.length, 1); // AND the real file attached
+  assert.equal(c.docsSent[0].filePath, reportPath);
+});
+
+test('release:created attaches notesPath the same way', async () => {
+  const c = fakeChannel('telegram', { withDocuments: true });
+  const { engine } = engineWith([c]);
+  const notesPath = tmpReport('# Release notes');
+  await engine.notify('release:created', { project: 'p', version: '1.0.0', notesPath });
+  assert.equal(c.docsSent.length, 1);
+  assert.equal(c.docsSent[0].filePath, notesPath);
+});
+
+test('a channel without sendDocument (desktop/webhook/discord/email) never gets an attachment attempt', async () => {
+  const c = fakeChannel('desktop'); // withDocuments not set
+  const { engine } = engineWith([c]);
+  await engine.notify('mission:blocked', { project: 'p', reason: 'stuck', reportPath: tmpReport() });
+  assert.equal(c.sent.length, 1); // text still delivered, no crash from missing sendDocument
+});
+
+test('a reportPath that does not resolve to a real file is never attached', async () => {
+  const c = fakeChannel('telegram', { withDocuments: true });
+  const { engine } = engineWith([c]);
+  await engine.notify('mission:blocked', { project: 'p', reason: 'stuck', reportPath: '/no/such/report.md' });
+  assert.equal(c.docsSent.length, 0);
+});
+
+test('an event with no EVENT_ATTACHMENT mapping never attaches, even with a real path lying around in the payload', async () => {
+  const c = fakeChannel('telegram', { withDocuments: true });
+  const { engine } = engineWith([c]);
+  await engine.notify('mission:complete', { project: 'p', summary: 'done', reportPath: tmpReport() });
+  assert.equal(c.docsSent.length, 0);
+});
+
+test('a failed attachment delivery is swallowed — the text notification stays delivered', async () => {
+  const c = fakeChannel('telegram', { withDocuments: true, docFail: 'network blip' });
+  const { engine, notificationState } = engineWith([c], { withState: true });
+  await engine.notify('mission:blocked', { project: 'p', reason: 'stuck', reportPath: tmpReport() });
+  assert.equal(c.sent.length, 1);
+  assert.equal(c.docsSent.length, 1); // attempted
+  // mission:blocked has no stable dedupe key today, but if it did, "sent"
+  // must reflect the successful TEXT delivery, not the failed attachment.
+  assert.equal(dedupeKeyFor('mission:blocked', {}), null);
+});
+
+test('if the text send itself fails, the attachment is never attempted', async () => {
+  const c = fakeChannel('telegram', { withDocuments: true, fail: 'text failed' });
+  const { engine } = engineWith([c]);
+  await engine.notify('mission:blocked', { project: 'p', reason: 'stuck', reportPath: tmpReport() });
+  assert.equal(c.docsSent.length, 0);
 });
 
 test('attach() only forwards events present in config.events', () => {
