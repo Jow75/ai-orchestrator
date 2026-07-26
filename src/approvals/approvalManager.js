@@ -82,7 +82,11 @@ export class ApprovalManager extends EventEmitter {
    * Auto-approvable work is recorded (audit trail) and returns immediately
    * with `approved: true`. Anything else is persisted pending, published to
    * every provider, announced via 'approval:required', and returned with
-   * `approved: false` — callers then `waitForDecision()`.
+   * `approved: false` — callers then `waitForDecision()`. If a PENDING
+   * request already exists for the same (project, taskId, category) — e.g.
+   * a stop/resume or crash recovery re-entering a gate that never got a
+   * decision — that request is reused as-is: no new id, no re-publish, no
+   * re-announcement (Phase 11 M2; see approvalStore.findPending).
    *
    * @param {object} params
    * @param {string} params.project - Project name.
@@ -103,6 +107,20 @@ export class ApprovalManager extends EventEmitter {
       }) ?? null;
       this.logger.info('Approval auto-granted by policy', { project, category, approvalClass, reason });
       return { approved: true, auto: true, request };
+    }
+
+    // Phase 11 M2: reuse an existing PENDING request for this exact
+    // (project, taskId, category) instead of minting a new id and
+    // re-publishing. Without this, a stop/resume or crash recovery that
+    // re-enters a still-ungranted gate created a FRESH request every time
+    // and re-announced it through every provider — paging the owner again
+    // for a decision they hadn't even had a chance to make yet.
+    const existing = this.store?.findPending(project, { taskId: taskId ?? null, category });
+    if (existing) {
+      this.logger.info('Reusing existing pending approval request (not re-publishing)', {
+        project, id: existing.id, category,
+      });
+      return { approved: false, request: existing };
     }
 
     const request = this.store?.create(project, {

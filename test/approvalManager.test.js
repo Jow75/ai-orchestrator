@@ -72,6 +72,44 @@ test('an owner gate publishes to providers and emits approval:required', async (
   assert.equal(events.length, 1);
 });
 
+test('a second requestApproval for the same (project, taskId, category) reuses the pending request', async () => {
+  const provider = fakeProvider();
+  const { manager: m, store } = manager({ providers: [provider] });
+  const events = [];
+  m.on('approval:required', (e) => events.push(e));
+
+  const first = await m.requestApproval({
+    project: 'proj', category: 'production-deployment', title: 'deploy!', taskId: 'T1',
+  });
+  // Simulates a stop/resume or crash recovery re-entering the same gate
+  // before the owner ever decided — the actual cause of duplicate pings.
+  const second = await m.requestApproval({
+    project: 'proj', category: 'production-deployment', title: 'deploy! (again)', taskId: 'T1',
+  });
+
+  assert.equal(second.request.id, first.request.id); // same request, not a new one
+  assert.equal(store.list('proj').length, 1); // no duplicate record was created
+  assert.equal(provider.published.length, 1); // published exactly once
+  assert.equal(events.length, 1); // announced exactly once
+});
+
+test('reuse only applies to a MATCHING task — a different task still gets its own request', async () => {
+  const { manager: m, store } = manager();
+  const first = await m.requestApproval({ project: 'proj', category: 'secrets', title: 'A', taskId: 'T1' });
+  const second = await m.requestApproval({ project: 'proj', category: 'secrets', title: 'B', taskId: 'T2' });
+  assert.notEqual(first.request.id, second.request.id);
+  assert.equal(store.list('proj').length, 2);
+});
+
+test('once a reused request is resolved, the next call creates a fresh one', async () => {
+  const { manager: m, store } = manager();
+  const first = await m.requestApproval({ project: 'proj', category: 'secrets', title: 'A', taskId: 'T1' });
+  store.resolve('proj', first.request.id, { decision: 'approved' });
+  const second = await m.requestApproval({ project: 'proj', category: 'secrets', title: 'A retry', taskId: 'T1' });
+  assert.notEqual(second.request.id, first.request.id);
+  assert.equal(store.list('proj').length, 2);
+});
+
 test('waitForDecision returns once a provider reply resolves the request', async () => {
   const provider = fakeProvider();
   const { manager: m } = manager({ providers: [provider] });

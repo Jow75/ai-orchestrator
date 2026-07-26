@@ -74,6 +74,24 @@ test('pending()/pendingAll() list only undecided requests, oldest first', () => 
   assert.deepEqual(s.pendingAll().map((r) => r.id), [p2.id]);
 });
 
+test('findPending() matches on (project, taskId, category); null taskId matches null', () => {
+  const s = store();
+  const withTask = s.create('proj', { ...FIELDS, taskId: 'T1' });
+  const legacy = s.create('proj', { ...FIELDS, category: 'secrets' }); // taskId omitted -> null
+
+  assert.equal(s.findPending('proj', { taskId: 'T1', category: 'tests' }).id, withTask.id);
+  assert.equal(s.findPending('proj', { category: 'secrets' }).id, legacy.id); // default taskId: null
+  assert.equal(s.findPending('proj', { taskId: 'T2', category: 'tests' }), null); // different task
+  assert.equal(s.findPending('other-proj', { taskId: 'T1', category: 'tests' }), null); // different project
+});
+
+test('findPending() ignores requests that are already decided', () => {
+  const s = store();
+  const request = s.create('proj', { ...FIELDS, taskId: 'T1' });
+  s.resolve('proj', request.id, { decision: 'approved' });
+  assert.equal(s.findPending('proj', { taskId: 'T1', category: 'tests' }), null);
+});
+
 test('annotate() merges details without touching status', () => {
   const s = store();
   const request = s.create('proj', { ...FIELDS, details: { version: '1.0.0' } });

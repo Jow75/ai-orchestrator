@@ -45,8 +45,15 @@ const BASE_CONFIG = {
   coordination: { lockPollMs: 20, staleLockMs: 3_600_000 },
 };
 
-function harness({ tasks, mockRuns, agents = null, approvalsOverrides = {}, projectExtra = {} }) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-p10-'));
+function harness({
+  tasks, mockRuns, agents = null, approvalsOverrides = {}, projectExtra = {},
+  root: providedRoot, providers = [],
+} = {}) {
+  // A caller may pass back the `root` this function returns to build a
+  // SECOND, independent Orchestrator/ApprovalManager pointed at the exact
+  // same on-disk state — the truest simulation of "a different process
+  // resumed this mission" (see the resume-dedup test below).
+  const root = providedRoot ?? fs.mkdtempSync(path.join(os.tmpdir(), 'aio-p10-'));
   const workspace = path.join(root, 'workspace');
   const stateDir = path.join(root, 'state');
   fs.mkdirSync(workspace, { recursive: true });
@@ -96,7 +103,7 @@ function harness({ tasks, mockRuns, agents = null, approvalsOverrides = {}, proj
     approvalsDir: path.join(stateDir, 'approvals'), logger: silentLogger,
   });
   const approvalManager = new ApprovalManager({
-    config: config.approvals, store: approvalStore, providers: [], logger: silentLogger,
+    config: config.approvals, store: approvalStore, providers, logger: silentLogger,
   });
   const lifecycle = new MissionLifecycle({
     lifecycleDir: path.join(stateDir, 'lifecycle'), logger: silentLogger,
@@ -125,7 +132,7 @@ function harness({ tasks, mockRuns, agents = null, approvalsOverrides = {}, proj
 
   return {
     orchestrator, approvalManager, approvalStore, lifecycle, resourceLocks,
-    messageBus, driverRegistry, paths, workspace,
+    messageBus, driverRegistry, paths, workspace, root,
   };
 }
 
@@ -270,6 +277,69 @@ test('an owner-gated task never launches without approval; rejection blocks it (
   const queue = JSON.parse(fs.readFileSync(path.join(paths.tasksDir, 'p10proj.json'), 'utf8'));
   assert.equal(queue.tasks[0].state, 'blocked');
   assert.match(queue.tasks[0].checkpoint.summary, /rejected: not tonight/);
+});
+
+/** A minimal fake approval provider (publish-only) shared across two harness() instances. */
+function fakeProvider() {
+  return { name: 'fake', canReceive: false, published: [], async publish(p) { this.published.push(p); } };
+}
+
+test('a stop/resume across TWO Orchestrator instances never re-publishes the approval (Phase 11 M2)', async () => {
+  // The real-world bug this guards: an operator stop (or a crash) while a
+  // mission is paused awaiting approval, followed by a resume, used to
+  // create a FRESH approval request and re-announce it through every
+  // provider — paging the owner again for a decision they hadn't even had
+  // a chance to make yet. This simulates the out-of-band case properly: a
+  // SECOND, independent Orchestrator + ApprovalManager, sharing only the
+  // on-disk state — exactly like a real process restart — not the same
+  // in-memory instance.
+  const tasks = [{
+    id: 'DEPLOY', approval: 'production-deployment',
+    verify: [{ type: 'file-exists', path: 'deployed.txt' }],
+  }];
+  const provider = fakeProvider();
+  const required = [];
+
+  const first = harness({
+    tasks, mockRuns: [{ output: 'should never run before approval', exitCode: 0, delayMs: 15 }],
+    providers: [provider],
+  });
+  first.approvalManager.on('approval:required', (e) => required.push(e));
+
+  const firstRun = first.orchestrator.runProject('p10proj');
+  // Stop the instant the approval is published — before anyone decides.
+  await new Promise((resolve) => {
+    first.approvalManager.once('approval:required', () => { first.orchestrator.stop('test: simulated crash'); resolve(); });
+  });
+  const stoppedResult = await firstRun;
+  assert.equal(stoppedResult.complete, false);
+  assert.match(stoppedResult.reason, /stopped by operator/);
+  assert.equal(provider.published.length, 1); // published exactly once so far
+  assert.equal(required.length, 1);
+
+  // "Resume": a BRAND NEW Orchestrator/ApprovalManager, same root on disk —
+  // the same shape as a real process restart picking the mission back up.
+  const second = harness({
+    tasks,
+    mockRuns: [{ output: 'deploying', writeFile: { path: 'deployed.txt', content: 'x' }, exitCode: 0, delayMs: 15 }],
+    providers: [provider],
+    root: first.root,
+  });
+  second.approvalManager.on('approval:required', (e) => required.push(e));
+
+  const secondRun = second.orchestrator.runProject('p10proj');
+  // Now the owner actually decides.
+  setTimeout(() => {
+    const [pending] = second.approvalStore.pending('p10proj');
+    second.approvalStore.resolve('p10proj', pending.id, { decision: 'approved', by: 'owner', via: 'test' });
+  }, 30);
+  const finalResult = await secondRun;
+
+  assert.equal(finalResult.complete, true);
+  assert.equal(required.length, 1); // STILL only ever announced once
+  assert.equal(provider.published.length, 1); // STILL only ever published once
+  assert.equal(second.approvalStore.list('p10proj').length, 1); // one request record, not two
+  assert.ok(fs.existsSync(path.join(second.workspace, 'deployed.txt')));
 });
 
 test('automatic categories run without pausing; the audit trail records them (10A/10B)', async () => {

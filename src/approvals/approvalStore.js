@@ -198,6 +198,26 @@ export class ApprovalStore {
     return record?.requests.filter((r) => r.status === 'pending') ?? [];
   }
 
+  /**
+   * Find an existing PENDING request for this project matching the same
+   * task (or the task-less legacy slot, `taskId: null`) and category.
+   *
+   * Phase 11 M2: this is what lets the Approval Manager REUSE a request
+   * instead of minting a new one on every stop/resume or crash recovery
+   * that re-enters an ungranted gate — the actual root cause of duplicate
+   * approval notifications (a fresh id was created and re-published every
+   * time, even though the owner's original request was still pending).
+   *
+   * @param {string} project
+   * @param {{taskId?: string|null, category: string}} match
+   * @returns {object|null}
+   */
+  findPending(project, { taskId = null, category }) {
+    return this.pending(project).find(
+      (r) => (r.taskId ?? null) === taskId && r.category === category
+    ) ?? null;
+  }
+
   /** Pending requests across every project, oldest first. */
   pendingAll() {
     return this.listProjects().flatMap((project) => this.pending(project));
