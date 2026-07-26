@@ -12,37 +12,39 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-26, after **Phase 11 M2 (Phone & notification
-experience), v2.5.0** — committed + tagged, driven by a live operator
-walkthrough of v2.4.0. Fixed two DISTINCT causes of duplicate Telegram
-approval messages: (1) a stop/resume or crash recovery re-entering a
-still-pending gate minted a fresh request and re-published it —
-`ApprovalStore.findPending()` + reuse in `ApprovalManager.requestApproval()`
-now returns the existing request instead; (2) with both
-`notifications.telegram.enabled` and `approvals.providers.telegram.enabled`
-true (a common, even default-leaning, setup), one approval sent TWO
-near-identical messages from two different code paths — the notification
-engine now auto-excludes approval events on a channel whose own provider
-already covers them. Also fixed the confirmed `README.md`-renders-as-a-
-dead-link bug (Telegram now sends `parse_mode: 'HTML'` through a new
-`formatTelegramText()` that wraps filenames in `<code>`, leaving real URLs
-untouched), added real Telegram document attachments (`sendDocument`, no
-new dependency — Node's global FormData/Blob), formal notification
-idempotency (`state/notifications/<project>.json` + `notify resend`), and
-executive Mission Cards (duration/tasks/files/tests/confidence/commit/
-operator-action) on mission-complete and mission-blocked. Also patched a
-genuine onboarding bug the walkthrough found first: `init`'s closing
-summary printed the literal placeholder `ai-orchestrator start <project>`
-and never offered to actually launch anything — it now offers to start the
-mission right there and always names a real project in the fallback
-command. Backend suite **550/550** + 18 desktop; the formatting fix, the
-document attachment, and a realistic Mission Card were all LIVE-VERIFIED
-against the real Telegram Bot API (not just mocked fetch). Full plan:
-`docs/PHASE_11_PLAN.md` (M1→M4 shipped as `v2.4.0`→`v2.7.0`).
+**Last updated:** 2026-07-27, after **Phase 11 M2 Operational Validation,
+v2.5.1** — committed + tagged. A dedicated live-validation pass on v2.5.0,
+following the project's own "build → live validate → fix real-world
+issues → then continue" discipline. Every M2 claim was proven against the
+owner's real Telegram bot and real missions: 4/4 dedup/reminder checks with
+instrumented real-API call counts, owner-confirmed formatting/attachments
+on the actual Android client, a complete phone-first mission with the
+owner's genuine Telegram reply, two real-process recovery scenarios (hard
+`taskkill` crash + graceful stop/resume, both log-confirmed reusing the
+pending approval with zero duplicates), and multi-project isolation with
+zero cross-contamination. Two real defects were found and fixed before they
+reached the phone or were caught by the owner's own check: (1)
+`approval:resolved` had been wrongly auto-excluded by the M2 provider+
+channel dedup fix — neither approval provider ever announces a resolution
+itself, so this silently killed the only notification for an out-of-band
+(CLI/API/desktop) decision; (2) `mission:blocked`/`release:created` printed
+a raw Windows filesystem path in the Telegram message text — meaningless to
+a remote phone operator — now say the report is attached/available instead.
+Two more observations were investigated and correctly triaged as NOT bugs:
+desktop toast click-to-open is a confirmed `node-notifier`/Windows platform
+ceiling (documented in TROUBLESHOOTING.md), and `mission:complete` being
+summary-only (no attached source files) is intentional design (now explicit
+in CONFIGURATION.md). Backend suite **556/556** + 18 desktop. Full report:
+`docs/PHASE_11_M2_VALIDATION.md`. Full plan: `docs/PHASE_11_PLAN.md`
+(M1→M4 shipped as `v2.4.0`→`v2.7.0`).
 **Next: M3 — doctor, recovery & operator guidance** (`doctor --fix`,
 remedy-first error catalogue, guided recovery for blocked/stale states).
 
-Previous: **Phase 11 M1 (v2.4.0), 2026-07-14** — onboarding & first-run
+Previous: **Phase 11 M2 (v2.5.0), 2026-07-26** — phone & notification
+experience (approval-reuse dedup, provider+channel dedup, safe Telegram
+formatting, real attachments, Mission Cards); see CHANGELOG for full detail.
+
+Before that: **Phase 11 M1 (v2.4.0), 2026-07-14** — onboarding & first-run
 wizards (`init`, `projects add --interactive`, `notify setup
 telegram|email`); see CHANGELOG for full detail.
 

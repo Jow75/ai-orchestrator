@@ -623,12 +623,23 @@ and `ai-orchestrator agents health [project]`, or `GET /api/agents` /
   `report.pdf`) renders as inline code, never a clickable/dead link — real
   `http(s)://` URLs are untouched. When a real file is available (a
   diagnostic report, release notes), it's attached directly via
-  `sendDocument` instead of just being named.
+  `sendDocument` instead of just being named; the text never prints the
+  raw filesystem path either way.
 - **Executive Mission Cards.** `mission:complete`/`mission:blocked`
   payloads carry a `card` (duration, tasks, files changed, tests,
   confidence, real git commit, and — when blocked — the operator's exact
   next command), rendered as the notification body wherever a card is
   present.
+- **`mission:complete` is summary-only by design — it does NOT attach the
+  mission's changed source files.** `EVENT_ATTACHMENT` only covers
+  `mission:blocked` (`reportPath`) and `release:created` (`notesPath`) —
+  both are a SINGLE generated report document. `mission:complete` has no
+  equivalent structured "here is one report" field; attaching every file a
+  mission touched would mean anywhere from zero to dozens of attachments
+  per completion, which is noise, not signal. If you want a document
+  attached on completion, generate one (e.g. `release prepare`, which
+  writes notes + a verification report you can review or reference) rather
+  than expecting the raw source files to arrive as Telegram documents.
 
 ## Scheduled missions (Phase 10G) — `config/schedules.json`
 

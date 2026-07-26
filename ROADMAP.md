@@ -23,6 +23,7 @@ points:
 | `v2.3.1` | **Phase 10.5 complete** — operational validation & readiness: remote notifications configured + live-verified, real missions + phone approvals driven end-to-end, 10 failure sims replayed, 7 defects fixed (incl. a human-action livelock); `config/local.json`, `notify test`, `sessions --abandon` |
 | `v2.4.0` | **Phase 11 M1 complete** — onboarding & first-run wizards: `init` guided setup, `projects add --interactive`, `notify setup telegram\|email` (auto chat-id discovery); a new user reaches a working project + phone approval without editing JSON (see `docs/PHASE_11_PLAN.md`) |
 | `v2.5.0` | **Phase 11 M2 complete** — phone & notification experience: fixed two distinct causes of duplicate Telegram approval messages (resume/crash re-publish; provider+channel double-send), killed the README.md-as-dead-link bug with safe HTML formatting, added real Telegram document attachments, and executive Mission Cards on mission-complete/blocked |
+| `v2.5.1` | **Phase 11 M2 Operational Validation** — live-validated every M2 claim against the real Telegram bot and real missions; found + fixed 2 more real issues (a wrongly-excluded resolution notification; raw filesystem paths shown to a remote operator); see `docs/PHASE_11_M2_VALIDATION.md` |
 
 ### Architectural principle for every phase: **engine-agnostic**
 

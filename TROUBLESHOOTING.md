@@ -312,6 +312,19 @@ the endpoint intentionally never distinguishes "wrong token" from "no
 token configured," so an attacker can't use the error message to probe
 whether auth is set up at all.
 
+### Clicking a desktop (toast) notification does nothing
+
+Confirmed during Phase 11 M2 live validation, not a bug: on Windows, the
+`desktop` channel uses `node-notifier`'s `WindowsToaster` (SnoreToast under
+the hood), and that integration's own option set
+(`title`/`message`/`icon`/`sound`/`id`/`appID`/`remove`/`install`) has no
+click-to-open/click-handler support at all — that capability exists in
+`node-notifier` only for macOS's `NotificationCenter`. A toast click
+dismissing with no action is the platform integration's real ceiling, not
+something this code is failing to wire up. Use the desktop **app**
+(`desktop/README.md`) or Telegram (which does support real document
+attachments) when you want to act on a notification, not the OS toast.
+
 ### `tasks approve`/`tasks skip` says a task "is not the current task" or "not blocked/failed"
 
 Both operator overrides (Phase P7) only ever act on the queue's

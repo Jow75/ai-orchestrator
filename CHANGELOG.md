@@ -3,6 +3,52 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.5.1] — 2026-07-27 — Phase 11 M2: Operational Validation
+
+A dedicated live-validation pass on v2.5.0, following the project's own
+"build → live validate → fix real-world issues → then continue" discipline.
+Every M2 claim (dedup, formatting, attachments, Mission Cards) was proven
+against the owner's real Telegram bot, real missions, and — where it
+mattered — the owner's own phone. Full report: `docs/PHASE_11_M2_VALIDATION.md`.
+
+### Fixed
+
+- **`approval:resolved` was wrongly auto-excluded.** The M2 provider+channel
+  dedup fix had over-broadly excluded the resolution notification too, even
+  though neither the Telegram nor email approval provider ever announces a
+  resolution itself (each has only `publish()` for the initial request).
+  This silently killed the only notification an owner gets when a decision
+  is made out-of-band (CLI/API/desktop) while away from Telegram. Found
+  while designing the validation's first live test, before it ever reached
+  a real phone.
+- **Raw filesystem paths shown to a remote operator.** Found from the
+  owner's own phone check: `mission:blocked`/`release:created` printed the
+  raw absolute path (`C:\Users\...\report.pdf`) directly in the Telegram
+  message — meaningless to a phone that can't open a Windows path. Both
+  now say the report is attached (where the channel supports it) or
+  available on the workstation, never the path itself.
+
+### Validated (no code change — investigated, confirmed, documented)
+
+- Desktop toast notifications can't support click-to-open on Windows —
+  `node-notifier`'s `WindowsToaster` integration has no click-handler
+  support at all (only macOS's `NotificationCenter` does); a real platform
+  ceiling, not a wiring gap. See TROUBLESHOOTING.md.
+- `mission:complete` is intentionally summary-only (no attached source
+  files) — `EVENT_ATTACHMENT` only covers events with a single generated
+  report document (`mission:blocked`/`release:created`); attaching every
+  changed file per completion would be noise. Now stated explicitly in
+  CONFIGURATION.md.
+
+### Tests
+
+- +8 tests (4 for the `approval:resolved` exclusion fix, 4 for the raw-path
+  fix). Backend suite **556/556** + 18 desktop.
+- Live-verified end to end: 4 real-API instrumented dedup/timing checks, a
+  complete phone-first mission with the owner's genuine Telegram reply, two
+  real-process recovery scenarios (hard crash + graceful stop/resume), and
+  multi-project isolation — all against the real Telegram Bot API.
+
 ## [2.5.0] — 2026-07-26 — Phase 11 M2: Phone & notification experience
 
 The second Phase 11 milestone, driven directly by a live operator
