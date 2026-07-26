@@ -72,9 +72,7 @@ import { createPrompter } from '../onboarding/prompts.js';
 import { runProjectWizard } from '../onboarding/projectWizard.js';
 import { runTelegramSetup, runEmailSetup } from '../onboarding/notifyWizard.js';
 import { runInit } from '../onboarding/init.js';
-
-/** Windows Task Scheduler task name used by `scheduler` commands. */
-const SCHEDULED_TASK_NAME = 'AI-Orchestrator Auto-Resume';
+import { buildDoctorFindings, renderDoctorFindings, applyDoctorFix, SCHEDULED_TASK_NAME } from '../doctor/doctor.js';
 
 /** Build a ConfigManager + quiet SessionManager for read-only commands. */
 function readOnlyContext() {
@@ -1517,9 +1515,10 @@ export function buildProgram() {
 
   program
     .command('doctor')
+    .option('--fix', 'offer to repair each flagged issue (every change is confirmed individually; read-only without this flag)')
     .description('Diagnose the environment, configuration, and engine installation')
-    .action(async () => {
-      await runDoctor();
+    .action(async (options) => {
+      await runDoctor({ fix: options.fix });
     });
 
   return program;
@@ -1737,116 +1736,74 @@ async function testNotificationChannels(configManager) {
   return results;
 }
 
-async function runDoctor() {
-  const check = (ok, label, detail = '') => {
-    const mark = ok ? chalk.green('✔') : chalk.red('✘');
-    console.log(`  ${mark} ${label}${detail ? chalk.dim(` — ${detail}`) : ''}`);
-    return ok;
-  };
-  const warn = (label, detail = '') => {
-    console.log(`  ${chalk.yellow('⚠')} ${label}${detail ? chalk.dim(` — ${detail}`) : ''}`);
-  };
+/**
+ * Thin CLI wrapper (Phase 11 M3): all the actual diagnostic logic lives in
+ * doctor/doctor.js as structured findings, so `doctor` and `doctor --fix`
+ * share exactly the same checks — nothing is special-cased between them.
+ */
+async function runDoctor({ fix = false } = {}) {
+  const configManager = new ConfigManager();
+  const findings = await buildDoctorFindings({ configManager });
+  renderDoctorFindings(findings, chalk);
 
-  console.log(chalk.bold('\nAI-Orchestrator doctor\n'));
-
-  // Node version.
-  const major = Number(process.versions.node.split('.')[0]);
-  check(major >= 18, `Node.js ${process.version}`, major >= 18 ? 'supported' : 'need >= 18');
-
-  // Configuration.
-  let configManager;
-  try {
-    configManager = new ConfigManager();
-    configManager.load();
-    check(true, 'Global configuration loads', 'config/orchestrator.json');
-  } catch (error) {
-    check(false, 'Global configuration loads', error.message);
+  const fixable = findings.filter((f) => f.fix);
+  if (!fix) {
+    if (fixable.length > 0) {
+      console.log(chalk.dim(
+        `  ${fixable.length} issue(s) above can be repaired — run "ai-orchestrator doctor --fix".\n`
+      ));
+    }
+    return;
+  }
+  if (!fixable.length) {
+    console.log(chalk.green('Nothing to fix.\n'));
     return;
   }
 
-  // Projects.
-  const projectNames = configManager.listProjects();
-  check(projectNames.length > 0, `Projects defined: ${projectNames.length}`,
-    projectNames.join(', ') || 'add one with "projects add"');
-  const registry = new DriverRegistry({ logger: silentLogger });
-  for (const name of projectNames) {
-    try {
-      const project = configManager.getProject(name);
-      check(true, `Project "${name}" is valid`, project.workingDirectory);
+  const prompter = createPrompter();
+  const ctx = {
+    configManager,
+    paths: configManager.getPaths(),
+    prompter,
+    projectWizard: runProjectWizard,
+    telegramWizard: runTelegramSetup,
+    emailWizard: runEmailSetup,
+    runSchedulerScript,
+  };
 
-      const driver = registry.getDriver(project.driver);
-      // eslint-disable-next-line no-await-in-loop
-      const installation = await driver.checkInstallation(
-        project[project.driver]?.executable
-      );
-      check(installation.ok, `Engine for "${name}" (${project.driver})`,
-        installation.version ?? installation.error);
-
-      // Unattended headless engines cannot answer permission prompts; a
-      // claude project without write permissions blocks on "no progress".
-      if (
-        project.driver === 'claude' &&
-        !project.claude?.permissionMode &&
-        !project.claude?.dangerouslySkipPermissions
-      ) {
-        warn(`Project "${name}" has no engine write permissions`,
-          'unattended runs will be read-only and block — set "claude.permissionMode" (e.g. "acceptEdits")');
-      }
-    } catch (error) {
-      check(false, `Project "${name}" is valid`, error.message);
-    }
-  }
-
-  // Writable runtime dirs.
-  const paths = configManager.getPaths();
+  let fixed = 0;
+  let skipped = 0;
+  let manual = 0;
   try {
-    fs.mkdirSync(paths.stateDir, { recursive: true });
-    const probe = path.join(paths.stateDir, '.doctor-probe');
-    fs.writeFileSync(probe, 'ok');
-    fs.rmSync(probe);
-    check(true, 'State directory writable', paths.stateDir);
-  } catch (error) {
-    check(false, 'State directory writable', error.message);
+    for (const finding of fixable) {
+      console.log(chalk.bold(`\n${finding.label}`));
+      if (finding.cause) console.log(`  Cause:  ${finding.cause}`);
+      if (finding.impact) console.log(`  Impact: ${finding.impact}`);
+      console.log(`  Fix:    ${finding.fix.description}`);
+      // eslint-disable-next-line no-await-in-loop
+      const proceed = await prompter.confirm('Apply this fix?', { default: finding.fix.safe });
+      if (!proceed) {
+        skipped += 1;
+        console.log(chalk.dim('  Skipped.'));
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const result = await applyDoctorFix(finding, ctx);
+      if (result.ok) {
+        fixed += 1;
+        console.log(chalk.green(`  ✔ Recovered — ${result.message}`));
+      } else {
+        manual += 1;
+        console.log(chalk.yellow(`  Manual intervention required — ${result.message}`));
+      }
+    }
+  } finally {
+    prompter.close();
   }
 
-  // Notification channels — the remote/phone workflow needs at least one
-  // beyond the local desktop toast.
-  const notif = configManager.get('notifications', {});
-  const enabledChannels = ['desktop', 'webhook', 'discord', 'telegram', 'email']
-    .filter((name) => notif[name]?.enabled);
-  check(enabledChannels.length > 0, 'Notification channels enabled',
-    enabledChannels.join(', ') || 'none — see docs/TELEGRAM_SETUP.md / docs/EMAIL_SETUP.md');
-  if (!enabledChannels.some((name) => name !== 'desktop')) {
-    warn('No remote notification channel',
-      'approvals from your phone need telegram or email — see docs/REMOTE_APPROVALS.md');
-  }
-  if (notif.telegram?.enabled && (!notif.telegram.botToken || !notif.telegram.chatId)) {
-    warn('Telegram channel incomplete', '"botToken" and "chatId" are both required');
-  }
-  if (notif.email?.enabled && !notif.email.smtp?.host) {
-    warn('Email channel incomplete', '"smtp.host" is required');
-  }
-
-  // Running instance?
-  const heartbeat = readJsonSafe(paths.heartbeatFile);
-  if (heartbeat?.state === 'running' && isPidAlive(heartbeat.pid)) {
-    console.log(chalk.yellow(`\n  An orchestrator is currently running (pid ${heartbeat.pid}).`));
-  }
-
-  // Scheduled task (Windows only).
-  if (process.platform === 'win32') {
-    const task = spawnSync('schtasks', ['/Query', '/TN', SCHEDULED_TASK_NAME], {
-      encoding: 'utf8',
-      windowsHide: true,
-    });
-    check(
-      task.status === 0,
-      'Auto-resume scheduled task',
-      task.status === 0 ? 'installed' : 'not installed (optional) — "scheduler install"'
-    );
-  }
-
-  console.log('');
+  console.log(chalk.bold(
+    `\n${fixed} recovered, ${skipped} skipped, ${manual} need manual follow-up.\n`
+  ));
 }
 
 export default buildProgram;
