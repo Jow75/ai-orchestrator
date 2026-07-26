@@ -7,12 +7,26 @@
  * re-runnable, and every step is skippable. Nothing here is a required code
  * path — an expert who never runs `init` is entirely unaffected.
  *
- * Everything the flow touches (probes, notify test, auto-resume task) is
- * injected, so the orchestration is unit-tested without a real environment.
+ * Everything the flow touches (probes, notify test, auto-resume task, and
+ * starting a mission) is injected, so the orchestration is unit-tested
+ * without a real environment or a live orchestrator process.
+ *
+ * Live-walkthrough finding (2026-07-26): finishing the wizard with a
+ * `<project>` PLACEHOLDER in the "start a mission" line was actively
+ * confusing — a real user tried the literal text `<project>`. The flow now
+ * ends with a concrete, copy-pasteable command using a REAL project name,
+ * and — since "how do I actually launch this" was the #1 confusion — offers
+ * to start a mission right there instead of making the operator go find the
+ * command at all.
  */
 
 import { runProjectWizard } from './projectWizard.js';
 import { runTelegramSetup, runEmailSetup } from './notifyWizard.js';
+
+/** Quote a project name for a shell command only if it needs it (has whitespace). */
+function quoteProjectName(name) {
+  return /\s/.test(name) ? `"${name}"` : name;
+}
 
 /**
  * Run the first-run flow.
@@ -26,13 +40,17 @@ import { runTelegramSetup, runEmailSetup } from './notifyWizard.js';
  *   Sends a live test through every enabled channel; results are shown.
  * @param {{isInstalled:()=>Promise<boolean>, install:()=>Promise<void>}} [params.autoResume]
  *   Auto-resume task control (null on platforms without it).
+ * @param {(projectName:string) => Promise<{complete?:boolean, reason?:string}>} [params.startMission]
+ *   Actually launches supervision for one project (mirrors the `start` CLI
+ *   command). When omitted, the flow only prints the command instead of
+ *   offering to run it — used by tests that don't want a real orchestrator.
  * @param {Function} [params.projectWizard] - Injectable (defaults to the real one).
  * @param {Function} [params.telegramWizard]
  * @param {Function} [params.emailWizard]
  * @returns {Promise<void>}
  */
 export async function runInit({
-  configManager, prompter, probe, notifyTest, autoResume,
+  configManager, prompter, probe, notifyTest, autoResume, startMission,
   projectWizard = runProjectWizard,
   telegramWizard = runTelegramSetup,
   emailWizard = runEmailSetup,
@@ -62,8 +80,10 @@ export async function runInit({
     existing.length ? 'Create another project?' : 'Create your first project now?',
     { default: existing.length === 0 }
   );
+  let justCreated = null;
   if (wantProject) {
-    await projectWizard({ configManager, prompter });
+    const created = await projectWizard({ configManager, prompter });
+    justCreated = created?.name ?? null;
   }
 
   // 3. Telegram (phone approvals — the headline remote workflow).
@@ -91,7 +111,7 @@ export async function runInit({
     }
   }
 
-  // 6. Live channel test + a clear "you're ready" summary.
+  // 6. Live channel test.
   if (notifyTest) {
     const channels = await notifyTest();
     if (channels?.length) {
@@ -102,16 +122,51 @@ export async function runInit({
     }
   }
 
-  p.say(buildReadySummary(configManager));
+  // 7. Offer to actually launch a mission — the #1 confusion in the live
+  // walkthrough was "how do I launch this at all?". If a project exists
+  // (just created or already there), ask and, on yes, start it right here
+  // instead of leaving the operator to find the command.
+  const projectsNow = configManager.listProjects();
+  let startedProject = null;
+  if (startMission && projectsNow.length) {
+    const wantStart = await p.confirm(
+      projectsNow.length === 1
+        ? `Start "${projectsNow[0]}" now?`
+        : 'Start a mission now?',
+      { default: true }
+    );
+    if (wantStart) {
+      const target = projectsNow.length === 1
+        ? projectsNow[0]
+        : await p.choose('Which project?', projectsNow, { default: justCreated ?? projectsNow[0] });
+      p.say(`\nStarting "${target}" — this terminal now supervises it.`);
+      const result = await startMission(target);
+      if (result?.complete) p.say(`✅ Mission complete: ${result.reason}`);
+      else if (result?.reason) p.say(`■ Supervision ended: ${result.reason}`);
+      startedProject = target;
+    }
+  }
+
+  p.say(buildReadySummary(configManager, { startedProject }));
 }
 
 /** The closing "you're ready" summary, reflecting what the wizards wrote. */
-function buildReadySummary(configManager) {
+function buildReadySummary(configManager, { startedProject } = {}) {
   configManager.load(); // pick up everything the wizards persisted
   const projects = configManager.listProjects();
   const notif = configManager.get('notifications', {});
   const channels = ['desktop', 'telegram', 'email', 'discord', 'webhook'].filter((n) => notif[n]?.enabled);
   const mode = configManager.get('approvals.mode', 'balanced');
+
+  let nextStep;
+  if (startedProject) {
+    nextStep = `    "${startedProject}" is running — stop it safely any time: ai-orchestrator stop`;
+  } else if (projects.length) {
+    nextStep = `    Start a mission:  ai-orchestrator start ${quoteProjectName(projects[0])}`;
+  } else {
+    nextStep = '    Create a project:  ai-orchestrator projects add --interactive';
+  }
+
   return [
     '\n════════════════════════════════════════════════════════════',
     "  You're ready.",
@@ -119,8 +174,9 @@ function buildReadySummary(configManager) {
     `    Channels:  ${channels.join(', ') || 'desktop only'}`,
     `    Approvals: ${mode} mode — nothing interrupts you except owner gates.`,
     '',
-    '    Start a mission:  ai-orchestrator start <project>',
-    '    Re-check setup:   ai-orchestrator doctor',
+    nextStep,
+    '    Watch it live:     ai-orchestrator status  (or the desktop app — docs/DESKTOP_GUIDE.md)',
+    '    Re-check setup:    ai-orchestrator doctor',
     '════════════════════════════════════════════════════════════',
   ].join('\n');
 }

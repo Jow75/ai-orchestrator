@@ -143,6 +143,10 @@ export function buildProgram() {
               ).status === 0,
               install: async () => { runSchedulerScript('install-task.ps1'); },
             } : null,
+            // Mirrors the `start` command's own App usage — offering to
+            // launch right here is how `init` closes the "how do I actually
+            // start this thing?" gap found in the live walkthrough.
+            startMission: async (name) => new App().start({ projectNames: [name] }),
           });
         } finally {
           prompter.close();
