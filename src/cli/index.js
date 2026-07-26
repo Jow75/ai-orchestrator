@@ -66,6 +66,7 @@ import ReleaseManager from '../release/releaseManager.js';
 import ApprovalManager from '../approvals/approvalManager.js';
 import { ProgressLedger } from '../progress/progressLedger.js';
 import NotificationEngine from '../notifications/notificationEngine.js';
+import NotificationState from '../notifications/notificationState.js';
 // Phase 11 onboarding wizards (CLI-first).
 import { createPrompter } from '../onboarding/prompts.js';
 import { runProjectWizard } from '../onboarding/projectWizard.js';
@@ -793,6 +794,54 @@ export function buildProgram() {
         } finally {
           prompter.close();
         }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  notify
+    .command('resend')
+    .argument('<project>')
+    .argument('<id>', 'approval request id, e.g. A20')
+    .description('Force-resend a pending approval notification, bypassing idempotency dedup (Phase 11 M2)')
+    .action(async (project, id) => {
+      try {
+        const configManager = new ConfigManager();
+        const paths = configManager.getPaths();
+        const approvalStore = new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger });
+        const request = approvalStore.get(project, id);
+        if (!request) {
+          const error = new Error(`No approval request "${id}" for "${project}".`);
+          error.userFacing = true;
+          throw error;
+        }
+        if (request.status !== 'pending') {
+          const error = new Error(
+            `Request "${id}" is already ${request.status} — nothing to remind the owner about.`
+          );
+          error.userFacing = true;
+          throw error;
+        }
+
+        const notificationState = new NotificationState({
+          notificationsDir: paths.notificationsDir, logger: silentLogger,
+        });
+        const engine = new NotificationEngine({
+          config: configManager.get('notifications', {}), logger: silentLogger, notificationState,
+        });
+        const event = request.approvalClass === 'human-action' ? 'human-action:required' : 'approval:required';
+        const key = event === 'human-action:required' || event === 'approval:required' ? request.id : null;
+        notificationState.forceResend(project, key);
+
+        // Reuse the manager's own rendering so a resend reads identically
+        // to the original notification (same "Reply: APPROVE ..." footer).
+        const approvalManager = new ApprovalManager({
+          config: configManager.get('approvals', {}), store: approvalStore, providers: [], logger: silentLogger,
+        });
+        await engine.notify(event, {
+          project, request, title: request.title, message: approvalManager.renderRequestMessage(request),
+        });
+        console.log(chalk.green(`Resent notification for ${id} (${project}).`));
       } catch (error) {
         fail(error);
       }

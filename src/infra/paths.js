@@ -80,6 +80,11 @@ export function resolvePaths(overrides = {}) {
   );
   resolved.schedulesStateFile = path.join(resolved.stateDir, 'schedules.json');
 
+  // Phase 11 M2: per-project notification idempotency (see
+  // notifications/notificationState.js) — never the same channel duplicate
+  // just because a poll loop noticed the same approval still exists.
+  resolved.notificationsDir = path.join(resolved.stateDir, 'notifications');
+
   return resolved;
 }
 
@@ -107,6 +112,7 @@ export function ensureRuntimeDirs(paths) {
     paths.coordinationDir,
     paths.releasesDir,
     paths.statusDir,
+    paths.notificationsDir,
   ]) {
     fs.mkdirSync(dir, { recursive: true });
   }

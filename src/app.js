@@ -33,6 +33,7 @@ import Heartbeat from './state/heartbeat.js';
 import DriverRegistry from './drivers/driverRegistry.js';
 import Orchestrator from './core/orchestrator.js';
 import NotificationEngine from './notifications/notificationEngine.js';
+import NotificationState from './notifications/notificationState.js';
 import PluginManager from './plugins/pluginManager.js';
 import DashboardServer from './api/dashboardServer.js';
 import { loadOrCreateToken } from './api/apiAuth.js';
@@ -130,9 +131,14 @@ export class App {
     // (parallel missions each get their own instance — see start()).
     this.orchestrators = [this.orchestrator];
 
+    this.notificationState = new NotificationState({
+      notificationsDir: this.paths.notificationsDir,
+      logger: childLogger(this.logger, 'notifications'),
+    });
     this.notifications = new NotificationEngine({
       config: this.config.notifications,
       logger: childLogger(this.logger, 'notifications'),
+      notificationState: this.notificationState,
     });
     this.notifications.attach(this.orchestrator);
     this.notifications.attach(this.approvalManager); // Phase 10A events

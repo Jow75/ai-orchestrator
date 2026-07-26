@@ -129,6 +129,15 @@ export const ORCHESTRATOR_DEFAULTS = {
      * desktop chatty but only page Telegram on 'critical').
      */
     minSeverity: 'info',
+    /**
+     * Phase 11 M2: idempotency for notifications that carry a stable
+     * identity (approval/human-action requests). Once sent, the SAME
+     * notification is never repeated just because a poll loop noticed the
+     * request still exists — only a failed prior delivery, this interval
+     * elapsing, or an explicit `notify resend` sends it again. 0 = never
+     * remind automatically (send once, rely on resend/failure-retry).
+     */
+    reminderMs: 0,
     desktop: { enabled: true },
     webhook: { enabled: false, url: '' },
     discord: { enabled: false, webhookUrl: '' },

@@ -134,10 +134,16 @@ export class NotificationEngine {
    * @param {object} options
    * @param {object} options.config - The `notifications` config block.
    * @param {object} options.logger - Module logger.
+   * @param {import('./notificationState.js').NotificationState} [options.notificationState]
+   *   Phase 11 M2: idempotency for events with a stable identity (approval/
+   *   human-action requests). Absent ⇒ every notification is always sent —
+   *   the pre-M2 behaviour, and what every existing caller/test still gets.
    */
-  constructor({ config, logger }) {
+  constructor({ config, logger, notificationState = null }) {
     this.config = config;
     this.logger = logger;
+    this.notificationState = notificationState;
+    this.reminderMs = config.reminderMs ?? 0;
     this.subscribedEvents = new Set(config.events ?? []);
 
     /** Phase 10F: global severity floor + per-event overrides. */
@@ -198,13 +204,28 @@ export class NotificationEngine {
     const rank = SEVERITY_RANK[severity] ?? 0;
     if (rank < (SEVERITY_RANK[this.minSeverity] ?? 0)) return;
 
+    // Phase 11 M2: idempotency for events with a stable identity — never
+    // resend the SAME approval notification just because a poll loop (or a
+    // resumed process) noticed the request still exists.
+    const key = dedupeKeyFor(event, payload);
+    if (this.notificationState && !this.notificationState.shouldSend(payload.project, key, { reminderMs: this.reminderMs })) {
+      this.logger.info('Notification suppressed (already sent; no reminder due)', {
+        event, project: payload.project, key,
+      });
+      return;
+    }
+
     const { title, message } = render(payload);
 
+    const channelIds = {};
+    let anySent = false;
     await Promise.allSettled(
       this.channels.map(async (channel) => {
         if (channel.minSeverity && rank < (SEVERITY_RANK[channel.minSeverity] ?? 0)) return;
         try {
-          await channel.send({ title, message, event, payload, severity });
+          const result = await channel.send({ title, message, event, payload, severity });
+          anySent = true;
+          if (result?.messageId) channelIds[channel.name] = result.messageId;
         } catch (error) {
           this.logger.warn('Notification channel failed', {
             channel: channel.name,
@@ -214,11 +235,35 @@ export class NotificationEngine {
         }
       })
     );
+
+    if (key) {
+      this.notificationState?.recordSent(payload.project, key, {
+        status: anySent ? 'sent' : 'failed', channelIds,
+      });
+    }
   }
 }
 
 function truncate(text, maxChars) {
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}
+
+/**
+ * The dedupe key for an event, or null when the event has no stable
+ * identity (most events — crash counts, rate-limit waits, etc. — are each
+ * genuinely distinct occurrences and are never deduped). Approval/
+ * human-action requests DO have a stable identity (the request id); the
+ * "required" and "resolved" notifications for the SAME id use different
+ * keys so each still fires once — that's a real state change, not a repeat.
+ */
+export function dedupeKeyFor(event, payload) {
+  if (event === 'approval:required' || event === 'human-action:required') {
+    return payload.request?.id ?? null;
+  }
+  if (event === 'approval:resolved') {
+    return payload.request?.id ? `${payload.request.id}:resolved` : null;
+  }
+  return null;
 }
 
 export default NotificationEngine;
