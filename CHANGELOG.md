@@ -3,6 +3,55 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.6.0] — 2026-07-27 — Phase 11 M3: Doctor, Recovery & Operator Guidance
+
+The third Phase 11 milestone: every failure now tells the operator what
+happened, why, and the single next command — and `doctor` can offer to fix
+what it flags. No new architecture; the existing engine and every prior
+guarantee are untouched.
+
+### Added
+
+- **`doctor --fix`.** `doctor` is now built from structured findings
+  (`{id, status, label, detail, cause, impact, fix?}`) instead of inline
+  print statements — the same findings a plain `doctor` run shows are
+  exactly what `--fix` iterates over. Read-only by default; with `--fix`,
+  each flagged issue is explained (cause/impact/fix) and confirmed
+  individually before anything changes. Safe, direct repairs: set
+  `claude.permissionMode`, delete an already-useless quarantined corrupt
+  state file, install the auto-resume scheduled task. Fixes needing real
+  human input (a bot token, a mailbox password, a first project) launch the
+  matching Phase 11 M1 wizard instead. The closing summary reports
+  recovered/skipped/manual-follow-up counts.
+- **Two new `doctor` checks**, both evidence-based: quarantined
+  `*.corrupt-*` state files (the system already self-heals from corruption
+  by quarantining a damaged file and falling back to defaults — this
+  surfaces what happened instead of leaving it visible only in the logs),
+  and a resumable session nobody is currently supervising (informational —
+  continuing vs. discarding is the operator's call, so no auto-fix; both
+  next commands are named).
+- **`src/infra/errors.js`** — a `userFacingError({cause, impact, fix})`
+  helper so every expected error (audited: `projects add`, `notify setup`,
+  `notify resend`, the missing-engine start error) states its cause, impact,
+  and fix in the same consistent shape, instead of each call site
+  hand-rolling its own message.
+- **Guided recovery in existing commands:** `tasks list` now prints the
+  exact `tasks approve`/`tasks skip <project> <id>` command when the
+  current task is blocked/failed; `approvals list` prints the exact reply
+  (or the CLI equivalent) next to each pending request.
+
+### Tests
+
+- +29 tests across 4 new/updated files (doctor findings/fix/renderer,
+  the error catalogue, the two guided-recovery hint functions). Backend
+  suite **585/585** + 18 desktop.
+- Live-verified against the real repo: `doctor` confirmed to produce
+  identical output to the pre-refactor version for every existing check;
+  `doctor --fix` found and cleanly deleted a genuine leftover quarantined
+  file from a Phase 10.5 failure simulation; a real blocked task showed the
+  exact recovery hint in `tasks list`; real pending owner-gate and
+  human-action requests each showed the correct reply hint.
+
 ## [2.5.1] — 2026-07-27 — Phase 11 M2: Operational Validation
 
 A dedicated live-validation pass on v2.5.0, following the project's own

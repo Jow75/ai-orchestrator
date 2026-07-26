@@ -31,7 +31,7 @@ export class StatusManager {
         state: 'starting',
         pid: process.pid,
         startedAt: new Date(this.startedAt).toISOString(),
-        version: '2.5.1',
+        version: '2.6.0',
       },
       project: null,
       session: null,

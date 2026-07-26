@@ -12,37 +12,39 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-27, after **Phase 11 M2 Operational Validation,
-v2.5.1** — committed + tagged. A dedicated live-validation pass on v2.5.0,
-following the project's own "build → live validate → fix real-world
-issues → then continue" discipline. Every M2 claim was proven against the
-owner's real Telegram bot and real missions: 4/4 dedup/reminder checks with
-instrumented real-API call counts, owner-confirmed formatting/attachments
-on the actual Android client, a complete phone-first mission with the
-owner's genuine Telegram reply, two real-process recovery scenarios (hard
-`taskkill` crash + graceful stop/resume, both log-confirmed reusing the
-pending approval with zero duplicates), and multi-project isolation with
-zero cross-contamination. Two real defects were found and fixed before they
-reached the phone or were caught by the owner's own check: (1)
-`approval:resolved` had been wrongly auto-excluded by the M2 provider+
-channel dedup fix — neither approval provider ever announces a resolution
-itself, so this silently killed the only notification for an out-of-band
-(CLI/API/desktop) decision; (2) `mission:blocked`/`release:created` printed
-a raw Windows filesystem path in the Telegram message text — meaningless to
-a remote phone operator — now say the report is attached/available instead.
-Two more observations were investigated and correctly triaged as NOT bugs:
-desktop toast click-to-open is a confirmed `node-notifier`/Windows platform
-ceiling (documented in TROUBLESHOOTING.md), and `mission:complete` being
-summary-only (no attached source files) is intentional design (now explicit
-in CONFIGURATION.md). Backend suite **556/556** + 18 desktop. Full report:
-`docs/PHASE_11_M2_VALIDATION.md`. Full plan: `docs/PHASE_11_PLAN.md`
-(M1→M4 shipped as `v2.4.0`→`v2.7.0`).
-**Next: M3 — doctor, recovery & operator guidance** (`doctor --fix`,
-remedy-first error catalogue, guided recovery for blocked/stale states).
+**Last updated:** 2026-07-27, after **Phase 11 M3 (Doctor, Recovery &
+Operator Guidance), v2.6.0** — committed + tagged. Every failure now tells
+the operator what happened, why, and the single next command. `doctor` is
+rebuilt from structured findings (`{id, status, label, detail, cause,
+impact, fix?}`) instead of inline prints — a behavior-preserving refactor
+(verified live to produce identical output for every existing check) that
+also adds `doctor --fix`: read-only by default, and with `--fix` every
+flagged issue is explained (cause/impact/fix) and confirmed individually
+before anything changes — safe direct repairs (set
+`claude.permissionMode`, delete a quarantined corrupt state file, install
+the auto-resume task) apply on confirmation; fixes needing real human
+input (a bot token, a mailbox password, a first project) launch the
+matching Phase 11 M1 wizard instead. Two new evidence-based checks:
+quarantined `*.corrupt-*` state files (the system already self-heals from
+corruption — this surfaces what happened instead of leaving it only in the
+logs; live-verified by finding and cleanly deleting a genuine leftover
+file from a Phase 10.5 failure simulation in this repo's own state/) and a
+resumable session nobody is supervising (informational only — continuing
+vs. discarding is the operator's call). New `src/infra/errors.js`
+consolidates every user-facing throw into one consistent cause/impact/fix
+shape. Guided recovery added to existing commands: `tasks list` prints the
+exact `tasks approve`/`tasks skip` command for a blocked/failed current
+task; `approvals list` prints the exact reply next to each pending
+request. Backend suite **585/585** + 18 desktop. Full plan:
+`docs/PHASE_11_PLAN.md` (M1→M4 shipped as `v2.4.0`→`v2.7.0`).
+**Next: M4 — UX consistency, remote polish & documentation.**
 
-Previous: **Phase 11 M2 (v2.5.0), 2026-07-26** — phone & notification
-experience (approval-reuse dedup, provider+channel dedup, safe Telegram
-formatting, real attachments, Mission Cards); see CHANGELOG for full detail.
+Previous: **Phase 11 M2 + Operational Validation (v2.5.0/v2.5.1),
+2026-07-26/27** — phone & notification experience (approval-reuse dedup,
+provider+channel dedup, safe Telegram formatting, real attachments, Mission
+Cards), then live-validated against the real Telegram bot and real
+missions (2 more real bugs found and fixed); see CHANGELOG and
+`docs/PHASE_11_M2_VALIDATION.md` for full detail.
 
 Before that: **Phase 11 M1 (v2.4.0), 2026-07-14** — onboarding & first-run
 wizards (`init`, `projects add --interactive`, `notify setup

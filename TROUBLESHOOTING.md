@@ -7,9 +7,16 @@ node bin\ai-orchestrator.js doctor
 ```
 
 It checks Node, configuration, every project, engine installation, state-dir
-permissions, and the scheduled task. Second stop: `logs/orchestrator-*.log` —
-every launch, exit classification, wait, resume, and decision is recorded
-there with its reasoning.
+permissions, the scheduled task, and (Phase 11 M3) also surfaces unfinished
+sessions and quarantined corrupt state files. Every flagged issue names its
+cause and impact; **`doctor --fix`** offers to repair what it can — a safe,
+direct change (e.g. setting `claude.permissionMode`) applies once you
+confirm it, and anything needing real input (a bot token, a mailbox
+password) launches the matching setup wizard instead. Nothing changes
+without asking first.
+
+Second stop: `logs/orchestrator-*.log` — every launch, exit classification,
+wait, resume, and decision is recorded there with its reasoning.
 
 ---
 
@@ -125,15 +132,20 @@ Unattended missions must not require interactive approvals. Set
 `claude.dangerouslySkipPermissions: true` in the project config — see the
 warning in [CONFIGURATION.md](CONFIGURATION.md). `projects add` sets
 `acceptEdits` by default (v2.3.1), and `doctor` warns about any claude
-project still missing write permissions.
+project still missing write permissions — `doctor --fix` sets it for you
+(confirmed before it writes anything).
 
 ### A project is stuck `[active: waiting-retry]` from an old run
 
 A previous session was interrupted and is still resumable, so `start`
-would resume it rather than begin fresh. To discard it without launching
-anything: `ai-orchestrator sessions <project> --abandon` (archives it as
-stopped; the next `start` starts the mission over). It refuses if an
-orchestrator is actively supervising that project — use `stop` there.
+would resume it rather than begin fresh — `doctor` names it directly
+("has unfinished work from a previous run") with both options spelled out.
+To continue it: `ai-orchestrator start <project>`. To discard it without
+launching anything: `ai-orchestrator sessions <project> --abandon`
+(archives it as stopped; the next `start` starts the mission over). It
+refuses if an orchestrator is actively supervising that project — use
+`stop` there. This is informational, not a fix `doctor --fix` applies —
+continuing vs. discarding is your call, not something safe to automate.
 
 ---
 
@@ -344,7 +356,9 @@ scans and stream events.
 
 `*.corrupt-<timestamp>` files in `state/` are quarantined copies of files
 damaged by power loss mid-write. The orchestrator already fell back safely;
-the copies exist only for forensics and can be deleted.
+the copies exist only for forensics and can be deleted. `doctor` finds them
+automatically (they're easy to miss otherwise — nothing else surfaces them
+outside the logs); `doctor --fix` deletes them once you confirm.
 
 ---
 

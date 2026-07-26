@@ -114,3 +114,13 @@ raw; use a VPN/tunnel if you need remote HTTP.
 **Q: Something is wrong and I can't tell what.**
 1) `doctor`. 2) `logs\orchestrator-<today>.log` — every decision is
 logged with its reasoning. 3) [../TROUBLESHOOTING.md](../TROUBLESHOOTING.md).
+
+**Q: Can `doctor` fix things for me, or just tell me what's wrong?**
+Both, if you ask: plain `doctor` is read-only. `doctor --fix` (Phase 11 M3)
+walks every flagged issue, explains its cause and impact, and offers a
+repair — a safe, direct change (e.g. setting `claude.permissionMode`,
+deleting an already-useless quarantined corrupt file) applies once you
+confirm it; anything needing real input (a bot token, a mailbox password)
+launches the matching setup wizard instead. Nothing changes without you
+saying yes to each one, and it tells you clearly at the end how many were
+actually fixed vs. still need you.

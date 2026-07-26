@@ -24,6 +24,7 @@ points:
 | `v2.4.0` | **Phase 11 M1 complete** — onboarding & first-run wizards: `init` guided setup, `projects add --interactive`, `notify setup telegram\|email` (auto chat-id discovery); a new user reaches a working project + phone approval without editing JSON (see `docs/PHASE_11_PLAN.md`) |
 | `v2.5.0` | **Phase 11 M2 complete** — phone & notification experience: fixed two distinct causes of duplicate Telegram approval messages (resume/crash re-publish; provider+channel double-send), killed the README.md-as-dead-link bug with safe HTML formatting, added real Telegram document attachments, and executive Mission Cards on mission-complete/blocked |
 | `v2.5.1` | **Phase 11 M2 Operational Validation** — live-validated every M2 claim against the real Telegram bot and real missions; found + fixed 2 more real issues (a wrongly-excluded resolution notification; raw filesystem paths shown to a remote operator); see `docs/PHASE_11_M2_VALIDATION.md` |
+| `v2.6.0` | **Phase 11 M3 complete** — doctor, recovery & operator guidance: `doctor --fix` (structured findings, safe repairs + wizard hand-off, both confirmed), a remedy-first error catalogue, and guided recovery (`tasks list`/`approvals list` print the exact next command) |
 
 ### Architectural principle for every phase: **engine-agnostic**
 
