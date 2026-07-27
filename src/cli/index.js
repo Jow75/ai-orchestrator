@@ -51,7 +51,7 @@ import AgentRegistry from '../agents/agentRegistry.js';
 import AgentHealth from '../agents/agentHealth.js';
 import { readJsonSafe } from '../state/statePersistence.js';
 import { isPidAlive } from '../state/heartbeat.js';
-import { formatDuration } from '../infra/time.js';
+import { formatDuration, sleep } from '../infra/time.js';
 import { ROOT_DIR } from '../infra/paths.js';
 // Phase 10 surfaces.
 import ApprovalStore from '../approvals/approvalStore.js';
@@ -79,6 +79,8 @@ import { userFacingError } from '../infra/errors.js';
 import { VERSION } from '../infra/version.js';
 import { buildStartupBanner, renderStartupBanner } from './banner.js';
 import { outcomeIcon, checkMark } from '../shared/vocabulary.js';
+import Daemon, { DAEMON_STOP_FILENAME } from '../daemon/daemon.js';
+import DaemonClient from '../daemon/daemonClient.js';
 
 /** Build a ConfigManager + quiet SessionManager for read-only commands. */
 function readOnlyContext() {
@@ -89,6 +91,16 @@ function readOnlyContext() {
     logger: silentLogger,
   });
   return { configManager, paths, sessionManager };
+}
+
+/** Phase 12 M1: a client for the Core Service, using the same resolved paths. */
+function buildDaemonClient() {
+  const configManager = new ConfigManager();
+  return new DaemonClient({
+    paths: configManager.getPaths(),
+    config: configManager.getAll(),
+    logger: silentLogger,
+  });
 }
 
 /**
@@ -196,11 +208,26 @@ export function buildProgram() {
     .command('start')
     .argument('[projects...]', 'project name(s) — several names run IN PARALLEL (Phase 10H)')
     .option('--fresh', 'abandon any interrupted session and start the mission over')
+    .option(
+      '--worker',
+      'run as a supervised mission worker of the Core Service (Phase 12 M1) — ' +
+      'the daemon passes this; you rarely type it yourself'
+    )
     .description('Start (or resume) supervising one project — or several in parallel — until the mission(s) complete')
     .action(async (projects, options) => {
       try {
-        const app = new App();
-        console.log(`\n${renderStartupBanner(buildStartupBanner({ projectNames: projects, configManager: app.configManager }), chalk)}\n`);
+        if (options.worker && projects.length > 1) {
+          throw new Error(
+            'A mission worker supervises exactly one project. The Core Service starts ' +
+            'each project as its own worker — run "start --worker <project>" once per project.'
+          );
+        }
+        const app = new App({ worker: options.worker === true });
+        // A worker's stdio is discarded by its supervisor (its observability is
+        // the log files), so the banner would go nowhere — skip it there.
+        if (!options.worker) {
+          console.log(`\n${renderStartupBanner(buildStartupBanner({ projectNames: projects, configManager: app.configManager }), chalk)}\n`);
+        }
         const result = await app.start({ projectNames: projects, fresh: options.fresh });
         if (Array.isArray(result)) {
           console.log('');
@@ -237,10 +264,35 @@ export function buildProgram() {
 
   program
     .command('stop')
+    .argument('[project]', 'with the Core Service running: which mission to stop (default: all of them)')
     .description('Ask the running orchestrator to stop gracefully (session stays resumable)')
-    .action(() => {
+    .action(async (project) => {
       try {
         const { paths } = readOnlyContext();
+
+        // Phase 12 M1: under the Core Service, "stop" means stop a MISSION —
+        // the service itself keeps running (that is the point of a service).
+        // `daemon stop` is how you stop the service.
+        const client = buildDaemonClient();
+        if (client.isRunning()) {
+          const workers = await client.workers();
+          const targets = project ? workers.filter((w) => w.project === project) : workers;
+          if (!targets.length) {
+            console.log(project
+              ? `The Core Service is not supervising "${project}".`
+              : 'The Core Service is running but no missions are active.');
+            console.log(chalk.dim('To stop the service itself: ai-orchestrator daemon stop'));
+            return;
+          }
+          for (const worker of targets) {
+            const result = await client.stopMission(worker.project, 'cli stop command');
+            console.log(result.ok
+              ? `Stop requested for "${worker.project}" (pid ${worker.pid}). The session stays resumable.`
+              : chalk.yellow(`Could not stop "${worker.project}": ${result.reason}`));
+          }
+          return;
+        }
+
         const heartbeat = readJsonSafe(paths.heartbeatFile);
         if (!heartbeat || heartbeat.state !== 'running' || !isPidAlive(heartbeat.pid)) {
           console.log('No running orchestrator found.');
@@ -256,12 +308,165 @@ export function buildProgram() {
       }
     });
 
+  // ── Phase 12 M1: the Core Service ──────────────────────────────────────
+
+  program
+    .command('serve')
+    .description('Run the AI-Orchestrator Core Service (the always-on daemon: API, remote approvals, scheduler, mission workers)')
+    .option('--stop-missions-on-exit', 'stop supervised missions when the service stops (default: leave them running for the next service start to adopt)')
+    .action(async (options) => {
+      try {
+        const daemon = new Daemon();
+        daemon.stopWorkersOnShutdown = options.stopMissionsOnExit === true;
+        const { pid, port, adopted } = await daemon.start();
+        console.log(chalk.green(`\nAI-Orchestrator Core Service running (pid ${pid}, port ${port}).`));
+        if (adopted.length) {
+          console.log(`Adopted ${adopted.length} mission(s) still running from a previous service: ` +
+            adopted.map((w) => w.project).join(', '));
+        }
+        console.log(chalk.dim('Press Ctrl+C to stop the service. Missions keep running unless --stop-missions-on-exit was passed.\n'));
+        // Resolve never: the service lives on its timers and HTTP server until
+        // a signal handler exits the process.
+        await new Promise(() => {});
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  const daemonCmd = program
+    .command('daemon')
+    .description('Inspect and control the Core Service (Phase 12 M1)');
+
+  daemonCmd
+    .command('status')
+    .description('Show whether the Core Service is running, and what it is supervising')
+    .action(async () => {
+      try {
+        const client = buildDaemonClient();
+        const result = await client.status();
+        if (!result.ok) {
+          console.log(chalk.yellow(result.reason));
+          return;
+        }
+        printDaemonStatus(result.report);
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  daemonCmd
+    .command('stop')
+    .option('--stop-missions', 'also stop every mission the service is supervising')
+    .description('Stop the Core Service (supervised missions keep running unless --stop-missions)')
+    .action(async (options) => {
+      try {
+        const client = buildDaemonClient();
+        const found = client.discover();
+        if (!found.running) {
+          console.log(found.stale
+            ? `The Core Service record points at pid ${found.record?.pid}, which is gone. Nothing to stop.`
+            : 'The Core Service is not running.');
+          return;
+        }
+        if (options.stopMissions) {
+          for (const worker of await client.workers()) {
+            const result = await client.stopMission(worker.project, 'daemon stop --stop-missions');
+            console.log(result.ok
+              ? `Stop requested for "${worker.project}".`
+              : chalk.yellow(`Could not stop "${worker.project}": ${result.reason}`));
+          }
+        }
+        // A stop-request FILE, not a signal: on Windows signalling another
+        // process is a hard kill, which would leave the service's record
+        // saying "running" and make a deliberate stop look like a crash.
+        const { paths: statePaths } = readOnlyContext();
+        fs.writeFileSync(path.join(statePaths.stateDir, DAEMON_STOP_FILENAME), '');
+        console.log(`Stop requested (Core Service pid ${found.record.pid}).`);
+
+        // Confirm it actually went down, and say so plainly if it did not.
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          if (!client.discover().running) {
+            console.log(chalk.green('The Core Service stopped cleanly.'));
+            return;
+          }
+          await sleep(400);
+        }
+        console.log(chalk.yellow(
+          `The Core Service (pid ${found.record.pid}) has not stopped yet. ` +
+          'It may be finishing a shutdown step; re-check with "ai-orchestrator daemon status".'
+        ));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  daemonCmd
+    .command('start')
+    .argument('<project>', 'project name')
+    .option('--fresh', 'abandon any interrupted session and start the mission over')
+    .description('Ask the Core Service to start supervising a project (runs alongside other projects)')
+    .action(async (project, options) => {
+      try {
+        const client = buildDaemonClient();
+        if (!client.isRunning()) {
+          console.log(chalk.yellow('The Core Service is not running. Start it with "ai-orchestrator serve".'));
+          process.exitCode = 1;
+          return;
+        }
+        const result = await client.startMission(project, { fresh: options.fresh === true });
+        if (result.ok) {
+          console.log(chalk.green(`Mission started for "${project}" (worker pid ${result.pid}).`));
+        } else {
+          console.error(chalk.red(result.reason));
+          process.exitCode = 1;
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  daemonCmd
+    .command('install')
+    .description('Start the Core Service automatically when you log in to Windows')
+    .action(() => {
+      try {
+        runSchedulerScript('install-daemon-task.ps1');
+        console.log(chalk.green('The Core Service will now start automatically when you log in.'));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  daemonCmd
+    .command('uninstall')
+    .description('Stop starting the Core Service automatically at login')
+    .action(() => {
+      try {
+        runSchedulerScript('uninstall-daemon-task.ps1');
+        console.log('The Core Service will no longer start automatically.');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
   program
     .command('status')
     .description('Show what the orchestrator is doing right now')
-    .action(() => {
+    .action(async () => {
       try {
         const { paths } = readOnlyContext();
+        // Phase 12 M1: when the Core Service is up it is the authority on what
+        // is running — status.json only ever describes ONE mission, and the
+        // service can be supervising several.
+        const client = buildDaemonClient();
+        if (client.isRunning()) {
+          const result = await client.status();
+          if (result.ok) {
+            printDaemonStatus(result.report);
+            return;
+          }
+        }
         const status = readJsonSafe(paths.statusFile);
         if (!status) {
           console.log('No status.json yet — the orchestrator has not run.');
@@ -1719,6 +1924,53 @@ function printSession(session, label) {
     `rate limits ${session.rateLimits}` +
     (session.lastActivity ? chalk.dim(` — ${session.lastActivity}`) : '')
   );
+}
+
+/**
+ * Phase 12 M1: render the Core Service report. Deliberately answers the
+ * questions a remote operator asks in order — is it alive, what is it working
+ * on, is anything waiting on me — rather than dumping the JSON.
+ */
+export function printDaemonStatus(report) {
+  console.log(chalk.bold('\nAI-Orchestrator Core Service'));
+  console.log(`  State:        ${chalk.green('running')} (pid ${report.pid}, v${report.version})`);
+  console.log(`  Uptime:       ${formatDuration(report.uptimeMs ?? 0)}`);
+  console.log(`  API:          http://127.0.0.1:${report.port}`);
+  console.log(
+    `  Remote:       ${report.telegramInbound
+      ? chalk.green('Telegram inbound active (exclusive owner)')
+      : chalk.dim('no two-way provider configured')}`
+  );
+
+  const workers = report.workers ?? [];
+  console.log(chalk.bold(`\n  Missions (${workers.length}/${report.maxWorkers})`));
+  if (!workers.length) {
+    console.log(chalk.dim('    none running'));
+  }
+  for (const worker of workers) {
+    const adopted = worker.attached ? '' : chalk.dim(' (adopted)');
+    console.log(`    ${chalk.green('●')} ${chalk.bold(worker.project)}  pid ${worker.pid}${adopted}`);
+  }
+
+  const idle = (report.projects ?? []).filter(
+    (name) => !workers.some((worker) => worker.project === name)
+  );
+  if (idle.length) {
+    console.log(chalk.bold('\n  Idle projects'));
+    console.log(`    ${idle.join(', ')}`);
+  }
+
+  if (report.pendingApprovals) {
+    console.log(chalk.yellow(
+      `\n  ${report.pendingApprovals} approval(s) waiting for you — "ai-orchestrator approvals list"`
+    ));
+  }
+
+  const host = report.host ?? {};
+  console.log(chalk.dim(
+    `\n  Host: ${host.hostname} · ${host.cpuCount} CPUs · ` +
+    `memory ${host.memoryUsedPercent}% used\n`
+  ));
 }
 
 /** Invoke a PowerShell helper script from scripts/. */

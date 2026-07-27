@@ -49,6 +49,7 @@ export class DashboardServer {
     config, logger, statusManager, sessionManager, configManager, timeline, taskQueue, memoryStore,
     agentRegistry, agentHealth, orchestrator, apiToken,
     approvalStore, approvalManager, lifecycle, resourceLocks, messageBus, paths, stopAll,
+    daemon,
   }) {
     this.config = config;
     this.logger = logger;
@@ -70,6 +71,11 @@ export class DashboardServer {
     this.messageBus = messageBus;
     this.paths = paths;
     this.stopAll = stopAll; // stops every parallel mission (10H)
+    // Phase 12 M1 (optional): the Core Service hosting this server. Present
+    // only when `ai-orchestrator serve` built it; a standalone mission's own
+    // server leaves it undefined and every /api/daemon route 503s cleanly —
+    // the same optional-collaborator contract every Phase 10 surface uses.
+    this.daemon = daemon;
     this.server = null;
     this.app = this.buildApp();
   }
@@ -95,6 +101,24 @@ export class DashboardServer {
     // Liveness probe.
     app.get('/api/health', (req, res) => {
       res.json({ ok: true, pid: process.pid, uptimeMs: Math.round(process.uptime() * 1000) });
+    });
+
+    // ── Phase 12 M1: the Core Service ────────────────────────────────────
+    // Unauthenticated like every other GET since P0, and local-only by the
+    // same `api.host` bind. It reports what is running; it changes nothing.
+    app.get('/api/daemon', (req, res) => {
+      if (!this.daemon) {
+        return res.status(503).json({
+          running: false,
+          error: 'This API is served by a standalone mission, not the Core Service.',
+        });
+      }
+      res.json(this.daemon.statusReport());
+    });
+
+    app.get('/api/daemon/workers', (req, res) => {
+      if (!this.daemon) return res.status(503).json({ error: 'Core Service not available.' });
+      res.json(this.daemon.supervisor.list());
     });
 
     // The same data as status.json, straight from memory.
@@ -275,6 +299,35 @@ export class DashboardServer {
    */
   buildMutatingRoutes(app) {
     const auth = requireAuth(this.apiToken);
+
+    // ── Phase 12 M1: mission control through the Core Service ────────────
+    // These are what finally make several projects independently startable:
+    // each one becomes its own supervised worker process, so "start
+    // Calculator while Remote Work runs" stops being a machine-wide conflict.
+    app.post('/api/daemon/missions/start', auth, (req, res) => {
+      if (!this.daemon) return res.status(503).json({ error: 'Core Service not available.' });
+      const { project, fresh } = req.body ?? {};
+      if (!project) {
+        return res.status(400).json({ ok: false, reason: '"project" is required.' });
+      }
+      try {
+        this.configManager.getProject(project);
+      } catch (error) {
+        return res.status(404).json({ ok: false, reason: error.message });
+      }
+      const result = this.daemon.supervisor.start(project, { fresh: fresh === true });
+      res.status(result.ok ? 200 : 409).json(result);
+    });
+
+    app.post('/api/daemon/missions/stop', auth, (req, res) => {
+      if (!this.daemon) return res.status(503).json({ error: 'Core Service not available.' });
+      const { project, reason } = req.body ?? {};
+      if (!project) {
+        return res.status(400).json({ ok: false, reason: '"project" is required.' });
+      }
+      const result = this.daemon.supervisor.stop(project, { reason: reason ?? 'stopped via API' });
+      res.status(result.ok ? 200 : 404).json(result);
+    });
 
     app.post('/api/control/stop', auth, async (req, res) => {
       if (!this.orchestrator && !this.stopAll) {
