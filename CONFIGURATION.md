@@ -195,6 +195,7 @@ Minimal working example:
 | `promptFile` | conditional | — | Mission prompt (relative to `workingDirectory` or absolute). **Required unless `tasks` is defined** (see below) — used for the FIRST launch; resumed runs get a Continuation Builder briefing (Phase P4), or `mission.continuePrompt` if `briefing.enabled` is `false` |
 | `tasks` | no | `[]` | Phase P2: an ordered task plan instead of one prompt — see "tasks" below |
 | `enabled` | no | `true` | Reserved for multi-project scheduling |
+| `description` | no | `""` | Phase 12 M2: one line describing what this project is, shown by `/projects` on your phone and by `projects status`. Purely descriptive — nothing reads it to make a decision, and an empty one simply renders nothing |
 
 ### mission
 
@@ -762,6 +763,85 @@ constructed with `receiveDecisions: false`. They still *publish* their own
 approval requests (outbound is stateless) and still see decisions, because
 `waitForDecision()` re-reads the shared approval store — the same
 cross-process path the CLI and desktop have always used.
+
+## Operator interface (Phase 12 M2) — `operator` block
+
+The remote console the Core Service exposes on whichever channel it owns
+(Telegram today). **Nothing in this block affects `ai-orchestrator start`** —
+only `serve` reads it, and only for the channel it exclusively owns.
+
+```json
+"operator": {
+  "enabled": true,
+  "acceptFreeText": true,
+  "minObjectiveChars": 12,
+  "confirmationTtlMs": 300000,
+  "requestTtlMs": 86400000,
+  "progressIntervalMs": 15000,
+  "progressUpdates": true,
+  "progressMinIntervalMs": 60000,
+  "projectRoots": []
+}
+```
+
+- `enabled` — master switch for the widened command grammar. `false` leaves
+  exactly the `v2.8.0` message set (`APPROVE` / `REJECT` / `MODIFY` / `DONE`
+  and nothing else). Approvals are **never** gated by this: they predate the
+  operator interface and are orthogonal to it.
+- `acceptFreeText` — whether a plain sentence may raise a mission request.
+  Free text never starts work under any setting; it can only ever produce a
+  proposal you must explicitly approve. `false` answers prose with `/help`.
+- `minObjectiveChars` — shortest message treated as an objective rather than a
+  typo.
+- `confirmationTtlMs` — how long a destructive-action code stays valid. A
+  confirmation you forgot about must expire rather than sit there waiting to be
+  triggered by an unrelated "yes" days later.
+- `requestTtlMs` — how long a mission proposal stays approvable. A request
+  approved a week late would run against a workspace that has moved on.
+- `progressIntervalMs` — how often mission progress is re-derived from disk.
+- `progressUpdates` — push real phase changes (Planning → Coding → Testing →
+  Fixing) to the channel. Phases the mission itself already notifies about
+  (approval required, complete, blocked) are recorded but never re-announced.
+- `progressMinIntervalMs` — never more than one push per project per window,
+  however fast the underlying state churns. A retry loop must not become a
+  notification storm on a phone.
+- `projectRoots` — roots under which a remotely-created project may live
+  (Phase 12 M4). **Empty means remote creation is refused outright**, which is
+  the default. Declared here now because the security posture is decided in the
+  milestone that widened the inbound grammar, not in the one that uses it.
+
+### The two gates between a message and a commit
+
+Typing an objective raises a **mission request** (`M3`). It is inert: nothing
+is queued, no worker starts, no file is written into your project.
+
+Approving it writes a prompt under `state/operator/prompts/` (never inside your
+repository), appends one task to the project's queue — the same mechanism
+`tasks add` has used since P3 — and starts a supervised worker. That worker
+plans first and stops at the existing Phase 10 **implementation review** (`A9`),
+which carries the agent's real objective, duration, files, tasks, and risks.
+
+Two approvals, two different questions: *do you want this at all?* and *do you
+accept this plan?* Nothing estimates the size of a request before something has
+actually read the code.
+
+A mission is **refused** rather than silently lost when the project already has
+a mission running (a live worker rewrites the queue) or when its current task is
+`blocked`/`failed` (the next start cannot adopt the queue and would reseed it
+from static config). Both cases say exactly how to clear them.
+
+### Runtime state the operator interface owns
+
+| File | Meaning |
+| --- | --- |
+| `state/events/events.jsonl` | The append-only event log — the record every interface reads. Rotated at 5 MB; archives kept beside it. |
+| `state/operator/context.json` | Which project each channel currently has selected. Keyed by channel, so the phone and (later) the desktop keep their own cursor. |
+| `state/operator/missions.json` | Mission requests and their decisions. |
+| `state/operator/prompts/` | The prompt file each approved request became. |
+
+Destructive-action confirmations are deliberately **in memory only**: a
+five-minute conversational state, not a fact about the system. A service
+restart should forget them, because your intent has not survived either.
 
 ## Environment notes
 

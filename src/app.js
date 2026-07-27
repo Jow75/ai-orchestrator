@@ -315,12 +315,43 @@ export class App {
    */
   installWorkerChannel() {
     if (typeof process.send !== 'function') return;
-    process.on('message', (message) => {
+    this.workerMessageHandler = (message) => {
       if (message?.type === 'stop') {
         this.logger.info('Stop requested by the Core Service', { reason: message.reason });
         this.stopAll(message.reason ?? 'daemon stop');
       }
-    });
+    };
+    process.on('message', this.workerMessageHandler);
+  }
+
+  /**
+   * Close the IPC channel so a finished worker can actually leave.
+   *
+   * A forked child with an open IPC channel has a live libuv handle, so its
+   * event loop never drains and the process runs forever — mission complete,
+   * session archived, worker record released, and still resident. Phase 12 M2's
+   * live validation caught exactly that: a mission finished cleanly and its
+   * process was still there minutes later, holding memory and never reporting
+   * an exit, which also meant the daemon's `worker.completed` event never fired.
+   *
+   * It went unnoticed through M1's own live pass because the worker observed
+   * there exited on an ERROR path (exit code 1) — a throwing process terminates
+   * regardless of open handles. Only a mission that succeeds reaches this code,
+   * which is precisely the case a crash-focused validation never exercises.
+   */
+  closeWorkerChannel() {
+    if (this.workerMessageHandler) {
+      process.off('message', this.workerMessageHandler);
+      this.workerMessageHandler = null;
+    }
+    if (process.connected && typeof process.disconnect === 'function') {
+      try {
+        process.disconnect();
+      } catch (error) {
+        // Already gone (the daemon died first) — nothing to release.
+        this.logger.debug?.('IPC channel was already closed', { error: error.message });
+      }
+    }
   }
 
   /**
@@ -728,6 +759,9 @@ export class App {
         this.workerRegistry.unregister(this.registeredProject);
         this.registeredProject = null;
       }
+      // Last, and load-bearing: an open IPC channel keeps this process alive
+      // forever after a SUCCESSFUL mission (see closeWorkerChannel).
+      this.closeWorkerChannel();
       this.logger.info('Mission worker shut down cleanly');
       return;
     }

@@ -132,6 +132,10 @@ prompt (same conversation) → … → mission complete." See
 | Command | Purpose |
 | --- | --- |
 | `init` | Guided first-run setup: project + phone, no JSON editing (see [docs/DAY_ONE.md](docs/DAY_ONE.md)) |
+| `serve` | Run the Core Service — the always-on daemon (Phase 12 M1) |
+| `daemon status/start/stop/install/uninstall` | Inspect and control the service; `daemon start <p>` runs projects **side by side** |
+| `operator "<message>"` | Run one operator command — what you would type on your phone (Phase 12 M2) |
+| `events` | Recent events from the durable log (what the system actually did) |
 | `start [project] [--fresh]` | Start or resume supervising a project |
 | `resume [project]` | Resume only if something was interrupted (used at boot) |
 | `stop` | Gracefully stop the running orchestrator (session stays resumable) |
@@ -149,6 +153,7 @@ prompt (same conversation) → … → mission complete." See
 | `schedules list/add/remove/watch` | Scheduled missions incl. missed-run recovery (Phase 10) |
 | `api-token [--rotate]` | Show/rotate the dashboard API's mutating-endpoint token |
 | `projects list` / `projects add [--interactive]` | Manage project definitions |
+| `projects status [project]` | Full registry: status, worker, branch, latest commit, health (Phase 12 M2) |
 | `drivers` | List available AI engine drivers (`claude`, `cli`, `mock`) |
 | `scheduler install/uninstall/status` | Windows auto-resume task |
 | `doctor [--fix]` | Diagnose environment, config, and engine installation — `--fix` offers to repair what it finds |
@@ -161,6 +166,30 @@ Each project is one JSON file in `config/projects/` — working directory,
 prompt file, engine settings. The orchestrator is fully reusable: point it at
 a trading bot today and a website tomorrow without touching code. See
 [CONFIGURATION.md](CONFIGURATION.md).
+
+With the Core Service running (`ai-orchestrator serve`), projects are
+supervised **independently** — `daemon start a` then `daemon start b` runs both,
+each as its own process, each with its own queue, approvals, and logs.
+
+## Running it from your phone
+
+Start the service, and the Telegram channel becomes a console rather than an
+approval inbox:
+
+```text
+/projects              → every project: status, tasks, branch, health
+/project Remote Work   → work on this one until you say otherwise
+Add CSV export to the payroll page.
+                       → a proposal you approve, which becomes a real mission
+```
+
+Typing never starts work. A sentence raises a proposal; approving it starts a
+planning run, which comes back with the agent's real plan — tasks, files,
+duration, risks — for a second approval before any code is written. Destructive
+commands (`/stop`, `/reset`, `/shutdown`) return a single-use code that expires,
+and only `/confirm <code>` performs them.
+
+Full guide: **[docs/OPERATOR_CONSOLE.md](docs/OPERATOR_CONSOLE.md)**.
 
 ## Extending
 
@@ -183,6 +212,7 @@ a trading bot today and a website tomorrow without touching code. See
 | [docs/DAY_ONE.md](docs/DAY_ONE.md) | The shortest path in: one guided command, project + phone, no JSON editing |
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | The by-hand route, step by step — useful to understand or fine-tune each piece |
 | [docs/CLI_GUIDE.md](docs/CLI_GUIDE.md) | Every command and flag, grouped by what you're trying to do |
+| [docs/OPERATOR_CONSOLE.md](docs/OPERATOR_CONSOLE.md) | Running your projects from your phone: the command grammar, mission requests, the two approval gates |
 | [docs/](docs/) | More guides: Telegram setup, email setup, remote approvals, desktop, FAQ |
 | [INSTALL.md](INSTALL.md) | Installation, auto-start setup |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every setting, with defaults |

@@ -205,6 +205,87 @@ require the same `Authorization: Bearer <token>` as P7's.
 New orchestrator event: `task:verification-failed` —
 `{ project, session, taskId, attempt, maxRuns, failedChecks }`.
 
+---
+
+## 1d. Phase 12 endpoints — the Core Service and the operator interface
+
+Every route below is served **only by `ai-orchestrator serve`**. A standalone
+mission's own API answers `503` on all of them, which is the same
+optional-collaborator contract every Phase 10 surface uses — the daemon is an
+additive supervisor, never a required one.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/daemon` | Service status: pid, uptime, version, bound port, workers, host resources, and (M2) the operator interface's state |
+| GET | `/api/daemon/workers` | Every supervised worker: project, pid, state, whether attached |
+| POST | `/api/daemon/missions/start` 🔒 | Body `{project, fresh?}` — start a mission as a supervised worker |
+| POST | `/api/daemon/missions/stop` 🔒 | Body `{project, reason?}` — stop one worker gracefully (resumable) |
+| GET | `/api/registry` | The full project registry (below). `?health=false&git=false` skips the expensive parts |
+| GET | `/api/registry/:project` | One project's registry record |
+| GET | `/api/events` | The event log. `?since=<seq>` (exclusive), `?project=`, `?type=a,b`, `?limit=` |
+| GET | `/api/operator/context` | Which project each remote channel currently has selected |
+| GET | `/api/operator/missions` | Open mission requests; `?all=true` for the full history, `?project=` to scope |
+| POST | `/api/operator/command` 🔒 | Body `{text, channel?, chatId?, from?}` → `{ok, reply}` |
+
+`POST /api/operator/command` runs the **same router** an inbound Telegram
+message goes through. That is the architectural claim of Phase 12 M2 made
+concrete: Telegram is one client, not the interface, and the desktop (M3) or a
+web console needs no second implementation of the command logic.
+
+`channel` defaults to `"api"` and matters: destructive-action confirmation
+codes are issued per channel, so a code sent to a phone is not redeemable here
+and vice versa.
+
+### Registry record shape
+
+```json
+{
+  "name": "Remote Work",
+  "description": "The payroll and scheduling app.",
+  "path": "C:/Users/Admin/Music/remote-work",
+  "driver": "claude",
+  "enabled": true,
+  "status": "waiting-approval",
+  "lifecycle": "approval-pending",
+  "lifecycleSince": "2026-07-27T10:54:32.000Z",
+  "tasks": { "done": 1, "total": 2, "current": "M2", "currentState": "active", "pending": 1 },
+  "worker": { "pid": 29956, "startedAt": "…", "mode": "worker", "daemonPid": 21124 },
+  "pendingApprovals": [{ "id": "A26", "title": "…", "category": "implementation-plan", "approvalClass": "implementation-review" }],
+  "lastActivity": "2026-07-27T10:54:32.000Z",
+  "git": { "branch": "main", "commit": "da147640bad9", "subject": "…", "dirty": false },
+  "health": { "level": "healthy", "score": 80 }
+}
+```
+
+`status` is one of `waiting-approval` | `blocked` | `running` | `queued` |
+`idle` | `misconfigured`, **in that order of the operator's attention** —
+`/api/registry` returns the list sorted by it. Every field beyond `name` and
+`status` is optional and simply absent when the underlying data does not
+exist: a project that is not a git work tree has no `git`, one that has never
+run has no `lastActivity`. Nothing is invented to fill a gap. A project whose
+config is broken still appears, with `status: "misconfigured"` and a `problem`
+string, rather than vanishing from the list.
+
+### Event shape
+
+```json
+{ "seq": 34, "type": "worker.started", "at": "2026-07-27T10:54:08.000Z", "project": "alpha", "actor": "daemon", "payload": { "pid": 29956 } }
+```
+
+`seq` is monotonic and survives service restarts, so a client tails with
+`?since=<last seq seen>`. Types are a closed set (`src/events/eventTypes.js`):
+`daemon.started|stopped`, `project.selected`,
+`mission.created|approved|rejected|started|progress|completed|blocked|cancelled|failed`,
+`approval.required|accepted|rejected|modified|done|expired`,
+`worker.started|completed|failed|stopped|adopted`,
+`command.received|rejected|confirmed`, `notification.sent`. An unknown type is
+refused rather than written.
+
+The log is written by the daemon alone. Mission workers deliberately do not
+write events — they write the state files they always have, and the daemon
+derives events from them, which is what keeps the worker path unchanged and
+the sequence real.
+
 ## 2. Plugin API
 
 A plugin is a module at `plugins/<name>.js` or `plugins/<name>/index.js`:

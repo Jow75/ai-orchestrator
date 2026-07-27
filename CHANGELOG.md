@@ -3,6 +3,177 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.9.0] — 2026-07-27 — Phase 12 M2: Telegram Operator Interface
+
+The second milestone of Phase 12. M1 made the daemon always present; M2 makes
+it something you can *operate*. The remote channel stops being a place to reply
+`APPROVE A7` and becomes a console: list projects, select one, ask for work,
+watch it happen. Full report: `docs/PHASE_12_M2_REPORT.md`.
+
+**THE PHASE 12 INVARIANT still holds, and is re-tested for this milestone:**
+with no daemon running and no operator configuration, a standalone
+`ai-orchestrator start` polls, parses, and resolves approvals exactly as in
+`v2.7.0`. No command surface exists without the Core Service.
+
+**THE GOVERNING RULE OF THIS MILESTONE:** *no free text may implicitly start
+work.* Typing a sentence raises a proposal; only an explicit approval
+authorizes a mission. There are two gates between a message and a commit, and
+they answer different questions — see "Two gates" below.
+
+### Added
+
+- **The operator console** (`src/operator/`). A widened inbound grammar,
+  parsed by a pure, side-effect-free parser (`commandGrammar.js`) and executed
+  against the daemon's own collaborators (`commandRouter.js`):
+
+  | Command | What it does |
+  | --- | --- |
+  | `/projects` | Every project: status, tasks, branch, health |
+  | `/project <name>` | Select the active project (remembered) |
+  | `/status [project]` | Phase, tasks, worker, branch, commit, last activity, health |
+  | `/start [project]` · `/stop [project]` | Run or stop a mission |
+  | `/tasks [project]` | The real task queue and where it is |
+  | `/approvals` · `/missions` | What is waiting for you |
+  | `/events [n]` | What the system actually did |
+  | `/reset [project]` | Abandon an interrupted session |
+  | `/shutdown` | Stop the Core Service |
+  | `/confirm <code>` · `/cancel [code]` | Answer a destructive-action prompt |
+  | `/whoami` · `/help` | Context, and the whole grammar |
+
+  Aliases (`/ls`, `/use`, `/cd`, `/queue`, `/log`, `/yes`, `/no`, …) resolve to
+  one canonical command, and `/help` is generated FROM the grammar so it can
+  never drift from what the parser accepts.
+
+- **The project registry** (`src/operator/projectRegistry.js`) — the daemon as
+  the single source of truth for name, description, path, status, current
+  worker, last activity, branch, latest commit, and Phase 10E health. Status is
+  derived from evidence (`waiting-approval` → `blocked` → `running` → `queued`
+  → `idle` → `misconfigured`), and the list is ordered by what needs your
+  attention, not alphabetically. A project whose config is broken is still
+  listed, flagged — never silently dropped.
+
+- **The event log** (`src/events/`) — an append-only JSONL record at
+  `state/events/events.jsonl` and the spine of the architecture: every
+  interface reads events instead of participating in mission logic. Monotonic
+  sequence numbers survive restarts, so a client can tail with `since`. The
+  daemon is its single writer by design; workers write the state files they
+  always have. Unknown event types are refused rather than written.
+
+- **Mission requests, and the two gates** (`src/operator/missionRequests.js`).
+  Free text becomes a proposal (`M3`), never work:
+
+  ```text
+  "Build a payroll dashboard."
+        │
+        ▼  gate 1 — do you want this at all?   APPROVE M3
+  a real prompt file + a real task on the project's queue + a supervised worker
+        │
+        ▼  gate 2 — do you accept THIS plan?   APPROVE A9
+  implementation
+  ```
+
+  Gate 1 shows only facts (branch, path, queue depth) and this project's own
+  measured history, labelled as history. Gate 2 is Phase 10's existing
+  implementation-review flow: the agent plans, and `implementationSummary.js`
+  extracts the real objective, duration, files, tasks and risks *from the plan*.
+  Nothing estimates the size of a request before something has read the code.
+
+- **Live mission progress** (`src/operator/missionMonitor.js`) — Planning →
+  Coding → Testing → Fixing, derived every 15 s from what missions actually
+  wrote to `state/lifecycle/` and `state/tasks/`. Progress is a count of
+  finished tasks; there is no percentage anywhere, because elapsed time is not
+  progress. Phases the mission already notifies about (approval required,
+  complete, blocked) are recorded but never re-announced — the duplicate class
+  Phase 11 M2 spent a milestone eliminating. Rate-limited per project.
+
+- **Destructive-action confirmation** (`src/operator/confirmations.js`).
+  `/stop`, `/reset`, and `/shutdown` return a short single-use code that
+  expires; only `/confirm <code>` performs the action. A bare `/confirm` with
+  two things pending is refused and both codes are listed — guessing which
+  mission to stop is exactly the failure this prevents. Codes are per channel.
+
+- **Operator API**: `GET /api/registry`, `GET /api/registry/:project`,
+  `GET /api/events`, `GET /api/operator/context`, `GET /api/operator/missions`,
+  and `POST /api/operator/command` (behind the P7 token) — which runs the SAME
+  router a phone message goes through. That is the architectural claim of the
+  milestone made testable: Telegram is one client, not the interface.
+
+- **`ai-orchestrator operator "<message>"`** — type what you would type on your
+  phone, from a terminal. **`ai-orchestrator events`** — tail the log (works
+  with the service stopped, by reading the file). **`ai-orchestrator projects
+  status [project]`** — the full registry in a terminal, also without the
+  service.
+
+- **Provider routing surface** — `fetchMessages()` / `sendText()` / `canRoute`
+  on `ApprovalProvider`, implemented by Telegram. Default no-ops, so every
+  pre-M2 provider is unchanged.
+
+- **`operator` config block** — `enabled`, `acceptFreeText`,
+  `minObjectiveChars`, `confirmationTtlMs`, `requestTtlMs`,
+  `progressIntervalMs`, `progressUpdates`, `progressMinIntervalMs`,
+  `projectRoots`. Setting `enabled: false` leaves exactly the `v2.8.0` message
+  set. Projects gained an optional `description`.
+
+### Changed
+
+- **The inbound read moved up one level** (`src/operator/operatorGateway.js`).
+  `pollProvidersOnce()` parsed each update as a decision and discarded
+  everything else — correct while `APPROVE A7` was the entire grammar, and data
+  loss the moment `/projects` existed, because `getUpdates` is
+  offset-acknowledged. The gateway now performs the one consuming read per
+  provider per tick and routes decisions *and* commands from it. Decisions go
+  through the new `ApprovalManager.applyRemoteDecision()`, which is the exact
+  store path `pollProvidersOnce()` has always used — including the once-only
+  `approval:resolved` emission workers depend on. `pollProvidersOnce()` itself
+  is untouched and remains the standalone path.
+- `TelegramApprovalProvider.fetchDecisions()` is now implemented on top of
+  `fetchMessages()`, so the chat-id restriction and the offset advance live in
+  one place. Its behaviour is unchanged and re-tested in full.
+- `daemon status` reports the operator interface: whether commands are enabled,
+  which channels are live, open mission requests, and how many events exist.
+- `shared/vocabulary.js` gained project-status, mission-phase, and health
+  vocabularies, so the CLI and the phone (and the M3 desktop) render one
+  concept one way.
+- `progressEngine.js` exports `gitBranch`, `gitHeadSubject`, and `gitDirty`
+  beside the existing `gitHead`, all bounded and never throwing.
+
+### Fixed
+
+- **A completed mission worker never exited** (found in this milestone's live
+  validation; the defect is M1 code). A forked worker's IPC channel is a live
+  libuv handle, so its event loop never drained: the mission finished, the
+  session was archived, the project claim was released, `"Mission worker shut
+  down cleanly"` was logged — and the process stayed resident forever. Every
+  successful mission leaked one. Worse, with no `exit` event the daemon never
+  recorded `worker.completed`, so the event log showed missions that started
+  and never ended. `App.shutdown()` now closes the channel in worker mode.
+
+  M1's own live pass missed this because the worker it observed exited with
+  code 1, and a throwing process terminates whatever handles are open. Only a
+  mission that *succeeds* reaches the clean shutdown path. The regression test
+  (`test/workerExit.test.js`) forks a real worker with a real IPC channel and
+  was confirmed to fail against the unfixed code.
+- **The progress rate limiter treated "never pushed" as "pushed at epoch 0"**,
+  which happens to work with a real clock and silently swallows the first
+  update with any other one.
+
+### Deliberately deferred
+
+- **Remote project creation (`/new`)** — the directive lists it as "eventually",
+  and `PHASE_12_PLAN.md` schedules it for M4 with the launcher. The security
+  decision it depends on is made *here*, though: `operator.projectRoots`
+  exists, defaults to empty, and empty means refuse. Creation will never write
+  outside an approved root.
+- **The launcher** — M4, per the directive ("do not implement yet"). Nothing in
+  M2 blocks it: the service already starts, the console is already a client.
+- **Delete / move / rename project** — these operations do not exist anywhere in
+  the product yet. When M4 adds them they inherit the confirmation gate built
+  here; adding remote-only destructive operations first would be backwards.
+- **A "Packaging" phase.** The directive lists it; the mission lifecycle has no
+  such state. Reporting one would be simulating work.
+- **Desktop changes** — M3. The desktop keeps working through its existing
+  bridge; `/api/registry` and `/api/events` are what it will move onto.
+
 ## [2.8.0] — 2026-07-27 — Phase 12 M1: AI-Orchestrator Core Service
 
 The first milestone of Phase 12, and the first change to the process model

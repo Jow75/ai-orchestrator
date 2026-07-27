@@ -4,6 +4,11 @@ How to control missions from anywhere: what pauses, what proceeds, and every
 way to answer. (Setup of the channels themselves:
 [TELEGRAM_SETUP.md](TELEGRAM_SETUP.md), [EMAIL_SETUP.md](EMAIL_SETUP.md).)
 
+> **Phase 12 M2** turned the remote channel into a console you can *operate* —
+> list projects, select one, ask for work, watch it run. This guide still
+> covers everything about deciding an approval; for the wider command grammar
+> see **[OPERATOR_CONSOLE.md](OPERATOR_CONSOLE.md)**.
+
 ## The mental model
 
 Every piece of work has a **category** (a plain string: `tests`,

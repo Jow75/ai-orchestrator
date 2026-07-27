@@ -288,6 +288,68 @@ export const ORCHESTRATOR_DEFAULTS = {
     restartFailedWorkers: false,
   },
 
+  /**
+   * Phase 12 M2: the Operator Interface (see src/operator/). Turns the remote
+   * channel from "reply APPROVE A7" into a console you can run projects from.
+   *
+   * Like `daemon`, nothing here changes standalone behaviour: `ai-orchestrator
+   * start` never consults this block. Only the Core Service reads it, and only
+   * for the channel it exclusively owns.
+   */
+  operator: {
+    /**
+     * Master switch for the widened inbound command grammar. FALSE ⇒ the
+     * service accepts exactly the `v2.8.0` message set (APPROVE/REJECT/
+     * MODIFY/DONE and nothing else), which is the escape hatch if a wider
+     * surface is ever unwanted. The approval grammar itself is never disabled
+     * by this — it predates the operator interface and is orthogonal to it.
+     */
+    enabled: true,
+    /**
+     * Whether a free-text message may raise a MISSION REQUEST at all. Free
+     * text NEVER starts work under any setting (see missionRequests.js): it
+     * can only ever produce a proposal the owner must explicitly approve.
+     * False ⇒ free text is answered with the help text instead.
+     */
+    acceptFreeText: true,
+    /** Shortest free-text message treated as a mission objective. */
+    minObjectiveChars: 12,
+    /**
+     * How long a destructive-action confirmation token stays valid. A
+     * confirmation the owner forgot about must expire rather than sit there
+     * waiting to be triggered by an unrelated "yes" days later.
+     */
+    confirmationTtlMs: 300_000, // 5 minutes
+    /**
+     * How long a mission request stays approvable before it expires. A
+     * request approved a week after it was typed would run against a
+     * workspace that has moved on.
+     */
+    requestTtlMs: 86_400_000, // 24 hours
+    /** How often the daemon re-derives mission progress from state files. */
+    progressIntervalMs: 15_000,
+    /**
+     * Push real phase changes (Planning → Coding → Testing …) to the remote
+     * channel as they happen. Phase changes the mission itself already
+     * notifies about (approval required, complete, blocked) are never
+     * re-announced here — see missionMonitor.js WORKER_ANNOUNCED_STATES.
+     */
+    progressUpdates: true,
+    /**
+     * Never send more than one progress update per project per this window,
+     * however fast the underlying state churns. A retry loop must not turn
+     * into a notification storm on a phone.
+     */
+    progressMinIntervalMs: 60_000,
+    /**
+     * Roots under which a remotely-created project may live (Phase 12 M4).
+     * Empty ⇒ remote creation is refused outright. Declared here now because
+     * the security posture ("never permit arbitrary filesystem writes") is
+     * decided in M2, where the inbound grammar widened, not later.
+     */
+    projectRoots: [],
+  },
+
   /** Project launched when `ai-orchestrator start` is run with no name. */
   defaultProject: '',
 
@@ -298,6 +360,14 @@ export const ORCHESTRATOR_DEFAULTS = {
 export const PROJECT_DEFAULTS = {
   enabled: true,
   driver: 'claude',
+
+  /**
+   * Phase 12 M2: one line describing what this project IS, shown by
+   * `/projects` on the phone and by `projects status` in the CLI. Purely
+   * descriptive — nothing reads it to make a decision. Empty is fine and
+   * simply renders nothing; the registry never invents a description.
+   */
+  description: '',
 
   /** Mission control: how the orchestrator decides a project is finished. */
   mission: {

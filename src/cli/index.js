@@ -23,7 +23,12 @@
  *   coordination <project> Locks, ready tasks, dependency stalls, messages (Phase 10H)
  *   release prepare|apply  Approval-aware release automation (Phase 10J)
  *   api-token [--rotate]    Show/rotate the dashboard API's mutating-endpoint token (Phase P7)
- *   projects list|add      Manage project definitions
+ *   serve                  Run the Core Service (Phase 12 M1)
+ *   daemon status|stop|start|install|uninstall   Control the Core Service (Phase 12 M1)
+ *   operator <message>     Run one operator command through the service (Phase 12 M2)
+ *   events                 Recent events from the durable log (Phase 12 M2)
+ *   projects list|status|add   Manage project definitions; `status` is the
+ *                           full registry — state, worker, branch, health (Phase 12 M2)
  *   drivers                List available AI engine drivers
  *   scheduler ...          Install/inspect the Windows auto-start task
  *   doctor                 Diagnose the environment and configuration
@@ -81,6 +86,11 @@ import { buildStartupBanner, renderStartupBanner } from './banner.js';
 import { outcomeIcon, checkMark } from '../shared/vocabulary.js';
 import Daemon, { DAEMON_STOP_FILENAME } from '../daemon/daemon.js';
 import DaemonClient from '../daemon/daemonClient.js';
+import WorkerRegistry from '../daemon/workerRegistry.js';
+// Phase 12 M2 surfaces.
+import EventStore from '../events/eventStore.js';
+import ProjectRegistry from '../operator/projectRegistry.js';
+import { projectStatusIcon, projectStatusLabel, healthLabel } from '../shared/vocabulary.js';
 
 /** Build a ConfigManager + quiet SessionManager for read-only commands. */
 function readOnlyContext() {
@@ -99,6 +109,31 @@ function buildDaemonClient() {
   return new DaemonClient({
     paths: configManager.getPaths(),
     config: configManager.getAll(),
+    logger: silentLogger,
+  });
+}
+
+/**
+ * Phase 12 M2: assemble the project registry locally.
+ *
+ * The daemon serves the same data over `/api/registry`, and the CLI prefers it
+ * when the service is up. This exists so `projects status` still answers with
+ * the service STOPPED — a diagnostic surface that only works when everything
+ * is working is not a diagnostic surface.
+ */
+function registryContext() {
+  const configManager = new ConfigManager();
+  const paths = configManager.getPaths();
+  const lifecycle = new MissionLifecycle({ lifecycleDir: paths.lifecycleDir, logger: silentLogger });
+  return new ProjectRegistry({
+    configManager,
+    workerRegistry: new WorkerRegistry({ workersDir: paths.workersDir, logger: silentLogger }),
+    taskQueue: new TaskQueue({ tasksDir: paths.tasksDir, logger: silentLogger, lifecycle }),
+    lifecycle,
+    approvalStore: new ApprovalStore({ approvalsDir: paths.approvalsDir, logger: silentLogger }),
+    sessionManager: new SessionManager({ sessionsDir: paths.sessionsDir, logger: silentLogger }),
+    timeline: new MissionTimeline({ timelineDir: paths.timelineDir, logger: silentLogger }),
+    heartbeatFile: paths.heartbeatFile,
     logger: silentLogger,
   });
 }
@@ -445,6 +480,74 @@ export function buildProgram() {
       try {
         runSchedulerScript('uninstall-daemon-task.ps1');
         console.log('The Core Service will no longer start automatically.');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  // ── Phase 12 M2: the operator interface, from a terminal ────────────────
+
+  program
+    .command('operator')
+    .argument('<message...>', 'exactly what you would type on your phone')
+    .description('Run one operator command through the Core Service (the same path a phone message takes)')
+    .action(async (message) => {
+      try {
+        const client = buildDaemonClient();
+        if (!client.isRunning()) {
+          console.log(chalk.yellow('The Core Service is not running. Start it with "ai-orchestrator serve".'));
+          process.exitCode = 1;
+          return;
+        }
+        const result = await client.command(message.join(' '));
+        if (!result.ok) {
+          console.error(chalk.red(result.reason ?? 'The Core Service refused the command.'));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(result.reply ?? chalk.dim('(no reply)'));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  program
+    .command('events')
+    .option('-p, --project <name>', 'only this project')
+    .option('-n, --limit <count>', 'how many to show', '20')
+    .option('-t, --type <types>', 'comma-separated event types')
+    .description('Show recent events from the durable log (what the system actually did)')
+    .action(async (options) => {
+      try {
+        const limit = Number.parseInt(options.limit, 10) || 20;
+        const types = options.type ? options.type.split(',').map((t) => t.trim()) : undefined;
+
+        // Prefer the service (it is the writer, so its view is never stale by
+        // a partial line); fall back to reading the log directly, which is
+        // exactly as authoritative because the file IS the record.
+        const client = buildDaemonClient();
+        let events;
+        if (client.isRunning()) {
+          events = await client.events({ project: options.project, limit, types });
+        } else {
+          const { paths } = readOnlyContext();
+          const store = new EventStore({ eventsDir: paths.eventsDir, logger: silentLogger });
+          events = store.read({ project: options.project, limit, types });
+        }
+
+        if (!events.length) {
+          console.log('No events recorded yet.');
+          return;
+        }
+        for (const event of events) {
+          const when = new Date(event.at).toLocaleString();
+          const project = event.project ? chalk.cyan(` ${event.project}`) : '';
+          const actor = event.actor ? chalk.dim(` (${event.actor})`) : '';
+          console.log(`${chalk.dim(`#${event.seq}`)} ${when}  ${chalk.bold(event.type)}${project}${actor}`);
+          if (event.payload && Object.keys(event.payload).length) {
+            console.log(chalk.dim(`      ${JSON.stringify(event.payload)}`));
+          }
+        }
       } catch (error) {
         fail(error);
       }
@@ -898,6 +1001,44 @@ export function buildProgram() {
           const session = sessionManager.getActiveSession(name);
           const marker = session ? chalk.green(` [active: ${session.state}]`) : '';
           console.log(`  ${chalk.bold(name)}${marker}`);
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  projects
+    .command('status')
+    .argument('[project]', 'one project (default: all of them)')
+    .option('--no-health', 'skip health scoring (faster)')
+    .option('--no-git', 'skip git branch/commit lookups (faster)')
+    .description('Full project registry: status, worker, branch, latest commit, health (Phase 12 M2)')
+    .action(async (project, options) => {
+      try {
+        // The service is the source of truth when it is up, because only it
+        // knows about workers it is supervising right now.
+        const client = buildDaemonClient();
+        let records = null;
+        if (client.isRunning()) {
+          records = await client.registry({ health: options.health, git: options.git });
+        }
+        if (!records?.length) {
+          records = registryContext().list({ health: options.health, git: options.git });
+        }
+        if (project) {
+          records = records.filter((r) => r.name.toLowerCase() === project.toLowerCase());
+          if (!records.length) {
+            console.log(`No project named "${project}".`);
+            process.exitCode = 1;
+            return;
+          }
+        }
+        if (!records.length) {
+          console.log('No projects defined. Create one with "ai-orchestrator projects add --interactive".');
+          return;
+        }
+        for (const record of records) {
+          printRegistryRecord(record);
         }
       } catch (error) {
         fail(error);
@@ -1966,11 +2107,64 @@ export function printDaemonStatus(report) {
     ));
   }
 
+  // Phase 12 M2: whether the remote console is actually reachable. Absent on
+  // a v2.8.0 service, so the section simply does not print.
+  if (report.operator) {
+    const channels = report.operator.channels ?? [];
+    console.log(chalk.bold('\n  Operator interface'));
+    console.log(`    Commands:   ${report.operator.enabled ? chalk.green('enabled') : chalk.dim('disabled')}`);
+    console.log(`    Channels:   ${channels.length ? channels.join(', ') : chalk.dim('none configured')}`);
+    if (report.operator.openMissionRequests) {
+      console.log(chalk.yellow(`    Waiting:    ${report.operator.openMissionRequests} mission request(s)`));
+    }
+    console.log(chalk.dim(`    Events:     ${report.operator.events} recorded`));
+  }
+
   const host = report.host ?? {};
   console.log(chalk.dim(
     `\n  Host: ${host.hostname} · ${host.cpuCount} CPUs · ` +
     `memory ${host.memoryUsedPercent}% used\n`
   ));
+}
+
+/**
+ * Phase 12 M2: one project registry record, rendered for a terminal.
+ *
+ * Same data the phone gets from `/projects`, same vocabulary (shared/
+ * vocabulary.js) — a terminal and a phone disagreeing about what "blocked"
+ * looks like is exactly the drift Phase 11 M4 removed.
+ */
+export function printRegistryRecord(record) {
+  if (record.status === 'misconfigured') {
+    console.log(`\n${projectStatusIcon(record.status)} ${chalk.bold(record.name)} — ${chalk.red('configuration problem')}`);
+    console.log(chalk.red(`    ${record.problem}`));
+    return;
+  }
+
+  console.log(`\n${projectStatusIcon(record.status)} ${chalk.bold(record.name)} — ${projectStatusLabel(record.status)}`);
+  if (record.description) console.log(chalk.dim(`    ${record.description}`));
+  if (record.lifecycle) console.log(`    Phase:        ${record.lifecycle}`);
+  if (record.tasks?.total) {
+    const current = record.tasks.current ? ` (current: ${record.tasks.current})` : '';
+    console.log(`    Tasks:        ${record.tasks.done}/${record.tasks.total} done${current}`);
+  }
+  if (record.worker) {
+    console.log(`    Worker:       pid ${record.worker.pid} (${record.worker.mode})`);
+  }
+  if (record.pendingApprovals?.length) {
+    console.log(chalk.yellow(`    Waiting:      ${record.pendingApprovals.map((r) => r.id).join(', ')}`));
+  }
+  if (record.git) {
+    const dirty = record.git.dirty ? chalk.yellow(' (uncommitted changes)') : '';
+    console.log(`    Branch:       ${record.git.branch ?? 'detached'}${dirty}`);
+    console.log(`    Commit:       ${record.git.commit}${record.git.subject ? ` — ${record.git.subject}` : ''}`);
+  }
+  if (record.path) console.log(chalk.dim(`    Path:         ${record.path}`));
+  if (record.lastActivity) console.log(chalk.dim(`    Last activity: ${record.lastActivity}`));
+  if (record.health?.level) {
+    const score = Number.isFinite(record.health.score) ? ` (${record.health.score}/100)` : '';
+    console.log(`    Health:       ${healthLabel(record.health.level)}${score}`);
+  }
 }
 
 /** Invoke a PowerShell helper script from scripts/. */

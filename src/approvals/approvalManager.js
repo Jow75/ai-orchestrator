@@ -238,6 +238,31 @@ export class ApprovalManager extends EventEmitter {
   }
 
   /**
+   * Apply one decision that arrived from a remote channel, where only the
+   * request ID is known (a phone reply says "APPROVE A7", not which project
+   * A7 belongs to).
+   *
+   * Phase 12 M2 extracted this from `pollProvidersOnce()` so the Core
+   * Service's operator gateway — which reads the channel itself now, in order
+   * to route commands as well as decisions — resolves approvals through the
+   * exact same code path, including the once-only `approval:resolved`
+   * announcement. Two ways to apply a decision would eventually become two
+   * behaviours; there is one.
+   *
+   * @param {{requestId: string, decision: string, note?: string, by?: string, via?: string}} params
+   * @returns {{ok: boolean, reason?: string, request?: object}}
+   */
+  applyRemoteDecision({ requestId, decision, note, by, via }) {
+    const result = this.store.resolveById(requestId, { decision, note, by, via });
+    if (result.ok) {
+      this.emitResolved(result.request.project, result.request);
+    } else {
+      this.logger.warn('Ignored remote decision', { requestId, decision, reason: result.reason });
+    }
+    return result;
+  }
+
+  /**
    * Poll every two-way provider once and apply any decisions to the store.
    * Returns the requests that were resolved this round.
    */
@@ -257,15 +282,10 @@ export class ApprovalManager extends EventEmitter {
         });
       }
       for (const { requestId, decision, note, by } of decisions) {
-        const result = this.store.resolveById(requestId, {
-          decision, note, by, via: provider.name,
+        const result = this.applyRemoteDecision({
+          requestId, decision, note, by, via: provider.name,
         });
-        if (result.ok) {
-          resolved.push(result.request);
-          this.emitResolved(result.request.project, result.request);
-        } else {
-          this.logger.warn('Ignored remote decision', { requestId, decision, reason: result.reason });
-        }
+        if (result.ok) resolved.push(result.request);
       }
     }
     return resolved;

@@ -324,7 +324,10 @@ test('with no two-way provider the poll loop stays off', async () => {
   try {
     assert.equal(daemon.canReceive, false, 'no approvals.providers configured in this root');
     daemon.startPollLoop();
-    assert.equal(daemon.pollTimer, null, 'nothing to poll, so no timer is armed');
+    // Phase 12 M2 moved the inbound timer from the daemon into the operator
+    // gateway (one consuming read, routed to commands AND decisions). The
+    // assertion is unchanged in substance — nothing to poll, no timer armed.
+    assert.equal(daemon.gateway.timer, null, 'nothing to poll, so no timer is armed');
   } finally {
     await daemon.stop();
   }

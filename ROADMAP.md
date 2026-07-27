@@ -27,6 +27,9 @@ points:
 | `v2.6.0` | **Phase 11 M3 complete** — doctor, recovery & operator guidance: `doctor --fix` (structured findings, safe repairs + wizard hand-off, both confirmed), a remedy-first error catalogue, and guided recovery (`tasks list`/`approvals list` print the exact next command) |
 | `v2.7.0` | **Phase 11 M4 complete — Phase 11 done** — UX consistency & polish: a shared terminology contract (`src/shared/vocabulary.js`) fixed a real drift (three different "success" icons across CLI/notifications/Mission Cards); one version source (`src/infra/version.js`) replaces three hand-synced literals; a startup banner; `notify tune` (interactive per-channel severity); a cross-product consistency audit found and fixed a real desktop/CLI parity bug (in-app project creation never set `claude.permissionMode`); `docs/CLI_GUIDE.md` gained its missing `init`/`notify`/`doctor --fix`/`--interactive` entries |
 
+| `v2.8.0` | **Phase 12 M1 complete** — the Core Service: `ai-orchestrator serve`, an always-on daemon owning the API, the exclusive Telegram inbound poll, the scheduler tick, and mission workers as supervised child processes; supervision ownership moved from the machine to the project, so several projects run at once for the first time (see `docs/PHASE_12_M1_REPORT.md`) |
+| `v2.9.0` | **Phase 12 M2 complete** — the Telegram Operator Interface: a widened inbound command grammar (`/projects`, `/project`, `/status`, `/start`, `/stop`, `/tasks`, `/approvals`, `/missions`, `/events`, `/reset`, `/shutdown`), a project registry the daemon owns, persistent per-channel project context, mission requests (free text → proposal → approval → real supervised mission, with the estimates coming from the agent's own plan), real progress derived from mission state files, a single-use expiring confirmation gate on every destructive action, and an append-only event log every interface reads; live validation found and fixed an M1 defect that leaked one process per successful mission (see `docs/PHASE_12_M2_REPORT.md`) |
+
 ### Architectural principle for every phase: **engine-agnostic**
 
 Claude Code is the first engine, not the only one. The progress engine,
@@ -380,7 +383,7 @@ consistency & documentation (`v2.7.0`). Full retrospective:
 
 ---
 
-## Phase 12 — Architectural Evolution 🔄 (M1 complete, M2 next)
+## Phase 12 — Architectural Evolution 🔄 (M1 + M2 complete, M3 next)
 
 Turns AI-Orchestrator from *an executable that sometimes runs* into *a
 service clients connect to*. Desktop, Telegram, CLI, and any future web UI
@@ -393,21 +396,38 @@ all become clients of one daemon. Plan: `docs/PHASE_12_PLAN.md`.
   projects run at once** for the first time. Windows autostart, worker
   adoption across service restarts, and a tested backwards-compatibility
   invariant. Report: `docs/PHASE_12_M1_REPORT.md`.
-- **M2 — Telegram Operator Interface** (`v2.9.0`): command router, project
-  context switching, executive Mission Cards. This is where the inbound
-  grammar widens beyond approval replies, so it carries its own security
-  review (`PHASE_12_PLAN.md` §6).
+- **M2 — Telegram Operator Interface** ✅ (`v2.9.0`): the remote channel
+  becomes a console — project registry (`/projects`), persistent project
+  context (`/project`), a widened command grammar parsed by a pure,
+  side-effect-free parser, real mission progress derived from what missions
+  actually wrote, and a confirmation gate on every destructive action. Free
+  text raises a *proposal*, never work: two gates sit between a sentence and a
+  commit, and the estimates come from the agent's own plan at the second one.
+  An append-only event log (`src/events/`) becomes the spine every interface
+  reads. Report: `docs/PHASE_12_M2_REPORT.md`; guide:
+  `docs/OPERATOR_CONSOLE.md`.
 - **M3 — Operator Control Center** (`v3.0.0`): the desktop as a pure daemon
   client, showing every project, worker, queue and approval at once — with no
-  orchestration logic of its own.
+  orchestration logic of its own. M2 built what it will consume:
+  `GET /api/registry`, `GET /api/events`, and `POST /api/operator/command`.
 - **M4 — Launch experience & remote project creation** (`v3.1.0`):
   double-click launcher, Start Menu integration, automatic daemon detection,
   and `/new` project creation with a mandatory plan approval before any write.
+  The safety rule it depends on already exists (`operator.projectRoots`,
+  empty = refuse), as does the confirmation gate destructive project
+  operations will inherit.
 
 **Deliberately deferred in M1** (see the report): notification routing stays
-with workers until M2 rewrites the sending side (moving it early would
-duplicate every event); no new Telegram command grammar; no desktop changes;
-missions never run inside the service process.
+with workers; no new Telegram command grammar; no desktop changes; missions
+never run inside the service process.
+
+**Deliberately deferred in M2** (see the report): remote project creation and
+the launcher (both M4, both explicitly "not yet" in the directive); delete /
+move / rename project (operations the product does not have at all yet); a
+"Packaging" phase (no such lifecycle state exists — reporting one would be
+simulating work); desktop changes (M3). Notification routing stayed with
+workers after all: the mission monitor announces only the phases nothing else
+covers, which removes the duplication problem without moving the sending side.
 
 ---
 

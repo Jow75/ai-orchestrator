@@ -139,6 +139,49 @@ export class DaemonClient {
     const result = await this.call('/api/daemon/workers');
     return result.ok ? result.data : [];
   }
+
+  /**
+   * Phase 12 M2: the full project registry (status, worker, branch, health).
+   * Empty array when the service is not running — callers fall back to the
+   * idle path, exactly as the desktop bridge has since Phase 8.
+   */
+  async registry({ health = true, git = true } = {}) {
+    const result = await this.call(`/api/registry?health=${health}&git=${git}`);
+    return result.ok && Array.isArray(result.data) ? result.data : [];
+  }
+
+  /** Phase 12 M2: recent events from the durable log. */
+  async events({ project, limit, since, types } = {}) {
+    const query = new URLSearchParams();
+    if (project) query.set('project', project);
+    if (limit) query.set('limit', String(limit));
+    if (since !== undefined) query.set('since', String(since));
+    if (types?.length) query.set('type', types.join(','));
+    const result = await this.call(`/api/events?${query.toString()}`);
+    return result.ok && Array.isArray(result.data) ? result.data : [];
+  }
+
+  /**
+   * Phase 12 M2: run one operator command through the daemon's router — the
+   * same path a Telegram message takes. This is what makes "every interface is
+   * a client" a fact rather than a claim.
+   *
+   * @param {string} text
+   * @param {{channel?: string, from?: string}} [options]
+   * @returns {Promise<{ok: boolean, reply?: string, reason?: string}>}
+   */
+  async command(text, { channel = 'cli', from = 'cli' } = {}) {
+    const result = await this.call('/api/operator/command', {
+      method: 'POST', auth: true, body: { text, channel, from },
+      // Some commands start a mission process; the default 5s can be tight.
+      timeoutMs: 20_000,
+    });
+    if (result.ok) return result.data ?? { ok: true };
+    return {
+      ok: false,
+      reason: result.data?.reason ?? result.reason ?? `HTTP ${result.status}`,
+    };
+  }
 }
 
 export default DaemonClient;

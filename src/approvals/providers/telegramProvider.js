@@ -32,6 +32,8 @@ export class TelegramApprovalProvider extends ApprovalProvider {
     super({ config, logger });
     this.name = 'telegram';
     this.canReceive = true;
+    /** Phase 12 M2: this provider can hand back raw messages and reply. */
+    this.canRoute = true;
     this.offsetFile = offsetFile;
     this.fetchFn = fetchFn ?? globalThis.fetch;
     this.memoryOffset = 0;
@@ -86,8 +88,23 @@ export class TelegramApprovalProvider extends ApprovalProvider {
     }
   }
 
-  /** Poll getUpdates and parse decision replies from the owner's chat. */
-  async fetchDecisions() {
+  /**
+   * Phase 12 M2: poll getUpdates and return every message from the owner's
+   * chat, UNPARSED.
+   *
+   * This is the single read that consumes the offset. `fetchDecisions()` is
+   * now implemented on top of it (below) so there is exactly one place that
+   * advances the offset, whichever grammar the caller cares about — two
+   * readers of an offset-acknowledged feed destroy each other's messages, and
+   * that failure mode is the reason the Core Service exists at all.
+   *
+   * Only the configured `chatId` is honoured. A stranger messaging the bot is
+   * dropped here, before any parsing, so no command surface added later can
+   * accidentally become reachable by someone who is not the owner.
+   *
+   * @returns {Promise<{text: string, at: string, from: string, chatId: string, messageId: string}[]>}
+   */
+  async fetchMessages() {
     this.requireConfig();
     const offset = this.loadOffset();
     const response = await this.fetchFn(
@@ -98,21 +115,72 @@ export class TelegramApprovalProvider extends ApprovalProvider {
     const body = await response.json();
     if (!body.ok || !Array.isArray(body.result)) return [];
 
-    const decisions = [];
+    const messages = [];
     let maxUpdateId = offset;
     for (const update of body.result) {
       maxUpdateId = Math.max(maxUpdateId, update.update_id ?? 0);
       const message = update.message ?? update.edited_message;
       if (!message?.text) continue;
-      // Only the configured owner chat may decide anything.
+      // Only the configured owner chat may say anything to this system.
       if (String(message.chat?.id) !== String(this.config.chatId)) continue;
-      const parsed = parseDecisionText(message.text);
-      if (parsed) {
-        decisions.push({ ...parsed, by: message.from?.username ?? 'telegram-owner' });
-      }
+      messages.push({
+        text: message.text,
+        at: message.date ? new Date(message.date * 1000).toISOString() : new Date().toISOString(),
+        from: message.from?.username ?? 'telegram-owner',
+        chatId: String(message.chat.id),
+        messageId: String(message.message_id),
+      });
     }
     if (maxUpdateId > offset) this.saveOffset(maxUpdateId);
+    return messages;
+  }
+
+  /**
+   * Poll for decision replies from the owner's chat.
+   *
+   * Unchanged in behaviour since Phase 10C — it still consumes the offset and
+   * still returns only decision-shaped replies. It now derives them from
+   * `fetchMessages()` so the parsing and the chat restriction live in one
+   * place. This is the path a STANDALONE orchestrator (no daemon) still takes,
+   * which is why it must keep working exactly as it always has.
+   */
+  async fetchDecisions() {
+    const messages = await this.fetchMessages();
+    const decisions = [];
+    for (const message of messages) {
+      const parsed = parseDecisionText(message.text);
+      if (parsed) decisions.push({ ...parsed, by: message.from });
+    }
     return decisions;
+  }
+
+  /**
+   * Phase 12 M2: reply in the owner's chat.
+   *
+   * Same HTML formatting as `publish()` and the notification channel, for the
+   * same Phase 11 M2 reason: without it, a reply that merely mentions
+   * "README.md" renders as a dead link on the owner's phone.
+   *
+   * @param {string} text
+   * @returns {Promise<{messageId?: string}>}
+   */
+  async sendText(text) {
+    this.requireConfig();
+    const response = await this.fetchFn(this.api('sendMessage'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: this.config.chatId,
+        text: formatTelegramText(text),
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`Telegram API responded ${response.status}`);
+    const body = await response.json().catch(() => ({}));
+    const id = body?.result?.message_id;
+    return { messageId: id != null ? String(id) : undefined };
   }
 }
 

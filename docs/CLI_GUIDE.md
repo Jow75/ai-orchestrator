@@ -51,6 +51,53 @@ Notes worth knowing:
 - `daemon install` is separate from `scheduler install` (auto-resume). They
   answer different questions; install either, both, or neither.
 
+## The operator console (Phase 12 M2)
+
+With the service running, the same console your phone talks to is available
+from a terminal.
+
+| Command | What it does |
+| --- | --- |
+| `operator "<message>"` | Run one operator command — exactly what you would type on your phone |
+| `events` | Recent events from the durable log (`--project`, `--limit`, `--type`) |
+| `projects status [project]` | The full registry: status, worker, branch, latest commit, health |
+
+```console
+$ ai-orchestrator operator "/projects"
+Projects (2)
+
+▸ ⏸️ Remote Work
+   Waiting for you · 1/2 tasks · main · healthy
+• 💤 Calculator
+   Idle · master · healthy
+
+Active: Remote Work
+
+$ ai-orchestrator operator "Add CSV export to the payroll page."
+📋 Mission M4 — Remote Work
+…
+Reply: APPROVE M4 · REJECT M4 [why]
+```
+
+`operator "/help"` lists the whole grammar; it is generated from the parser, so
+it can never drift from what is actually accepted.
+
+Notes worth knowing:
+
+- **Typing never starts work.** A sentence raises a proposal (`M4`). Approving
+  it starts a planning run, which comes back with a real plan for a second
+  approval before any code is written.
+- **Destructive commands ask first.** `/stop`, `/reset`, and `/shutdown` return
+  a short code; only `/confirm <code>` performs the action. Codes are per
+  channel, single-use, and expire — a code issued to your phone is not
+  redeemable from the CLI.
+- **`events` and `projects status` work with the service stopped.** They read
+  the log and the state files directly, because a diagnostic surface that only
+  works when everything is working is not a diagnostic surface.
+- **Git Bash users:** it rewrites a leading `/` into a Windows path, so
+  `operator "/projects"` arrives mangled. Use PowerShell, or drop the slash —
+  `operator "projects"` works in any shell, as does `operator "status alpha"`.
+
 ## See what's happening
 
 | Command | What it shows |

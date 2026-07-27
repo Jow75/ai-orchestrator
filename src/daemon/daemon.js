@@ -18,6 +18,19 @@
  *   4. Mission worker lifecycle — spawning, adopting, stopping (see
  *      workerSupervisor.js).
  *
+ * Phase 12 M2 adds three more, all of which only a resident process can do:
+ *
+ *   5. The OPERATOR INTERFACE (src/operator/) — the inbound channel is now
+ *      read once, by one gateway, and routed to a command grammar rather than
+ *      to a decision parser that discarded everything else. See
+ *      operator/operatorGateway.js for why that had to move up a level.
+ *   6. The EVENT LOG (src/events/) — the durable record every interface reads
+ *      instead of participating in mission logic. The daemon is its single
+ *      writer, which is what makes its sequence real.
+ *   7. MISSION OBSERVATION — progress derived from what missions actually
+ *      wrote to disk (operator/missionMonitor.js), so the phone can watch a
+ *      mission the daemon did not even start.
+ *
  * What it deliberately does NOT own:
  *
  *   - Running missions. Never in-process: an uncaught error inside a mission
@@ -25,9 +38,8 @@
  *   - Mission-level notifications. Workers still emit their own mission and
  *     approval notifications exactly as they always have. If the daemon also
  *     announced them, every event would arrive twice — the precise duplicate
- *     class Phase 11 M2 spent a milestone eliminating. Consolidating
- *     notification routing into the service belongs with M2's Mission Card
- *     work, where the sending side is being rewritten anyway.
+ *     class Phase 11 M2 spent a milestone eliminating. M2's mission monitor
+ *     announces only the phases nothing else covers, for the same reason.
  */
 
 import os from 'node:os';
@@ -61,6 +73,16 @@ import NotificationEngine from '../notifications/notificationEngine.js';
 import MissionScheduler from '../scheduler/missionScheduler.js';
 import { buildActivitySummary } from '../scheduler/activitySummary.js';
 import { ProgressLedger } from '../progress/progressLedger.js';
+import { ProjectIntelligence } from '../intelligence/projectIntelligence.js';
+
+import EventStore from '../events/eventStore.js';
+import ProjectRegistry from '../operator/projectRegistry.js';
+import OperatorContext from '../operator/operatorContext.js';
+import MissionRequestStore from '../operator/missionRequests.js';
+import ConfirmationStore from '../operator/confirmations.js';
+import CommandRouter from '../operator/commandRouter.js';
+import OperatorGateway from '../operator/operatorGateway.js';
+import MissionMonitor from '../operator/missionMonitor.js';
 
 import DaemonRecord from './daemonRecord.js';
 import WorkerRegistry from './workerRegistry.js';
@@ -104,7 +126,19 @@ export class Daemon extends EventEmitter {
       paths: this.paths,
       forkFn: options.forkFn,
     });
-    this.supervisor.onEvent((event) => this.emit('worker', event));
+    /**
+     * Projects whose start has already been recorded in the event log.
+     *
+     * A worker announces its own start over IPC as well (App.notifyDaemon),
+     * so the supervisor emits 'worker:started' twice for one mission — once
+     * when it spawns the child, once when the child says hello. The log must
+     * contain one start per mission, not two.
+     */
+    this.recordedStarts = new Set();
+    this.supervisor.onEvent((event) => {
+      this.emit('worker', event);
+      this.recordWorkerEvent(event);
+    });
 
     // --- the exclusive inbound approval channel -------------------------
     this.approvalStore = new ApprovalStore({
@@ -165,6 +199,13 @@ export class Daemon extends EventEmitter {
       coordinationDir: this.paths.coordinationDir,
       logger: childLogger(this.logger, 'coordination'),
     });
+    this.ledger = new ProgressLedger({
+      ledgerDir: this.paths.ledgerDir,
+      logger: childLogger(this.logger, 'progress'),
+    });
+
+    // --- Phase 12 M2: the operator interface -----------------------------
+    this.buildOperatorInterface();
 
     this.apiToken = loadOrCreateToken(this.paths.apiTokenFile);
     this.dashboard = new DashboardServer({
@@ -193,7 +234,6 @@ export class Daemon extends EventEmitter {
 
     this.scheduler = this.buildScheduler();
 
-    this.pollTimer = null;
     this.schedulerTimer = null;
     this.scanTimer = null;
     this.stopFileTimer = null;
@@ -201,6 +241,106 @@ export class Daemon extends EventEmitter {
     this.startedAt = null;
     this.shuttingDown = false;
     this.stopWorkersOnShutdown = false;
+  }
+
+  /**
+   * Phase 12 M2: assemble the operator console.
+   *
+   * Everything here is a client of state the daemon already owns — the
+   * registry reads config and worker records, the router acts through the
+   * supervisor and the approval manager, the monitor reads what missions
+   * wrote. Nothing in this method introduces a new way for work to happen;
+   * it introduces a new way to ASK for work that already had a path.
+   */
+  buildOperatorInterface() {
+    const logger = childLogger(this.logger, 'operator');
+    const operatorConfig = this.config.operator ?? {};
+
+    this.events = new EventStore({
+      eventsDir: this.paths.eventsDir,
+      logger: childLogger(this.logger, 'events'),
+    });
+
+    this.projectRegistry = new ProjectRegistry({
+      configManager: this.configManager,
+      workerRegistry: this.workerRegistry,
+      taskQueue: this.taskQueue,
+      lifecycle: this.lifecycle,
+      approvalStore: this.approvalStore,
+      sessionManager: this.sessionManager,
+      timeline: this.timeline,
+      heartbeatFile: this.paths.heartbeatFile,
+      buildIntelligence: () => new ProjectIntelligence({
+        configManager: this.configManager,
+        sessionManager: this.sessionManager,
+        taskQueue: this.taskQueue,
+        memoryStore: this.memoryStore,
+        ledger: this.ledger,
+        agentRegistry: this.agentRegistry,
+        agentHealth: this.agentHealth,
+        approvalStore: this.approvalStore,
+        lifecycle: this.lifecycle,
+        logger,
+      }),
+      logger,
+    });
+
+    this.operatorContext = new OperatorContext({
+      contextFile: this.paths.operatorContextFile,
+      logger,
+    });
+    this.missionRequests = new MissionRequestStore({
+      requestsFile: this.paths.missionRequestsFile,
+      promptsDir: this.paths.missionPromptsDir,
+      ttlMs: operatorConfig.requestTtlMs,
+      logger,
+    });
+    this.confirmations = new ConfirmationStore({ ttlMs: operatorConfig.confirmationTtlMs });
+
+    this.commandRouter = new CommandRouter({
+      registry: this.projectRegistry,
+      context: this.operatorContext,
+      requests: this.missionRequests,
+      confirmations: this.confirmations,
+      events: this.events,
+      approvalStore: this.approvalStore,
+      approvalManager: this.approvalManager,
+      supervisor: this.supervisor,
+      taskQueue: this.taskQueue,
+      sessionManager: this.sessionManager,
+      ledger: this.ledger,
+      configManager: this.configManager,
+      config: this.config,
+      // A remote shutdown must go through the SAME stop path as `daemon stop`
+      // (see watchStopFile): on Windows a cross-process signal is a hard kill,
+      // and a service that dies without releasing its record makes the next
+      // `daemon status` report a crash the operator never had.
+      requestShutdown: () => {
+        setTimeout(() => {
+          this.stop('operator shutdown').finally(() => this.exitProcess(0));
+        }, 1_000).unref();
+      },
+      logger,
+    });
+
+    this.gateway = new OperatorGateway({
+      router: this.commandRouter,
+      approvalManager: this.approvalManager,
+      events: this.events,
+      logger,
+      pollIntervalMs: this.daemonConfig.pollIntervalMs ?? 10_000,
+    });
+
+    this.missionMonitor = new MissionMonitor({
+      registry: this.projectRegistry,
+      lifecycle: this.lifecycle,
+      taskQueue: this.taskQueue,
+      approvalStore: this.approvalStore,
+      events: this.events,
+      gateway: this.gateway,
+      config: operatorConfig,
+      logger,
+    });
   }
 
   /**
@@ -218,10 +358,7 @@ export class Daemon extends EventEmitter {
       config: this.config.notifications,
       logger: childLogger(this.logger, 'notifications'),
     });
-    const ledger = new ProgressLedger({
-      ledgerDir: this.paths.ledgerDir,
-      logger: childLogger(this.logger, 'progress'),
-    });
+    const ledger = this.ledger;
     const scheduler = new MissionScheduler({
       schedulesFile: this.paths.schedulesFile,
       stateFile: this.paths.schedulesStateFile,
@@ -281,6 +418,51 @@ export class Daemon extends EventEmitter {
       }));
     }
     return providers;
+  }
+
+  /**
+   * Phase 12 M2: mirror a supervisor event into the durable log.
+   *
+   * The supervisor's in-process events are transient signals between the
+   * daemon and its children; these are the durable facts an interface reads
+   * later. Translating rather than reusing the names keeps the two vocabularies
+   * from silently merging (see events/eventTypes.js).
+   */
+  recordWorkerEvent(event) {
+    if (!this.events) return;
+    const project = event.project;
+    switch (event.type) {
+      case 'worker:started':
+        if (!project || this.recordedStarts.has(project)) return;
+        this.recordedStarts.add(project);
+        this.events.append({
+          type: 'worker.started', project, actor: 'daemon', payload: { pid: event.pid ?? null },
+        });
+        return;
+      case 'worker:adopted':
+        this.events.append({
+          type: 'worker.adopted', project, actor: 'daemon', payload: { pid: event.pid ?? null },
+        });
+        return;
+      case 'worker:exited':
+        this.recordedStarts.delete(project);
+        this.events.append({
+          type: event.crashed ? 'worker.failed' : 'worker.completed',
+          project,
+          actor: 'daemon',
+          payload: { code: event.code ?? null, signal: event.signal ?? null },
+        });
+        return;
+      case 'worker:crashed':
+        this.recordedStarts.delete(project);
+        this.events.append({
+          type: 'worker.failed', project, actor: 'daemon', payload: { pid: event.pid ?? null },
+        });
+        return;
+      default:
+        // Everything else (IPC progress chatter, worker:error) is already in
+        // the logs; the event log records outcomes, not every signal.
+    }
   }
 
   /** Whether any two-way provider is configured (drives the poll loop). */
@@ -344,6 +526,7 @@ export class Daemon extends EventEmitter {
     this.startPollLoop();
     this.startSchedulerLoop();
     this.startWorkerScan();
+    this.startMissionMonitor();
 
     this.logger.info('AI-Orchestrator Core Service started', {
       pid: process.pid,
@@ -352,40 +535,54 @@ export class Daemon extends EventEmitter {
       adoptedWorkers: adopted.length,
       reapedWorkers: reaped.length,
       telegramInbound: this.canReceive,
+      operatorInterface: this.config.operator?.enabled !== false,
+    });
+    this.events.append({
+      type: 'daemon.started',
+      actor: 'daemon',
+      payload: { pid: process.pid, version: VERSION, port: this.boundPort(), adopted: adopted.length },
     });
     this.emit('started', { pid: process.pid, adopted });
     return { pid: process.pid, port: this.boundPort(), adopted };
   }
 
   /**
-   * The exclusive inbound approval poll. This is the loop that makes remote
-   * approval work when NO mission is waiting in-process — and, because the
-   * worker's own receiveDecisions is false, the only loop consuming Telegram
-   * updates on this machine.
+   * The exclusive inbound channel. This is what makes remote control work when
+   * NO mission is waiting in-process — and, because every worker's
+   * receiveDecisions is false, the only consumer of Telegram updates on this
+   * machine.
+   *
+   * Phase 12 M2 moved the read itself into the operator gateway. The reason is
+   * structural rather than cosmetic: `pollProvidersOnce()` parses each update
+   * as a decision and DISCARDS everything else, which was correct while
+   * "APPROVE A7" was the entire grammar and became data loss the moment the
+   * owner could type "/projects". The gateway performs the one consuming read
+   * and routes decisions and commands from it — see operator/operatorGateway.js.
    */
   startPollLoop() {
-    if (!this.canReceive) {
+    if (!this.gateway.active) {
       this.logger.info('No two-way approval provider configured; inbound polling disabled');
       return;
     }
-    const intervalMs = this.daemonConfig.pollIntervalMs ?? 10_000;
-    const tick = async () => {
-      try {
-        const resolved = await this.approvalManager.pollProvidersOnce();
-        for (const request of resolved) {
-          this.logger.info('Remote decision applied by the Core Service', {
-            project: request.project, id: request.id, status: request.status,
-          });
-          this.emit('approval:resolved', request);
-        }
-      } catch (error) {
-        this.logger.warn('Inbound approval poll failed', { error: error.message });
-      }
-    };
-    this.pollTimer = setInterval(tick, intervalMs);
-    this.pollTimer.unref();
-    tick();
-    this.logger.info('Inbound approval polling started (exclusive owner)', { intervalMs });
+    // Resolutions the gateway applies still surface on the daemon's own event
+    // emitter, unchanged, so anything that subscribed in M1 keeps working.
+    this.approvalManager.on('approval:resolved', ({ project, request }) => {
+      this.logger.info('Remote decision applied by the Core Service', {
+        project, id: request.id, status: request.status,
+      });
+      this.emit('approval:resolved', request);
+    });
+    this.gateway.start();
+  }
+
+  /**
+   * Watch running missions and turn what they actually wrote into events
+   * (Phase 12 M2 Priority 4). Nothing here is pushed by workers — see
+   * operator/missionMonitor.js for why derivation beats reporting.
+   */
+  startMissionMonitor() {
+    if (this.config.operator?.enabled === false) return;
+    this.missionMonitor.start();
   }
 
   /** Periodic due-schedule check (Phase 10G, now service-hosted). */
@@ -496,10 +693,12 @@ export class Daemon extends EventEmitter {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
 
-    for (const timer of [this.pollTimer, this.schedulerTimer, this.scanTimer, this.stopFileTimer]) {
+    this.gateway.stop();
+    this.missionMonitor.stop();
+    for (const timer of [this.schedulerTimer, this.scanTimer, this.stopFileTimer]) {
       if (timer) clearInterval(timer);
     }
-    this.pollTimer = this.schedulerTimer = this.scanTimer = this.stopFileTimer = null;
+    this.schedulerTimer = this.scanTimer = this.stopFileTimer = null;
 
     if (stopWorkers) {
       const results = this.supervisor.stopAll(reason);
@@ -515,6 +714,7 @@ export class Daemon extends EventEmitter {
 
     await this.dashboard.stop();
     this.record.stop();
+    this.events.append({ type: 'daemon.stopped', actor: 'daemon', payload: { reason } });
     this.logger.info('AI-Orchestrator Core Service stopped', { reason });
     this.emit('stopped', { reason });
   }
@@ -551,6 +751,15 @@ export class Daemon extends EventEmitter {
       workers: this.supervisor.list(),
       pendingApprovals: this.approvalStore.pendingAll().length,
       projects: this.configManager.listProjects(),
+      // Phase 12 M2: what the remote console can currently do, so `daemon
+      // status` and the desktop can say so rather than the operator finding
+      // out by typing into a channel nobody is reading.
+      operator: {
+        enabled: this.config.operator?.enabled !== false,
+        channels: this.gateway.routing.map((provider) => provider.name),
+        openMissionRequests: this.missionRequests.open().length,
+        events: this.events.latestSeq(),
+      },
       host: this.hostReport(),
     };
   }

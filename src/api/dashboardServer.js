@@ -121,6 +121,51 @@ export class DashboardServer {
       res.json(this.daemon.supervisor.list());
     });
 
+    // ── Phase 12 M2: the operator surfaces ───────────────────────────────
+    // These are what make the desktop (M3) a client of the same registry the
+    // phone reads, rather than a second implementation of "what is running".
+
+    // The full project registry: status, worker, branch, commit, health.
+    // `?health=false` / `?git=false` skip the expensive parts for a fast list.
+    app.get('/api/registry', (req, res) => {
+      if (!this.daemon) return res.status(503).json({ error: 'Core Service not available.' });
+      res.json(this.daemon.projectRegistry.list({
+        health: req.query.health !== 'false',
+        git: req.query.git !== 'false',
+      }));
+    });
+
+    app.get('/api/registry/:project', (req, res) => {
+      if (!this.daemon) return res.status(503).json({ error: 'Core Service not available.' });
+      res.json(this.daemon.projectRegistry.describe(req.params.project));
+    });
+
+    // The event log — the spine every interface reads.
+    app.get('/api/events', (req, res) => {
+      if (!this.daemon) return res.status(503).json({ error: 'Core Service not available.' });
+      const sinceSeq = Number.parseInt(req.query.since, 10);
+      res.json(this.daemon.events.read({
+        sinceSeq: Number.isFinite(sinceSeq) ? sinceSeq : undefined,
+        project: req.query.project || undefined,
+        types: req.query.type ? String(req.query.type).split(',') : undefined,
+        limit: Number.parseInt(req.query.limit, 10) || undefined,
+      }));
+    });
+
+    // Which project each remote channel currently has selected.
+    app.get('/api/operator/context', (req, res) => {
+      if (!this.daemon) return res.status(503).json({ error: 'Core Service not available.' });
+      res.json(this.daemon.operatorContext.all());
+    });
+
+    // Mission requests raised from a remote channel (open by default).
+    app.get('/api/operator/missions', (req, res) => {
+      if (!this.daemon) return res.status(503).json({ error: 'Core Service not available.' });
+      res.json(req.query.all === 'true'
+        ? this.daemon.missionRequests.list(req.query.project || undefined)
+        : this.daemon.missionRequests.open(req.query.project || undefined));
+    });
+
     // The same data as status.json, straight from memory.
     app.get('/api/status', (req, res) => {
       res.json(this.statusManager.get());
@@ -327,6 +372,34 @@ export class DashboardServer {
       }
       const result = this.daemon.supervisor.stop(project, { reason: reason ?? 'stopped via API' });
       res.status(result.ok ? 200 : 404).json(result);
+    });
+
+    /**
+     * Phase 12 M2: run one operator command through the SAME router the
+     * remote channel uses.
+     *
+     * This is the architectural claim of the milestone made testable: Telegram
+     * is one client, not the interface. The desktop (M3), the CLI, and any
+     * future web console send the same strings here and get the same answers,
+     * with no duplicated command logic anywhere.
+     *
+     * Behind the P7 token, because it can start and stop missions.
+     * `channel` defaults to 'api' so confirmations issued to a phone are not
+     * redeemable from here and vice versa (see confirmations.js).
+     */
+    app.post('/api/operator/command', auth, async (req, res) => {
+      if (!this.daemon) return res.status(503).json({ error: 'Core Service not available.' });
+      const { text, channel, chatId, from } = req.body ?? {};
+      if (typeof text !== 'string' || !text.trim()) {
+        return res.status(400).json({ ok: false, reason: '"text" is required.' });
+      }
+      const result = await this.daemon.commandRouter.handle({
+        text,
+        channel: channel || 'api',
+        chatId: chatId ?? null,
+        from: from || 'api',
+      });
+      res.json({ ok: true, reply: result.reply });
     });
 
     app.post('/api/control/stop', auth, async (req, res) => {

@@ -18,6 +18,26 @@
  *
  * Adding a future provider = subclass, implement publish() (and optionally
  * fetchDecisions()), register it in App. Nothing else changes.
+ *
+ * ── Phase 12 M2 additions ────────────────────────────────────────────────
+ *
+ *   canRoute      Whether the provider can hand back RAW owner messages, not
+ *                 just parsed decisions. False for every provider that
+ *                 predates M2, so nothing changes for them.
+ *   fetchMessages()  Poll for everything the owner said, unparsed:
+ *                 [{text, at, from, chatId, messageId}]. The Core Service
+ *                 routes these through the operator grammar.
+ *   sendText()    Reply in the same channel. Approvals only ever needed
+ *                 publish(); a console needs to answer questions.
+ *
+ * WHY fetchMessages EXISTS AT ALL. `fetchDecisions()` parses each update and
+ * DISCARDS anything that is not a decision — which was correct when the only
+ * inbound grammar was "APPROVE A7", and became a bug the moment the owner
+ * could type "/projects". Telegram's getUpdates is offset-acknowledged (see
+ * telegramProvider.js), so a discarded message is gone forever, not merely
+ * ignored. Widening the grammar therefore REQUIRED a single read that sees
+ * every message once, and routes it once — which is exactly the "exactly one
+ * inbound owner" rule M1 established, applied one level up.
  */
 
 export class ApprovalProvider {
@@ -31,6 +51,8 @@ export class ApprovalProvider {
     this.logger = logger;
     this.name = 'base';
     this.canReceive = false;
+    /** Phase 12 M2: does this provider implement fetchMessages()/sendText()? */
+    this.canRoute = false;
   }
 
   /**
@@ -48,6 +70,28 @@ export class ApprovalProvider {
    */
   async fetchDecisions() {
     return [];
+  }
+
+  /**
+   * Phase 12 M2: poll for RAW owner messages. Routing providers override this.
+   *
+   * Every message the owner sent since the last call, already restricted to
+   * the authorized sender — authorization is the provider's job because only
+   * it knows what identity means on its own transport.
+   *
+   * @returns {Promise<{text: string, at?: string, from?: string, chatId?: string, messageId?: string}[]>}
+   */
+  async fetchMessages() {
+    return [];
+  }
+
+  /**
+   * Phase 12 M2: send a plain reply on this channel.
+   * @param {string} _text
+   */
+  /* eslint-disable-next-line no-unused-vars */
+  async sendText(_text) {
+    throw new Error(`${this.name} provider does not implement sendText()`);
   }
 }
 

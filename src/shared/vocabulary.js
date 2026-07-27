@@ -69,6 +69,76 @@ export function checkMark(status) {
   return CHECK_MARK[status] ?? '?';
 }
 
+/**
+ * Phase 12 M2 — project status as the operator interface reports it (see
+ * operator/projectRegistry.js PROJECT_STATUSES). Here rather than inline in
+ * the renderer for exactly the reason this module exists: the desktop (M3) is
+ * about to render the same registry, and two surfaces disagreeing about what
+ * "blocked" looks like is the drift Phase 11 M4 spent a milestone removing.
+ */
+export const PROJECT_STATUS = Object.freeze({
+  running: { icon: '▶️', label: 'Running' },
+  'waiting-approval': { icon: '⏸️', label: 'Waiting for you' },
+  blocked: { icon: '⛔', label: 'Blocked' },
+  queued: { icon: '🕘', label: 'Queued' },
+  idle: { icon: '💤', label: 'Idle' },
+  misconfigured: { icon: '⚠️', label: 'Misconfigured' },
+});
+
+export function projectStatusIcon(status) {
+  return PROJECT_STATUS[status]?.icon ?? 'ℹ️';
+}
+
+export function projectStatusLabel(status) {
+  return PROJECT_STATUS[status]?.label ?? status;
+}
+
+/**
+ * Phase 12 M2 — the operator-facing name for each mission lifecycle state
+ * (missionLifecycle.js LIFECYCLE_STATES). The lifecycle owns what a state
+ * MEANS; this is only what the owner is told it is called.
+ *
+ * Deliberately NOT a bigger vocabulary than the lifecycle actually has. The
+ * Phase 12 directive mentions "Packaging" as a phase it would like to see —
+ * there is no packaging state in the mission lifecycle today, so none is
+ * reported. Inventing a phase to satisfy a wish list would be the exact
+ * "simulate work" this project refuses to do.
+ */
+export const MISSION_PHASE = Object.freeze({
+  received: { icon: '📥', label: 'Received' },
+  analyzed: { icon: '🔍', label: 'Analyzing' },
+  planned: { icon: '📋', label: 'Planning' },
+  'approval-pending': { icon: '⏸️', label: 'Waiting for approval' },
+  approved: { icon: '👍', label: 'Approved' },
+  'agents-assigned': { icon: '🧭', label: 'Assigning work' },
+  executing: { icon: '⌨️', label: 'Coding' },
+  verifying: { icon: '🧪', label: 'Testing' },
+  fixing: { icon: '🔧', label: 'Fixing' },
+  completed: { icon: '✅', label: 'Finished' },
+  blocked: { icon: '⛔', label: 'Blocked' },
+  cancelled: { icon: '⚠️', label: 'Cancelled' },
+  failed: { icon: '✖', label: 'Failed' },
+});
+
+export function phaseIcon(state) {
+  return MISSION_PHASE[state]?.icon ?? 'ℹ️';
+}
+
+export function phaseLabel(state) {
+  return MISSION_PHASE[state]?.label ?? state;
+}
+
+/** Project health levels (Phase 10E ProjectIntelligence). */
+export const HEALTH_LABEL = Object.freeze({
+  healthy: 'Healthy',
+  attention: 'Needs attention',
+  unhealthy: 'Unhealthy',
+});
+
+export function healthLabel(level) {
+  return HEALTH_LABEL[level] ?? level;
+}
+
 /** Severity — one-line description used by `notify tune` and docs. */
 export const SEVERITY_LABEL = Object.freeze({
   info: 'Info — every notifiable event',

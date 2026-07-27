@@ -245,15 +245,50 @@ function signalsFromChanges(changes) {
  * the real commit a mission ended on — never invented, never guessed.
  */
 export function gitHead(dir) {
+  return git(dir, ['rev-parse', 'HEAD']);
+}
+
+/**
+ * The branch a directory is currently on, or null when it is not a git work
+ * tree (or is in a detached HEAD, which reports the literal "HEAD" and is
+ * normalized to null here — "detached" is not a branch name, and showing one
+ * that doesn't exist on an operator's phone is worse than showing nothing).
+ *
+ * Phase 12 M2: the project registry reports the real branch and commit of
+ * every project, so `/projects` on a phone answers "what am I looking at"
+ * without a terminal.
+ */
+export function gitBranch(dir) {
+  const branch = git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  return branch && branch !== 'HEAD' ? branch : null;
+}
+
+/** The subject line of HEAD, or null when unavailable. */
+export function gitHeadSubject(dir) {
+  return git(dir, ['log', '-1', '--pretty=%s']);
+}
+
+/**
+ * Whether the work tree has uncommitted changes — null when undeterminable
+ * (not a repo, or git unavailable), which is deliberately distinct from
+ * `false` ("checked, and it is clean").
+ */
+export function gitDirty(dir) {
+  const output = git(dir, ['status', '--porcelain']);
+  return output === null ? null : output.length > 0;
+}
+
+/** One bounded, never-throwing git invocation. Null on any failure. */
+function git(dir, args) {
   try {
-    return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], {
+    return execFileSync('git', ['-C', dir, ...args], {
       encoding: 'utf8',
       timeout: GIT_TIMEOUT_MS,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
-    return null; // not a git work tree, or no commits yet
+    return null; // not a git work tree, no commits yet, or git is not installed
   }
 }
 

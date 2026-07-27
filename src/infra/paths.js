@@ -96,6 +96,23 @@ export function resolvePaths(overrides = {}) {
   resolved.daemonFile = path.join(resolved.stateDir, 'daemon.json');
   resolved.workersDir = path.join(resolved.stateDir, 'workers');
 
+  // Phase 12 M2: the operator interface.
+  //  - eventsDir: the append-only event log (see src/events/eventStore.js) —
+  //    the spine every interface reads instead of participating in mission
+  //    logic. JSONL, so it lives in its own directory with its rotations.
+  //  - operatorDir: which project each remote channel currently has selected
+  //    (context.json), pending destructive-action confirmations, and the
+  //    mission requests raised from a phone before any work is authorized.
+  //  - missionPromptsDir: the prompt file a remote mission request is written
+  //    to. Deliberately under state/ and NEVER inside the user's repository —
+  //    a message typed on a phone must not create an untracked file in a
+  //    project the owner is about to commit.
+  resolved.eventsDir = path.join(resolved.stateDir, 'events');
+  resolved.operatorDir = path.join(resolved.stateDir, 'operator');
+  resolved.operatorContextFile = path.join(resolved.operatorDir, 'context.json');
+  resolved.missionRequestsFile = path.join(resolved.operatorDir, 'missions.json');
+  resolved.missionPromptsDir = path.join(resolved.operatorDir, 'prompts');
+
   return resolved;
 }
 
@@ -125,6 +142,9 @@ export function ensureRuntimeDirs(paths) {
     paths.statusDir,
     paths.notificationsDir,
     paths.workersDir,
+    paths.eventsDir,
+    paths.operatorDir,
+    paths.missionPromptsDir,
   ]) {
     fs.mkdirSync(dir, { recursive: true });
   }

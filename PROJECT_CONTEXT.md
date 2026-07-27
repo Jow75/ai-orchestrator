@@ -12,7 +12,74 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-27, after **Phase 12 M1 (AI-Orchestrator Core
+**Last updated:** 2026-07-27, after **Phase 12 M2 (Telegram Operator
+Interface), v2.9.0** — committed + tagged, NOT pushed.
+
+**Phase 12 is 2 of 4 done.** M1 made the daemon always present; **M2 makes it
+something you can operate from a phone**. The remote channel stopped being a
+place to reply `APPROVE A7` and became a console: `/projects` (a real registry
+the daemon owns — status, worker, branch, commit, health), `/project X` (a
+context that persists per channel), `/status`, `/tasks`, `/start`, `/stop`,
+`/approvals`, `/missions`, `/events`, `/reset`, `/shutdown`. New
+`src/operator/` (9 modules) and `src/events/` (the append-only JSONL log at
+`state/events/events.jsonl` — the spine every interface reads). Full guide:
+`docs/OPERATOR_CONSOLE.md`; report: `docs/PHASE_12_M2_REPORT.md`.
+
+**THE ARCHITECTURAL MOVE OF M2:** the inbound read went up one level.
+`ApprovalManager.pollProvidersOnce()` parses each update as a decision and
+DISCARDS the rest — fine while `APPROVE A7` was the whole grammar, data loss
+the moment `/projects` exists (getUpdates is offset-acknowledged). The new
+`OperatorGateway` performs the ONE consuming read per provider per tick and
+routes decisions *and* commands from it; decisions go through the extracted
+`ApprovalManager.applyRemoteDecision()`, the identical store path (and
+once-only `approval:resolved` emission) `pollProvidersOnce` always used.
+`pollProvidersOnce` is untouched and is still the standalone path.
+
+**THE HONESTY CONSTRAINT, and how it was met:** the directive wants estimated
+files/tasks/duration/risks/confidence on a mission proposal, and forbids
+inventing any of them. So there are TWO gates. Gate 1 (`M4`, the instant you
+type) shows only facts — objective as typed, branch, path, queue depth, and
+this project's *measured* history, labelled as history; **no estimate of this
+request's size, because nothing has read the code yet**. Gate 2 (`A9`) is
+Phase 10's implementation-review flow, unchanged: the agent plans, and
+`implementationSummary.js` extracts the real numbers FROM THE PLAN. An approved
+request becomes a prompt file under `state/operator/prompts/` plus one task on
+the project's queue (the `tasks add` path since P3) plus a supervised worker —
+**remote operation adds no new execution path**, which is why it inherits every
+P0–P11 guarantee. Progress is likewise derived, not reported:
+`missionMonitor.js` re-reads lifecycle + task-queue files every 15s; counts
+only, **no percentages anywhere**, and it never re-announces phases the mission
+itself already notifies about.
+
+**Live validation found a serious M1 defect:** a mission worker that COMPLETED
+never exited — the forked IPC channel is a live libuv handle, so the event loop
+never drained. Every successful mission leaked a resident process, and with no
+`exit` event the daemon never recorded `worker.completed`, so the event log
+showed missions that started and never ended. M1's live pass missed it because
+the worker it watched exited with code 1 (a throwing process terminates
+regardless of open handles); only a mission that *succeeds* reaches the clean
+shutdown path. Fixed in `App.shutdown()`; the regression test
+(`test/workerExit.test.js`) forks a real worker and **was confirmed to fail
+against the unfixed code**. Two smaller fixes: the progress rate limiter
+treated "never pushed" as "pushed at epoch 0", and the gateway captured its
+provider list at construction.
+
+Tests: **878/878 backend** (+187) + 20/20 desktop. **One** existing test was
+modified — `daemon.test.js`'s "no provider ⇒ no timer" now reads
+`daemon.gateway.timer` instead of `daemon.pollTimer`, the field this milestone
+moved; the assertion is unchanged in substance, and its sibling
+("the inbound poll loop is the exclusive consumer") needed no change at all.
+
+**Still needs the owner:** (1) the phone round-trip from your own Telegram
+account — outbound is live-verified, inbound is proven mechanically; the
+`m2-validation` project is left defined on the **mock driver** so you can do
+the whole loop for free (delete it after); (2) a real reboot with `daemon
+install`, unchanged from M1. **Next: M3 — Operator Control Center (`v3.0.0`)**,
+the desktop as a pure client of the registry and event log M2 built.
+
+---
+
+Previous: **Phase 12 M1 (AI-Orchestrator Core
 Service), v2.8.0** — committed + tagged, NOT pushed.
 
 **Phase 12 is underway** (M1 of 4). The product changed shape: it is no longer
@@ -157,13 +224,14 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 10.5 — Operational validation & readiness | ✅ done | `v2.3.1` |
 | Phase 11 — Operator Experience (M1–M4: onboarding, phone/notifications, doctor/recovery, UX consistency) | ✅ done | `v2.7.0` |
 | Phase 12 M1 — AI-Orchestrator Core Service (daemon, worker supervision, exclusive remote channel) | ✅ done | `v2.8.0` |
-| Phase 12 M2 — Telegram Operator Interface | ⏳ next | `v2.9.0` |
-| Phase 12 M3 — Operator Control Center (desktop as daemon client) | ⏳ planned | `v3.0.0` |
+| Phase 12 M2 — Telegram Operator Interface (project registry, command grammar, event log, mission requests) | ✅ done | `v2.9.0` |
+| Phase 12 M3 — Operator Control Center (desktop as daemon client) | ⏳ next | `v3.0.0` |
 | Phase 12 M4 — Launch experience & remote project creation | ⏳ planned | `v3.1.0` |
 
-**Test suite (current, 2026-07-27):** 608/608 backend + 20/20 desktop —
-see the "Last updated" section above for what M4 added; the historical
-436/436 figure below is this section's original Phase-10.5-era snapshot.
+**Test suite (current, 2026-07-27):** 878/878 backend + 20/20 desktop —
+see the "Last updated" section above for what Phase 12 M2 added; the
+608/608 figure was the Phase 11 M4 snapshot and 436/436 below is this
+section's original Phase-10.5-era one.
 
 The user's master prompt arc (desktop app → multi-agent → autonomous
 project management) completed at Phase 10; the stated intent at the time
