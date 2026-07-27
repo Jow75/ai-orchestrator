@@ -3,6 +3,61 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.7.0] — 2026-07-27 — Phase 11 M4: UX Consistency, Remote Polish & Documentation
+
+The fourth and final Phase 11 milestone. Prioritized consistency, clarity,
+and operator confidence over new platform capabilities, per the owner's
+explicit brief. No architecture changed. Full report:
+`docs/PHASE_11_M4_REPORT.md` (also the Phase 11 retrospective).
+
+### Added
+
+- **`src/shared/vocabulary.js`** — one source for mission-outcome icons/
+  labels, approval-decision labels, verification-confidence labels, and
+  check marks. Fixed a confirmed drift: the same "mission succeeded" outcome
+  rendered as three different icons (CLI's ✔, a notification title's 🎉,
+  a Mission Card's ✅) purely because each surface had its own inline
+  literal — all three now agree on ✅.
+- **`src/infra/version.js`** — the version was hardcoded separately in
+  `package.json`, the CLI's `.version()`, and `statusManager.js`, kept in
+  sync by hand at every release. All three now read from here; a version
+  bump is one line instead of three (this release is the first to prove it).
+- **Startup banner** (`src/cli/banner.js`) — printed once when `start`
+  launches: version, project(s), resolved approval mode, enabled
+  notification channels.
+- **`notify tune`** — interactive per-channel `minSeverity` setting (the
+  config key has existed since Phase 10F but only via hand-edited JSON).
+
+### Fixed
+
+- **Desktop/CLI parity bug**: the desktop app's in-app "create project"
+  never set `claude.permissionMode`, unlike the CLI's `projects add`
+  (defaults to `acceptEdits` since 10.5/M1). An unattended headless engine
+  can't answer permission prompts, so a desktop-created project would
+  silently accomplish nothing on its first real mission. Found during M4's
+  cross-product consistency audit; both paths now behave identically.
+- `REPORT_AVAILABLE_NOTE`'s wording — it claimed a report was "attached
+  separately" even for channels (email) with no `sendDocument` support,
+  which never actually attaches anything. Reworded to state both outcomes
+  without asserting which one a given channel gets.
+- `docs/CLI_GUIDE.md` was missing `init`, the entire `notify` command group,
+  `doctor --fix`, and `projects add --interactive` — despite being billed as
+  "every command." `README.md`'s command table was similarly frozen at a
+  pre-Phase-10 state. Both expanded; `docs/FAQ.md` gained missing `init`/
+  `notify tune` entries; several other docs gained pointers to the newer
+  wizard routes alongside their existing hand-edit instructions.
+
+### Tests
+
+- +31 tests across 5 new/updated files (vocabulary, version, banner, notify
+  tune, and the desktop `createProject` fix). Backend suite **608/608** +
+  20/20 desktop.
+- Live-verified: real Telegram sends confirmed the new icon/wording; a full
+  real end-to-end mission (throwaway `mock`-driver project, real child
+  process) showed the banner and the unified ✅ completion line together;
+  `doctor`/`notify test` re-confirmed unchanged output against the real
+  configured environment.
+
 ## [2.6.0] — 2026-07-27 — Phase 11 M3: Doctor, Recovery & Operator Guidance
 
 The third Phase 11 milestone: every failure now tells the operator what

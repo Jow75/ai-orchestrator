@@ -12,34 +12,47 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-27, after **Phase 11 M3 (Doctor, Recovery &
-Operator Guidance), v2.6.0** — committed + tagged. Every failure now tells
-the operator what happened, why, and the single next command. `doctor` is
-rebuilt from structured findings (`{id, status, label, detail, cause,
-impact, fix?}`) instead of inline prints — a behavior-preserving refactor
-(verified live to produce identical output for every existing check) that
-also adds `doctor --fix`: read-only by default, and with `--fix` every
-flagged issue is explained (cause/impact/fix) and confirmed individually
-before anything changes — safe direct repairs (set
-`claude.permissionMode`, delete a quarantined corrupt state file, install
-the auto-resume task) apply on confirmation; fixes needing real human
-input (a bot token, a mailbox password, a first project) launch the
-matching Phase 11 M1 wizard instead. Two new evidence-based checks:
-quarantined `*.corrupt-*` state files (the system already self-heals from
-corruption — this surfaces what happened instead of leaving it only in the
-logs; live-verified by finding and cleanly deleting a genuine leftover
-file from a Phase 10.5 failure simulation in this repo's own state/) and a
-resumable session nobody is supervising (informational only — continuing
-vs. discarding is the operator's call). New `src/infra/errors.js`
-consolidates every user-facing throw into one consistent cause/impact/fix
-shape. Guided recovery added to existing commands: `tasks list` prints the
-exact `tasks approve`/`tasks skip` command for a blocked/failed current
-task; `approvals list` prints the exact reply next to each pending
-request. Backend suite **585/585** + 18 desktop. Full plan:
-`docs/PHASE_11_PLAN.md` (M1→M4 shipped as `v2.4.0`→`v2.7.0`).
-**Next: M4 — UX consistency, remote polish & documentation.**
+**Last updated:** 2026-07-27, after **Phase 11 M4 (UX Consistency, Remote
+Polish & Documentation), v2.7.0** — committed + tagged. **Phase 11 is now
+complete** (M1→M4, `v2.4.0`→`v2.7.0`). New `src/shared/vocabulary.js` is
+the single source for mission-outcome icons/labels, approval-decision
+labels, confidence labels, and check marks — fixed a confirmed drift where
+the same "mission succeeded" outcome rendered as three different icons
+(CLI ✔ / notification title 🎉 / Mission Card ✅) purely from independent
+inline literals; all three now agree on ✅. New `src/infra/version.js`
+replaces three hand-synced hardcoded version literals (package.json, the
+CLI's `.version()`, `statusManager.js`) with one source — this release is
+the first to prove it (only `package.json` was edited). New startup banner
+(`src/cli/banner.js`, printed once when `start` launches: version,
+project(s), resolved approval mode, enabled channels) and `notify tune`
+(interactive per-channel `minSeverity` — the config key existed since Phase
+10F but only via hand-edited JSON until now). A full cross-product
+consistency audit (install → init → doctor → create project →
+notifications → approvals → mission lifecycle → recovery → shutdown →
+resume) found and fixed a **real bug**, not just stale docs: the desktop
+app's in-app "create project" never set `claude.permissionMode` (unlike the
+CLI's `projects add`, defaulted since 10.5/M1) — a desktop-created project
+would silently accomplish nothing on its first real mission; both paths now
+match. Also fixed 8 documentation gaps, the largest being `docs/
+CLI_GUIDE.md` (billed as "every command") missing `init`, the whole
+`notify` group, `doctor --fix`, and `projects add --interactive` entirely.
+Backend suite **608/608** + 20/20 desktop. Full plan: `docs/
+PHASE_11_PLAN.md`; full report + Phase 11 retrospective + Phase 12
+recommendation: `docs/PHASE_11_M4_REPORT.md`.
+**Next: let Phase 11 mature through real-world use before shaping Phase
+12** (the same advice this project gave itself after Phase 10, which
+proved out well — Phase 10.5's maturation pass is what produced the
+evidence base Phase 11 was built from).
 
-Previous: **Phase 11 M2 + Operational Validation (v2.5.0/v2.5.1),
+Previous: **Phase 11 M3 (Doctor, Recovery & Operator Guidance), v2.6.0**
+— `doctor` rebuilt from structured findings + `doctor --fix` (safe direct
+repairs on confirmation; anything needing real input hands off to the
+matching M1 wizard), two new evidence-based checks (quarantined corrupt
+state files; an unsupervised resumable session), `src/infra/errors.js`
+error catalogue, guided recovery in `tasks list`/`approvals list`. See
+`docs/PHASE_11_M3_REPORT.md` for full detail.
+
+Before that: **Phase 11 M2 + Operational Validation (v2.5.0/v2.5.1),
 2026-07-26/27** — phone & notification experience (approval-reuse dedup,
 provider+channel dedup, safe Telegram formatting, real attachments, Mission
 Cards), then live-validated against the real Telegram bot and real
@@ -81,7 +94,7 @@ phase work) — the audit that seeded the Phase 10.5 objectives.
 Before that: 2026-07-12, after completing Phase 10 (Autonomous Project
 Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 
-## Where things stand: P0–P7, Phase 8, Phase 9, Phase 10 ALL complete
+## Where things stand: P0–P7, Phase 8, Phase 9, Phase 10, Phase 11 ALL complete
 
 | Phase | Status | Tag |
 | --- | --- | --- |
@@ -96,16 +109,20 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 8 — Operator desktop application (Electron) | ✅ done | `v2.1.0` |
 | Phase 9 — Multi-agent intelligence (roster, role routing, health) | ✅ done | `v2.2.0` |
 | Phase 10 — Autonomous Project Manager (10A–10J) | ✅ done | `v2.3.0` |
+| Phase 10.5 — Operational validation & readiness | ✅ done | `v2.3.1` |
+| Phase 11 — Operator Experience (M1–M4: onboarding, phone/notifications, doctor/recovery, UX consistency) | ✅ done | `v2.7.0` |
 
-**Test suite:** 436/436 passing (`node --test` at repo root: 429 through
-Phase 10 plus 7 new Phase 10.5 regression tests), and 18 desktop-bridge
-tests (`npm run test:desktop`).
+**Test suite (current, 2026-07-27):** 608/608 backend + 20/20 desktop —
+see the "Last updated" section above for what M4 added; the historical
+436/436 figure below is this section's original Phase-10.5-era snapshot.
 
 The user's master prompt arc (desktop app → multi-agent → autonomous
-project management) is now COMPLETE through Phase 10. The stated intent
-after Phase 10: **do not jump straight to Phase 11** — let Phase 10 mature
-through real-world use on AI-Orchestrator itself and THE FINISHER, fixing
-approval/notification/coordination edge cases as they surface.
+project management) completed at Phase 10; the stated intent at the time
+was **do not jump straight to Phase 11** — let Phase 10 mature first. That
+maturation pass (Phase 10.5) produced the evidence base Phase 11 was built
+from, and **Phase 11 (Operator Experience, M1–M4) is now also complete**
+(see "Last updated" above). The same advice now applies one phase later:
+**let Phase 11 mature before shaping Phase 12** — see "What's next" below.
 
 ## What Phase 10 shipped (v2.3.0 — see CHANGELOG for full detail)
 
@@ -176,17 +193,21 @@ approval/notification/coordination edge cases as they surface.
 
 ## What's next
 
-1. **Maturation, not Phase 11** (the master prompt's own advice): run Phase
-   10 for real on THE FINISHER and this repo; expect edge cases around
-   approval timing, notification noise (tune `minSeverity`), and
-   multi-mission coordination.
-2. To go phone-first: enable `approvals.providers.telegram` (+ the
-   notification channel) with a BotFather token/chat id, and consider
-   `schedules watch` at logon via `scheduler install`.
+1. **Maturation, not Phase 12** (same advice this project gave itself after
+   Phase 10, which proved out well): run Phase 11 for real on THE FINISHER
+   and this repo; let actual use — not speculation — surface what Phase 12
+   should be. Phase 11 itself is already phone-first (`init` connects
+   Telegram/email) and self-diagnosing (`doctor --fix`); day-to-day use
+   should mostly mean running missions, not more setup.
+2. If/when Phase 12 planning starts, the two candidates flagged-but-deferred
+   across Phase 11 (see `docs/PHASE_11_M4_REPORT.md` §10) need their own
+   evidence pass first, per this project's standing rule: a driver
+   conformance kit / additional engines (Gemini, Codex, OpenCode — the
+   `cli` driver already supports them, just unverified against the actual
+   CLIs), and a packaged desktop installer.
 3. Longer-term backlog (ROADMAP bottom): within-mission parallel task
    batches on the 10H primitives, more approval providers (WhatsApp/
-   Discord/Slack/push), driver conformance kit, Windows service mode,
-   packaged desktop installer, cross-machine aggregation.
+   Discord/Slack/push), Windows service mode, cross-machine aggregation.
 
 ## Conventions worth continuing if more work resumes here
 
