@@ -16,8 +16,40 @@ All commands: `node bin\ai-orchestrator.js <command>` (or plain
 | `start <project>` | Start, or resume if interrupted. THE main command |
 | `start <a> <b> [<c>]` | Several missions in parallel, one process (Phase 10H) |
 | `start <project> --fresh` | Abandon the interrupted session, start over |
+| `start <project> --worker` | Run as a supervised worker of the Core Service. The service passes this; you rarely type it |
 | `resume [project]` | Resume ONLY if something was interrupted (safe no-op otherwise; what the boot task runs) |
-| `stop` | Graceful stop; session stays resumable |
+| `stop [project]` | Graceful stop; session stays resumable. With the Core Service running, stops that mission (or all of them); without it, stops the standalone orchestrator |
+
+## The Core Service (Phase 12 M1)
+
+The always-on process. It owns the API, remote approvals, the scheduler, and
+mission workers — and stays alive with **no missions running**, which is what
+lets you check status or approve from your phone at any time. Without it,
+everything below still works exactly as before; `serve` is additive.
+
+| Command | What it does |
+| --- | --- |
+| `serve` | Run the Core Service in this terminal (Ctrl+C stops it; missions keep running) |
+| `serve --stop-missions-on-exit` | Stop supervised missions when the service stops, instead of leaving them for the next service to adopt |
+| `daemon status` | Is it running, what is it supervising, what is waiting on you |
+| `daemon start <project>` | Start a mission through the service — **runs alongside other projects** |
+| `daemon stop` | Stop the service gracefully (missions keep running) |
+| `daemon stop --stop-missions` | Stop every mission first, then the service |
+| `daemon install` | Start the service automatically when you log in to Windows |
+| `daemon uninstall` | Stop starting it automatically |
+
+Notes worth knowing:
+
+- **Several projects at once.** `daemon start a` then `daemon start b` runs
+  both independently. (Plain `start a b` is still the Phase 10H single-process
+  form; the service supervises each as its own process instead.)
+- **Missions outlive the service.** Stopping, upgrading, or crashing the
+  service leaves running missions alone; the next `serve` re-adopts them.
+- **The service and a standalone `start` never run together.** Each refuses
+  while the other supervises the same project, with a message saying which
+  command to use.
+- `daemon install` is separate from `scheduler install` (auto-resume). They
+  answer different questions; install either, both, or neither.
 
 ## See what's happening
 

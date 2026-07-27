@@ -712,6 +712,57 @@ and `ai-orchestrator agents health [project]`, or `GET /api/agents` /
   to require an explicit decision. An approval is consumed by exactly one
   apply.
 
+## Core Service (Phase 12 M1) — `daemon` block
+
+The Core Service (`ai-orchestrator serve`) is the always-running process that
+owns the HTTP API, the inbound Telegram poll, the scheduler tick, and mission
+worker lifecycle. **Nothing in this block affects `ai-orchestrator start`** —
+a standalone mission never reads it.
+
+```json
+"daemon": {
+  "enabled": true,
+  "pollIntervalMs": 10000,
+  "schedulerTickMs": 60000,
+  "maxWorkers": 3,
+  "workerScanMs": 10000,
+  "restartFailedWorkers": false
+}
+```
+
+- `enabled` — master switch. `false` makes `serve` refuse to start.
+- `pollIntervalMs` — how often the service checks Telegram for owner replies.
+  This runs whether or not a mission is waiting, which is the entire point of
+  the service; it is deliberately slower than `approvals.decisionPollMs`
+  (used *inside* a mission already parked on a decision).
+- `schedulerTickMs` — how often due scheduled missions (Phase 10G) are
+  checked. Due missions now start as supervised workers.
+- `maxWorkers` — how many missions the service supervises at once.
+- `workerScanMs` — how often worker liveness is re-probed and dead records
+  reaped.
+- `restartFailedWorkers` — off by default. The orchestrator already owns
+  crash recovery *inside* a mission (`src/core/crashRecoveryEngine.js`), so
+  daemon-level restarts would stack two recovery policies on one failure.
+
+### Runtime state the service owns
+
+| File | Meaning |
+| --- | --- |
+| `state/daemon.json` | The service's own record: pid, bound port, version. Separate from `state/heartbeat.json` **by design** — that file remains the standalone orchestrator's machine-wide lock, so a machine with no service behaves exactly as before Phase 12. |
+| `state/workers/<project>.json` | One record per supervised mission. This is what makes several projects runnable at once. |
+| `state/workers/<project>.stop` | A graceful stop request for one mission. A file rather than a signal because on Windows a cross-process `SIGTERM` is `TerminateProcess` — it would kill the mission instead of letting it archive a resumable session. |
+| `state/daemon.stop` | The same mechanism for stopping the service itself. |
+
+### Exclusive inbound polling
+
+Only one process on a machine may consume Telegram updates: `getUpdates` is
+offset-acknowledged, so a second poller permanently destroys the first one's
+messages. When the service runs, it is that owner, and mission workers are
+constructed with `receiveDecisions: false`. They still *publish* their own
+approval requests (outbound is stateless) and still see decisions, because
+`waitForDecision()` re-reads the shared approval store — the same
+cross-process path the CLI and desktop have always used.
+
 ## Environment notes
 
 - Paths in JSON may use forward slashes (`C:/Users/...`) — recommended, as

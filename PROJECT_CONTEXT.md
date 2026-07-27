@@ -12,7 +12,48 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-27, after **Phase 11 M4 (UX Consistency, Remote
+**Last updated:** 2026-07-27, after **Phase 12 M1 (AI-Orchestrator Core
+Service), v2.8.0** — committed + tagged, NOT pushed.
+
+**Phase 12 is underway** (M1 of 4). The product changed shape: it is no longer
+"an executable that sometimes runs" but **a service clients connect to**.
+`ai-orchestrator serve` runs an always-on daemon (`src/daemon/`) owning the
+HTTP API, the **exclusive** Telegram inbound poll, the scheduler tick, and
+mission workers as supervised child processes. Three constraints were removed:
+(E1) supervision ownership moved from the MACHINE (`state/heartbeat.json`) to
+the PROJECT (`state/workers/<project>.json`), so **several projects now run at
+once** — previously structurally impossible; (E2) the API and remote channel
+now exist when **no mission is running** — before, both lived inside the
+mission process and vanished with it; (E3) Telegram `getUpdates` is
+offset-acknowledged, so two pollers destroy each other's messages — inbound
+now has exactly one owner (`ApprovalManager.receiveDecisions`, default `true`
+so every old caller is unchanged; workers set it `false` and still see
+decisions via the store re-read `waitForDecision` has done since Phase 10).
+
+**THE PHASE 12 INVARIANT (tested + live-checked):** with no daemon running and
+no daemon config, every pre-Phase-12 command behaves exactly as in `v2.7.0`.
+No existing test was modified to accommodate the new architecture.
+
+**Live validation found three real defects, all fixed:** mission workers died
+with the service (plain `fork` doesn't survive its parent here → now detached,
+the same conclusion the desktop reached in Phase 8); "stop" wasn't graceful on
+Windows (a cross-process `SIGTERM` is `TerminateProcess`, so stopping an
+adopted worker killed it mid-mission while the CLI claimed the session stayed
+resumable → now per-project stop-request files, hard kill only as escalation);
+and the service recorded its configured rather than bound port. A fourth issue
+found while building: a `process.exit()` in a shutdown path silently truncated
+a test file, hiding six tests behind a green run.
+
+Tests: **691/691 backend** (+83) + 20/20 desktop. Two items still need the
+owner: the final human step of the phone round-trip (`APPROVE <id>` from your
+own Telegram account) and a real reboot with `daemon install` (verified
+installable/removable, currently **not installed** — that changes logon
+behaviour, so it's your call). Full report: `docs/PHASE_12_M1_REPORT.md`;
+plan for all four milestones: `docs/PHASE_12_PLAN.md`. **Next: M2 — Telegram
+Operator Interface (`v2.9.0`)**, where the inbound command grammar widens and
+the security review in `PHASE_12_PLAN.md` §6 gets exercised.
+
+Previous: **Phase 11 M4 (UX Consistency, Remote
 Polish & Documentation), v2.7.0** — committed + tagged, then pushed to
 GitHub (`github.com/Jow75/ai-orchestrator`) with a GitHub Release on
 `v2.7.0`. **`v2.7.0` is the official stable baseline** — the known-good
@@ -115,6 +156,10 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 10 — Autonomous Project Manager (10A–10J) | ✅ done | `v2.3.0` |
 | Phase 10.5 — Operational validation & readiness | ✅ done | `v2.3.1` |
 | Phase 11 — Operator Experience (M1–M4: onboarding, phone/notifications, doctor/recovery, UX consistency) | ✅ done | `v2.7.0` |
+| Phase 12 M1 — AI-Orchestrator Core Service (daemon, worker supervision, exclusive remote channel) | ✅ done | `v2.8.0` |
+| Phase 12 M2 — Telegram Operator Interface | ⏳ next | `v2.9.0` |
+| Phase 12 M3 — Operator Control Center (desktop as daemon client) | ⏳ planned | `v3.0.0` |
+| Phase 12 M4 — Launch experience & remote project creation | ⏳ planned | `v3.1.0` |
 
 **Test suite (current, 2026-07-27):** 608/608 backend + 20/20 desktop —
 see the "Last updated" section above for what M4 added; the historical

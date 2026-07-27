@@ -3,6 +3,97 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.8.0] — 2026-07-27 — Phase 12 M1: AI-Orchestrator Core Service
+
+The first milestone of Phase 12, and the first change to the process model
+since P7. AI-Orchestrator stops being "an executable that sometimes runs" and
+becomes "a service that clients connect to." Full report:
+`docs/PHASE_12_M1_REPORT.md`; plan: `docs/PHASE_12_PLAN.md`.
+
+**THE PHASE 12 INVARIANT (tested):** with no daemon running and no daemon
+configuration, every pre-Phase-12 command behaves exactly as in `v2.7.0`.
+`ai-orchestrator start <project>` remains a complete, self-sufficient
+orchestrator owning its own heartbeat, API server, and Telegram polling. The
+service is an additive supervisor, never a required one.
+
+### Added
+
+- **`ai-orchestrator serve`** — the Core Service (`src/daemon/daemon.js`).
+  An always-running process that owns the HTTP API, the *exclusive* Telegram
+  inbound poll, the scheduler tick, and mission worker lifecycle. It stays
+  alive with zero missions running, which is what makes remote operation
+  possible at all: before this, the API lived inside the mission process and
+  vanished with it, and Telegram was only polled while a mission sat waiting
+  on an approval.
+- **Simultaneous projects.** `state/workers/<project>.json` re-grains
+  supervision ownership from the MACHINE to the PROJECT
+  (`src/daemon/workerRegistry.js`). Starting Calculator while Remote Work
+  runs was structurally impossible before — `state/heartbeat.json` is a
+  machine-wide single-instance lock, and Phase 10H parallelism was fixed at
+  launch time. Missions now start and stop independently.
+- **`ai-orchestrator daemon status|start|stop|install|uninstall`**, plus
+  `serve --stop-missions-on-exit`. `start`, `stop`, and `status` are now
+  daemon-aware: with the service up, `status` reports every mission it
+  supervises (status.json only ever described one), and `stop [project]`
+  stops missions rather than the service.
+- **Windows autostart** for the service (`scripts/install-daemon-task.ps1`),
+  separate from the existing auto-resume task — they answer different
+  questions and either can be installed alone.
+- **Mission worker mode** (`start --worker`, `src/app.js`) — the same
+  Orchestrator with the same P0–P11 guarantees, minus the four
+  machine-singleton duties the service now owns.
+- **Daemon API**: `GET /api/daemon`, `GET /api/daemon/workers`,
+  `POST /api/daemon/missions/start|stop`. Reads unauthenticated as every GET
+  has been since P0; mutations behind the existing P7 token. All gated on an
+  optional `daemon` collaborator, so a standalone mission's own API answers
+  503 cleanly — the same contract every Phase 10 surface uses.
+- **`src/daemon/daemonClient.js`** — one discovery + auth path for the CLI
+  today and the desktop (M3) and Telegram router (M2) later.
+- **`daemon` config block** — `enabled`, `pollIntervalMs`, `schedulerTickMs`,
+  `maxWorkers`, `workerScanMs`, `restartFailedWorkers`.
+
+### Fixed
+
+- **Telegram poll ownership (would have been a livelock).** `getUpdates` is
+  offset-acknowledged: polling with `offset=N+1` permanently discards every
+  update up to N. A daemon polling alongside a waiting mission would consume
+  that mission's `APPROVE A7` reply and leave it waiting forever.
+  `ApprovalManager` gained `receiveDecisions` (default `true`, so every
+  pre-Phase-12 caller is unchanged); workers set it `false` and pick
+  decisions up through the store re-read `waitForDecision()` has performed
+  since Phase 10. Outbound publishing is stateless and deliberately not
+  gated.
+- **Mission workers died with the service** (found in live validation). A
+  plain `fork` does not survive its parent on Windows, so killing or
+  restarting the service destroyed every running mission. Workers are now
+  spawned detached — the same conclusion the desktop reached in Phase 8 —
+  and a restarted service re-adopts them from the worker registry.
+- **"Stop" did not mean stop gracefully** (found in live validation). On
+  Windows, `process.kill(pid, 'SIGTERM')` against another process is
+  `TerminateProcess`, not a catchable signal: stopping an adopted worker
+  killed it mid-mission while the CLI reported "the session stays resumable."
+  Stop requests are now per-project files (the mechanism `stop` has used
+  since P0), with a hard kill only as escalation after a grace window.
+  `daemon stop` uses the same file mechanism, so a deliberate stop no longer
+  reports itself as a crash.
+- **The daemon recorded its configured port, not the bound one** — a client
+  trusting that record could be sent to a port nothing was listening on.
+- **Conflict errors printed stack traces** instead of remedies. All three
+  new supervision conflicts now go through Phase 11 M3's
+  `userFacingError` catalogue (cause / impact / fix).
+
+### Deliberately deferred
+
+- **Notification routing stays with workers.** Moving it into the service
+  while workers still emit their own would duplicate every event — the exact
+  class Phase 11 M2 spent a milestone eliminating. It belongs with M2's
+  Mission Card work, where the sending side is being rewritten anyway.
+- **No new Telegram command grammar.** The service polls with the same
+  `parseDecisionText` parser workers used, so the set of accepted messages is
+  byte-for-byte `v2.7.0`. Widening it is M2, behind its own security review.
+- **No desktop changes.** The desktop keeps working through its existing
+  live/idle bridge; making it a true multi-project daemon client is M3.
+
 ## [2.7.0] — 2026-07-27 — Phase 11 M4: UX Consistency, Remote Polish & Documentation
 
 The fourth and final Phase 11 milestone. Prioritized consistency, clarity,

@@ -371,14 +371,58 @@ Task Scheduler integration).
 
 ---
 
+## Phase 11 — Operator Experience ✅ (`v2.7.0`, complete)
+
+M1 onboarding wizards (`v2.4.0`) → M2 phone & notification experience
+(`v2.5.0`/`v2.5.1`) → M3 doctor, recovery & guidance (`v2.6.0`) → M4 UX
+consistency & documentation (`v2.7.0`). Full retrospective:
+`docs/archive/phase-11/PHASE_11_M4_REPORT.md`.
+
+---
+
+## Phase 12 — Architectural Evolution 🔄 (M1 complete, M2 next)
+
+Turns AI-Orchestrator from *an executable that sometimes runs* into *a
+service clients connect to*. Desktop, Telegram, CLI, and any future web UI
+all become clients of one daemon. Plan: `docs/PHASE_12_PLAN.md`.
+
+- **M1 — Core Service** ✅ (`v2.8.0`): `ai-orchestrator serve` — an always-on
+  daemon owning the HTTP API, the **exclusive** Telegram inbound poll, the
+  scheduler tick, and mission workers as supervised child processes.
+  Supervision ownership moved from the machine to the project, so **several
+  projects run at once** for the first time. Windows autostart, worker
+  adoption across service restarts, and a tested backwards-compatibility
+  invariant. Report: `docs/PHASE_12_M1_REPORT.md`.
+- **M2 — Telegram Operator Interface** (`v2.9.0`): command router, project
+  context switching, executive Mission Cards. This is where the inbound
+  grammar widens beyond approval replies, so it carries its own security
+  review (`PHASE_12_PLAN.md` §6).
+- **M3 — Operator Control Center** (`v3.0.0`): the desktop as a pure daemon
+  client, showing every project, worker, queue and approval at once — with no
+  orchestration logic of its own.
+- **M4 — Launch experience & remote project creation** (`v3.1.0`):
+  double-click launcher, Start Menu integration, automatic daemon detection,
+  and `/new` project creation with a mandatory plan approval before any write.
+
+**Deliberately deferred in M1** (see the report): notification routing stays
+with workers until M2 rewrites the sending side (moving it early would
+duplicate every event); no new Telegram command grammar; no desktop changes;
+missions never run inside the service process.
+
+---
+
 ## Carried over from v1.x (fold into the phases above)
 
 - ~~Email notification channel (SMTP)~~ — **done in Phase 10C** (dependency-
-  free SMTP client). Windows service mode (run without logon) still open.
+  free SMTP client). Windows **logon**-start service shipped in Phase 12 M1
+  (`daemon install`); running without any logon (a true Windows service /
+  session 0) is still open.
 - More drivers: OpenAI Codex, Gemini CLI, Aider, OpenCode, Qwen, local LLMs,
   plus a driver conformance test-kit every driver must pass
 - ~~Concurrent multi-project supervision in one process~~ — **done in Phase
-  10H** (`start <a> <b>`, per-project status snapshots, shared locks)
+  10H** (`start <a> <b>`, per-project status snapshots, shared locks), and
+  extended in Phase 12 M1 to INDEPENDENT per-project processes the service
+  starts and stops one at a time
 - Cross-machine status aggregation
 
 ## Non-goals
