@@ -253,6 +253,41 @@ export const ORCHESTRATOR_DEFAULTS = {
     enabled: true,
   },
 
+  /**
+   * Phase 12 M1: the Core Service (see src/daemon/). The daemon is the
+   * always-running process that owns the API, the EXCLUSIVE Telegram inbound
+   * poll, the scheduler tick, and mission worker lifecycle.
+   *
+   * Nothing here changes standalone behaviour: `ai-orchestrator start` never
+   * consults this block. It only governs `ai-orchestrator serve` and the
+   * workers that daemon spawns.
+   */
+  daemon: {
+    /** Master switch for `serve`. False ⇒ the daemon refuses to start. */
+    enabled: true,
+    /**
+     * How often the daemon polls two-way approval providers (Telegram) for
+     * owner decisions. This poll runs whether or not a mission is waiting —
+     * that is the entire point of the service — so it is deliberately slower
+     * than the in-mission `approvals.decisionPollMs` used while a mission is
+     * actively parked on a decision.
+     */
+    pollIntervalMs: 10_000,
+    /** How often due scheduled missions are checked (Phase 10G). */
+    schedulerTickMs: 60_000,
+    /** Max mission workers the daemon supervises at once. */
+    maxWorkers: 3,
+    /** How often the supervisor re-probes worker liveness / reaps records. */
+    workerScanMs: 10_000,
+    /**
+     * Restart a scheduled/started worker that exits without completing?
+     * Off by default: the orchestrator already owns crash recovery INSIDE a
+     * mission (src/core/crashRecoveryEngine.js), so daemon-level restarts
+     * would stack two recovery policies on one failure.
+     */
+    restartFailedWorkers: false,
+  },
+
   /** Project launched when `ai-orchestrator start` is run with no name. */
   defaultProject: '',
 

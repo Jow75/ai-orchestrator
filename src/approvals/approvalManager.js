@@ -38,13 +38,36 @@ export class ApprovalManager extends EventEmitter {
    * @param {import('./approvalStore.js').ApprovalStore} options.store
    * @param {import('./providers/approvalProvider.js').ApprovalProvider[]} [options.providers]
    * @param {object} options.logger
+   * @param {boolean} [options.receiveDecisions] - Phase 12 M1: whether this
+   *   manager may poll two-way providers for inbound decisions. Default true
+   *   (every pre-Phase-12 caller, unchanged). Mission workers under the Core
+   *   Service pass false.
+   *
+   *   WHY THIS EXISTS. Telegram's getUpdates is offset-acknowledged: polling
+   *   with `offset=N+1` permanently discards every update up to N (see
+   *   providers/telegramProvider.js). Two processes polling the same bot
+   *   therefore consume each other's messages — an "APPROVE A7" reply read by
+   *   the daemon would be destroyed before the worker waiting on A7 ever saw
+   *   it, and that mission would wait forever. Inbound polling must have
+   *   exactly ONE owner per machine.
+   *
+   *   Nothing else needs to change to make this safe, because waitForDecision()
+   *   already re-reads the store every iteration and announces decisions
+   *   written by any other process (the cross-process path Phase 10's live
+   *   validation hardened). A non-receiving worker still sees the daemon's
+   *   decision on its next store read, exactly as it already sees decisions
+   *   made from the CLI or the desktop.
+   *
+   *   Publishing is deliberately NOT gated: outbound sendMessage is stateless,
+   *   so a worker announcing its own approval request races with nothing.
    */
-  constructor({ config, store, providers = [], logger }) {
+  constructor({ config, store, providers = [], logger, receiveDecisions = true }) {
     super();
     this.config = config ?? { enabled: false };
     this.store = store;
     this.providers = providers;
     this.logger = logger;
+    this.receiveDecisions = receiveDecisions;
     // Request ids this process has already announced as resolved — a
     // decision can be observed twice (provider poll + the store re-check in
     // waitForDecision), but must only ever be announced once.
@@ -220,6 +243,9 @@ export class ApprovalManager extends EventEmitter {
    */
   async pollProvidersOnce() {
     const resolved = [];
+    // Phase 12 M1: a worker under the Core Service never touches the inbound
+    // channel — the daemon owns it exclusively (see the constructor).
+    if (!this.receiveDecisions) return resolved;
     for (const provider of this.providers.filter((p) => p.canReceive)) {
       let decisions = [];
       try {

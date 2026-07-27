@@ -14,6 +14,20 @@
  *   3. Build state managers, drivers, orchestrator, integrations.
  *   4. Supervise until mission completion or operator stop.
  *   5. Shut down cleanly (final status, heartbeat "stopped", API closed).
+ *
+ * Phase 12 M1 adds ONE alternative shape: WORKER MODE (`new App({ worker:
+ * true })`, reached via `start --worker`, which only the Core Service passes).
+ * A worker supervises exactly as it always has — same Orchestrator, same
+ * P0–P11 guarantees — but withdraws the four responsibilities that can only
+ * belong to one process per machine, because the daemon now owns them:
+ *
+ *   global heartbeat  → the daemon's own record + a per-project worker record
+ *   HTTP API (:4711)  → the daemon's server
+ *   Telegram inbound  → the daemon's exclusive poll (see approvalManager.js)
+ *   stop-request file → per-worker SIGTERM / IPC, so stopping one mission
+ *                       does not stop every other mission on the machine
+ *
+ * With `worker` unset — every pre-Phase-12 caller — nothing below changes.
  */
 
 import fs from 'node:fs';
@@ -43,6 +57,10 @@ import TelegramApprovalProvider from './approvals/providers/telegramProvider.js'
 import EmailApprovalProvider from './approvals/providers/emailProvider.js';
 import ResourceLockManager from './coordination/resourceLocks.js';
 import AgentMessageBus from './coordination/agentMessages.js';
+import WorkerRegistry from './daemon/workerRegistry.js';
+import { readJsonSafe } from './state/statePersistence.js';
+import { isPidAlive } from './state/heartbeat.js';
+import { userFacingError } from './infra/errors.js';
 
 /** Cadence for checking the CLI stop-request file while supervising. */
 const STOP_FILE_POLL_MS = 5_000;
@@ -54,12 +72,17 @@ export class App {
   /**
    * @param {object} [options]
    * @param {string} [options.rootDir] - Override installation root (tests).
+   * @param {boolean} [options.worker] - Phase 12 M1: run as a supervised
+   *   mission worker under the Core Service (see the file header).
    */
   constructor(options = {}) {
     this.configManager = new ConfigManager(options);
     this.config = this.configManager.getAll();
     this.paths = this.configManager.getPaths();
     ensureRuntimeDirs(this.paths);
+
+    /** Phase 12 M1: worker mode (see the file header). Default false. */
+    this.workerMode = Boolean(options.worker);
 
     this.logger = createLogger({
       ...this.config.logging,
@@ -95,6 +118,11 @@ export class App {
       store: this.approvalStore,
       providers: this.buildApprovalProviders(),
       logger: childLogger(this.logger, 'approvals'),
+      // Phase 12 M1: inbound polling has exactly one owner per machine. A
+      // worker publishes its requests but never consumes Telegram updates —
+      // the daemon does that and writes decisions to the shared store, which
+      // waitForDecision() already re-reads every iteration.
+      receiveDecisions: !this.workerMode,
     });
 
     // Phase 10D: the mission lifecycle recorder.
@@ -221,6 +249,110 @@ export class App {
     this.stopFilePath = path.join(this.paths.stateDir, STOP_REQUEST_FILENAME);
     this.stopFileTimer = null;
     this.shuttingDown = false;
+
+    // Phase 12 M1: in worker mode the project — not the machine — is the unit
+    // of ownership, so this registry replaces the global heartbeat lock.
+    this.workerRegistry = new WorkerRegistry({
+      workersDir: this.paths.workersDir,
+      logger: childLogger(this.logger, 'worker'),
+    });
+    this.registeredProject = null;
+  }
+
+  /**
+   * Phase 12 M1 (worker mode): claim this project, refusing if anything else
+   * already supervises it. Two supervisors on one project would interleave
+   * session records, progress signatures, and task-queue writes — the exact
+   * corruption the machine-wide heartbeat lock used to prevent bluntly.
+   *
+   * @param {string} project
+   * @returns {string|undefined} 'worker-crash' when the previous worker for
+   *   this project died without cleanup (the per-project equivalent of the
+   *   standalone path's stale-heartbeat detection).
+   */
+  claimProjectAsWorker(project) {
+    const holder = this.workerRegistry.holderOf(project);
+    if (holder) {
+      throw userFacingError({
+        cause: `Project "${project}" is already supervised by worker pid ${holder.pid}.`,
+        impact: 'Two supervisors on one project would corrupt its session and task state.',
+        fix: `stop the running mission first: "ai-orchestrator stop ${project}".`,
+      });
+    }
+    const standalone = readJsonSafe(this.paths.heartbeatFile, { logger: this.logger });
+    if (standalone?.state === 'running' && isPidAlive(standalone.pid)) {
+      throw userFacingError({
+        cause: `A standalone orchestrator (pid ${standalone.pid}) is already supervising this machine.`,
+        impact: 'It owns the API port and the inbound approval channel, which the Core Service must own exclusively.',
+        fix: 'stop it with "ai-orchestrator stop", then start the mission through the service again.',
+      });
+    }
+
+    // A leftover "running" record with a dead pid means the previous worker
+    // for THIS project was killed or lost power mid-mission.
+    const stale = this.workerRegistry.read(project);
+    const recoveredAfter = stale?.state === 'running' ? 'worker-crash' : undefined;
+    if (recoveredAfter) {
+      this.logger.warn('Previous worker for this project did not exit cleanly', {
+        project, previousPid: stale.pid, lastUpdate: stale.updatedAt,
+      });
+    }
+
+    this.workerRegistry.register(project, {
+      pid: process.pid,
+      daemonPid: Number(process.env.AI_ORCHESTRATOR_DAEMON_PID) || null,
+      mode: 'worker',
+    });
+    this.registeredProject = project;
+    return recoveredAfter;
+  }
+
+  /**
+   * Phase 12 M1 (worker mode): accept control messages from the daemon over
+   * the IPC channel `child_process.fork` provides. IPC is an OPTIMIZATION for
+   * latency, never the system of record — a worker started without a channel
+   * (or one whose daemon died) still stops correctly via SIGTERM.
+   */
+  installWorkerChannel() {
+    if (typeof process.send !== 'function') return;
+    process.on('message', (message) => {
+      if (message?.type === 'stop') {
+        this.logger.info('Stop requested by the Core Service', { reason: message.reason });
+        this.stopAll(message.reason ?? 'daemon stop');
+      }
+    });
+  }
+
+  /**
+   * Phase 12 M1 (worker mode): watch this worker's OWN stop-request file.
+   *
+   * The machine-global `stop.requested` file cannot serve here — it would stop
+   * every mission on the machine at once. And a cross-process SIGTERM is not a
+   * graceful stop on Windows at all (it is TerminateProcess, which would kill
+   * the mission instead of archiving a resumable session), so this file is the
+   * only mechanism that keeps "stop" meaning "stop gracefully" everywhere.
+   */
+  watchWorkerStopFile(project) {
+    // Never inherit a stop request left behind by a previous mission.
+    this.workerRegistry.clearStop(project);
+    this.stopFileTimer = setInterval(() => {
+      const request = this.workerRegistry.readStopRequest(project);
+      if (!request) return;
+      this.workerRegistry.clearStop(project);
+      this.logger.info('Stop requested by the Core Service', { reason: request.reason });
+      this.stopAll(request.reason ?? 'daemon stop');
+    }, STOP_FILE_POLL_MS);
+    this.stopFileTimer.unref();
+  }
+
+  /** Phase 12 M1 (worker mode): best-effort progress report to the daemon. */
+  notifyDaemon(type, payload = {}) {
+    if (typeof process.send !== 'function') return;
+    try {
+      process.send({ type, ...payload });
+    } catch {
+      // The daemon went away; files remain the source of truth.
+    }
   }
 
   /**
@@ -292,16 +424,36 @@ export class App {
 
   /** The single-mission path — everything before Phase 10H, unchanged. */
   async startSingle({ projectName, onlyIfResumable = false, fresh = false } = {}) {
-    // Guard against double launch / detect unclean shutdown.
-    const previous = this.heartbeat.inspectPrevious();
+    // Phase 12 M1: a worker never touches the machine-wide heartbeat lock —
+    // that lock is what made simultaneous projects impossible. It claims the
+    // PROJECT instead (claimProjectAsWorker, below, after the name resolves).
+    const previous = this.workerMode
+      ? { kind: 'clean', previous: null }
+      : this.heartbeat.inspectPrevious();
     if (previous.kind === 'already-running') {
       throw new Error(
         `Another AI-Orchestrator instance is already running (pid ${previous.previous.pid}). ` +
         'Use "ai-orchestrator status" to inspect it or "ai-orchestrator stop" to stop it.'
       );
     }
-    const recoveredAfter =
+    let recoveredAfter =
       previous.kind === 'unclean-shutdown' ? 'reboot-or-power-loss' : undefined;
+
+    // Phase 12 M1: standalone start must also refuse a project the Core
+    // Service is already supervising — the other half of the mutual exclusion
+    // claimProjectAsWorker() enforces. With no daemon running the registry is
+    // empty, so this costs a directory read and changes nothing.
+    if (!this.workerMode) {
+      const requestedName = this.resolveProjectName(projectName, previous.previous);
+      const holder = requestedName ? this.workerRegistry.holderOf(requestedName) : null;
+      if (holder) {
+        throw userFacingError({
+          cause: `Project "${requestedName}" is already supervised by the Core Service (worker pid ${holder.pid}).`,
+          impact: 'Two supervisors on one project would corrupt its session and task state, so this start was refused.',
+          fix: `inspect it with "ai-orchestrator daemon status", or stop that mission with "ai-orchestrator stop ${requestedName}".`,
+        });
+      }
+    }
 
     const resolved = this.resolveProjectName(projectName, previous.previous);
     if (!resolved) {
@@ -333,6 +485,12 @@ export class App {
       }
     }
 
+    // Phase 12 M1: claim the project (worker mode) before any supervision
+    // starts, so a conflict fails fast and without side effects.
+    if (this.workerMode) {
+      recoveredAfter = this.claimProjectAsWorker(resolved) ?? recoveredAfter;
+    }
+
     if (recoveredAfter) {
       this.logger.warn('Recovering after unclean shutdown', { project: resolved });
       this.orchestrator.emit('orchestrator:recovered-after-reboot', {
@@ -351,19 +509,31 @@ export class App {
     } else {
       this.logger.info('Plugin system disabled by configuration');
     }
-    await this.dashboard.start();
+    // In worker mode the daemon owns the API port and the machine heartbeat,
+    // and stop requests arrive per-worker (SIGTERM/IPC) rather than through
+    // the machine-global stop file.
+    if (this.workerMode) {
+      this.installSignalHandlers();
+      this.installWorkerChannel();
+      this.watchWorkerStopFile(resolved);
+    } else {
+      await this.dashboard.start();
+      this.heartbeat.start({ project: resolved });
+      this.installSignalHandlers();
+      this.watchStopFile();
+    }
     this.statusManager.startUpdates();
-    this.heartbeat.start({ project: resolved });
-    this.installSignalHandlers();
-    this.watchStopFile();
 
-    this.logger.info('AI-Orchestrator started', {
+    this.logger.info(this.workerMode ? 'Mission worker started' : 'AI-Orchestrator started', {
       project: resolved,
       pid: process.pid,
     });
+    this.notifyDaemon('worker:started', { project: resolved, pid: process.pid });
 
     try {
-      return await this.orchestrator.runProject(resolved, { recoveredAfter });
+      const result = await this.orchestrator.runProject(resolved, { recoveredAfter });
+      this.notifyDaemon('worker:finished', { project: resolved, result });
+      return result;
     } finally {
       await this.shutdown();
     }
@@ -546,9 +716,23 @@ export class App {
 
     if (this.stopFileTimer) clearInterval(this.stopFileTimer);
     await this.stopAll('shutdown');
-    await this.dashboard.stop();
     await this.pluginManager.shutdownAll();
     this.statusManager.stopUpdates(finalState);
+
+    if (this.workerMode) {
+      // A worker must never write the machine heartbeat: that file is the
+      // standalone orchestrator's lock, and stamping it here would advertise a
+      // machine-wide state this process was never entitled to describe.
+      // Releasing the project claim is the worker's equivalent.
+      if (this.registeredProject) {
+        this.workerRegistry.unregister(this.registeredProject);
+        this.registeredProject = null;
+      }
+      this.logger.info('Mission worker shut down cleanly');
+      return;
+    }
+
+    await this.dashboard.stop();
     this.heartbeat.stop();
     this.logger.info('AI-Orchestrator shut down cleanly');
   }

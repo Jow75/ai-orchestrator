@@ -85,6 +85,17 @@ export function resolvePaths(overrides = {}) {
   // just because a poll loop noticed the same approval still exists.
   resolved.notificationsDir = path.join(resolved.stateDir, 'notifications');
 
+  // Phase 12 M1: the Core Service.
+  //  - daemonFile: the daemon's own process record (pid/port/version). This is
+  //    deliberately SEPARATE from heartbeatFile: heartbeat.json remains the
+  //    standalone orchestrator's single-instance lock, untouched, so a machine
+  //    with no daemon behaves exactly as it did before Phase 12.
+  //  - workersDir: one record per supervised mission worker, keyed by project,
+  //    which is what makes several projects runnable at once (a standalone
+  //    orchestrator could never share heartbeat.json).
+  resolved.daemonFile = path.join(resolved.stateDir, 'daemon.json');
+  resolved.workersDir = path.join(resolved.stateDir, 'workers');
+
   return resolved;
 }
 
@@ -113,6 +124,7 @@ export function ensureRuntimeDirs(paths) {
     paths.releasesDir,
     paths.statusDir,
     paths.notificationsDir,
+    paths.workersDir,
   ]) {
     fs.mkdirSync(dir, { recursive: true });
   }
