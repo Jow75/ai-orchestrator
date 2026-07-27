@@ -8,7 +8,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 The fourth and final Phase 11 milestone. Prioritized consistency, clarity,
 and operator confidence over new platform capabilities, per the owner's
 explicit brief. No architecture changed. Full report:
-`docs/PHASE_11_M4_REPORT.md` (also the Phase 11 retrospective).
+`docs/archive/phase-11/PHASE_11_M4_REPORT.md` (also the Phase 11 retrospective).
 
 ### Added
 
@@ -113,7 +113,7 @@ A dedicated live-validation pass on v2.5.0, following the project's own
 "build → live validate → fix real-world issues → then continue" discipline.
 Every M2 claim (dedup, formatting, attachments, Mission Cards) was proven
 against the owner's real Telegram bot, real missions, and — where it
-mattered — the owner's own phone. Full report: `docs/PHASE_11_M2_VALIDATION.md`.
+mattered — the owner's own phone. Full report: `docs/archive/phase-11/PHASE_11_M2_VALIDATION.md`.
 
 ### Fixed
 

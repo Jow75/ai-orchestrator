@@ -13,8 +13,12 @@ TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
 **Last updated:** 2026-07-27, after **Phase 11 M4 (UX Consistency, Remote
-Polish & Documentation), v2.7.0** — committed + tagged. **Phase 11 is now
-complete** (M1→M4, `v2.4.0`→`v2.7.0`). New `src/shared/vocabulary.js` is
+Polish & Documentation), v2.7.0** — committed + tagged, then pushed to
+GitHub (`github.com/Jow75/ai-orchestrator`) with a GitHub Release on
+`v2.7.0`. **`v2.7.0` is the official stable baseline** — the known-good
+checkpoint to return to before any further development. Phase 11 planning
+docs and milestone reports are archived under `docs/archive/phase-11/`.
+**Phase 11 is now complete** (M1→M4, `v2.4.0`→`v2.7.0`). New `src/shared/vocabulary.js` is
 the single source for mission-outcome icons/labels, approval-decision
 labels, confidence labels, and check marks — fixed a confirmed drift where
 the same "mission succeeded" outcome rendered as three different icons
@@ -37,8 +41,8 @@ match. Also fixed 8 documentation gaps, the largest being `docs/
 CLI_GUIDE.md` (billed as "every command") missing `init`, the whole
 `notify` group, `doctor --fix`, and `projects add --interactive` entirely.
 Backend suite **608/608** + 20/20 desktop. Full plan: `docs/
-PHASE_11_PLAN.md`; full report + Phase 11 retrospective + Phase 12
-recommendation: `docs/PHASE_11_M4_REPORT.md`.
+archive/phase-11/PHASE_11_PLAN.md`; full report + Phase 11 retrospective +
+Phase 12 recommendation: `docs/archive/phase-11/PHASE_11_M4_REPORT.md`.
 **Next: let Phase 11 mature through real-world use before shaping Phase
 12** (the same advice this project gave itself after Phase 10, which
 proved out well — Phase 10.5's maturation pass is what produced the
@@ -50,14 +54,14 @@ repairs on confirmation; anything needing real input hands off to the
 matching M1 wizard), two new evidence-based checks (quarantined corrupt
 state files; an unsupervised resumable session), `src/infra/errors.js`
 error catalogue, guided recovery in `tasks list`/`approvals list`. See
-`docs/PHASE_11_M3_REPORT.md` for full detail.
+`docs/archive/phase-11/PHASE_11_M3_REPORT.md` for full detail.
 
 Before that: **Phase 11 M2 + Operational Validation (v2.5.0/v2.5.1),
 2026-07-26/27** — phone & notification experience (approval-reuse dedup,
 provider+channel dedup, safe Telegram formatting, real attachments, Mission
 Cards), then live-validated against the real Telegram bot and real
 missions (2 more real bugs found and fixed); see CHANGELOG and
-`docs/PHASE_11_M2_VALIDATION.md` for full detail.
+`docs/archive/phase-11/PHASE_11_M2_VALIDATION.md` for full detail.
 
 Before that: **Phase 11 M1 (v2.4.0), 2026-07-14** — onboarding & first-run
 wizards (`init`, `projects add --interactive`, `notify setup
@@ -84,7 +88,7 @@ lifecycle; (4) `intel` health now reads lifecycle state (no more "blocked
 trace; (6) `projects add` now writes `claude.permissionMode` + doctor
 warns when missing; (7) new `notify test` + `sessions --abandon`. Test
 suite: **436/436** + 18 desktop. Full write-up:
-`docs/PHASE_10.5_READINESS.md`; Phase 11 plan: `docs/PHASE_11_PROPOSAL.md`.
+`docs/PHASE_10.5_READINESS.md`; Phase 11 plan: `docs/archive/phase-11/PHASE_11_PROPOSAL.md`.
 Readiness verdict: **8.6/10, READY for Phase 11** (onboarding/UX is the
 frontier). THE FINISHER now has a `claude` block; still needs a real
 mission prompt before its first serious run.
@@ -200,7 +204,7 @@ from, and **Phase 11 (Operator Experience, M1–M4) is now also complete**
    Telegram/email) and self-diagnosing (`doctor --fix`); day-to-day use
    should mostly mean running missions, not more setup.
 2. If/when Phase 12 planning starts, the two candidates flagged-but-deferred
-   across Phase 11 (see `docs/PHASE_11_M4_REPORT.md` §10) need their own
+   across Phase 11 (see `docs/archive/phase-11/PHASE_11_M4_REPORT.md` §10) need their own
    evidence pass first, per this project's standing rule: a driver
    conformance kit / additional engines (Gemini, Codex, OpenCode — the
    `cli` driver already supports them, just unverified against the actual
