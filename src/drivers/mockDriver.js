@@ -30,6 +30,9 @@ export class MockDriver extends AIDriver {
     super({ logger });
     this.id = 'mock';
     this.name = 'Mock Engine';
+    // This driver writes nothing but what a fixture tells it to. Every surface
+    // that reports a mock mission must disclose that — see simulation.js.
+    this.simulated = true;
     this.launchCount = 0;
     // Test introspection: every prompt this driver was launched with, in
     // order — lets orchestrator-level tests assert on real briefing content

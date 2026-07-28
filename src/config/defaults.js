@@ -254,6 +254,21 @@ export const ORCHESTRATOR_DEFAULTS = {
   },
 
   /**
+   * Phase 12 M2.1: the port registry (see src/runtime/portRegistry.js).
+   *
+   * The window automatic allocations are drawn from. It sits above the ports
+   * frameworks scaffold into (3000, 4200, 5173, 8080) and below the ephemeral
+   * range Windows assigns outbound sockets from (49152+) — allocating inside
+   * that range produces a port that probes free and is stolen minutes later.
+   *
+   * Permanent reservations are NOT configured here: they are a human decision
+   * about one project and live in config/ports.json.
+   */
+  ports: {
+    range: { start: 5200, end: 5899 },
+  },
+
+  /**
    * Phase 12 M1: the Core Service (see src/daemon/). The daemon is the
    * always-running process that owns the API, the EXCLUSIVE Telegram inbound
    * poll, the scheduler tick, and mission worker lifecycle.

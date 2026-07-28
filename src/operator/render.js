@@ -21,6 +21,7 @@ import {
   healthLabel, decisionLabel,
 } from '../shared/vocabulary.js';
 import { COMMANDS } from './commandGrammar.js';
+import { SIMULATION_BADGE, SIMULATION_NOTICE } from '../drivers/simulation.js';
 
 /** Longest list a single phone message should carry before it is summarized. */
 const MAX_LIST = 10;
@@ -42,7 +43,11 @@ export function relativeTime(iso, now = Date.now()) {
 /** One project as a single scannable line. */
 export function renderProjectLine(record, { active } = {}) {
   const marker = active === record.name ? '▸ ' : '• ';
-  const parts = [`${marker}${projectStatusIcon(record.status)} ${record.name}`];
+  // The badge rides on the NAME rather than in the detail line, because the
+  // detail line is what gets skimmed past. A simulated project must be
+  // identifiable in the one line an owner actually reads.
+  const badge = record.simulated ? `  ${SIMULATION_BADGE}` : '';
+  const parts = [`${marker}${projectStatusIcon(record.status)} ${record.name}${badge}`];
   const detail = [];
   detail.push(projectStatusLabel(record.status));
   if (record.tasks?.total) detail.push(`${record.tasks.done}/${record.tasks.total} tasks`);
@@ -90,6 +95,10 @@ export function renderProjectDetail(record, { now = Date.now() } = {}) {
     `${projectStatusIcon(record.status)} ${record.name} — ${projectStatusLabel(record.status)}`,
   ];
   if (record.description) lines.push(record.description);
+  if (record.simulated) {
+    lines.push('');
+    lines.push(`🧪 ${SIMULATION_NOTICE}`);
+  }
   lines.push('');
 
   if (record.lifecycle) {
@@ -176,11 +185,19 @@ export function renderMissionProposal(request) {
   const context = request.context ?? {};
   const lines = [
     `📋 Mission ${request.id} — ${request.project}`,
+  ];
+  // Disclosed at gate 1, before the owner has spent a decision on it. Putting
+  // this only in the completion report would tell them what happened; putting
+  // it here tells them what is about to.
+  if (context.simulated) {
+    lines.push('', `🧪 ${SIMULATION_NOTICE}`);
+  }
+  lines.push(
     '',
     request.objective,
     '',
-    'Before anything runs:',
-  ];
+    'Before anything runs:'
+  );
   if (context.branch) {
     lines.push(`  Branch: ${context.branch}${context.dirty ? ' (uncommitted changes)' : ''}`);
   }
@@ -197,9 +214,18 @@ export function renderMissionProposal(request) {
   }
 
   lines.push('');
-  lines.push('If you approve, a planning run starts. It will come back with a');
-  lines.push('real plan — tasks, files, duration, risks — for a second approval');
-  lines.push('before any code is written.');
+  if (context.simulated) {
+    // The real flow's promise ("it will come back with a real plan") is a lie
+    // here: the plan is a fixture too. Saying so is the whole point.
+    lines.push('If you approve, the scripted fixture replays the two-gate flow');
+    lines.push('so the approval path itself can be exercised. The plan it returns');
+    lines.push('is canned and unrelated to what you asked for, and approving it');
+    lines.push('produces no code.');
+  } else {
+    lines.push('If you approve, a planning run starts. It will come back with a');
+    lines.push('real plan — tasks, files, duration, risks — for a second approval');
+    lines.push('before any code is written.');
+  }
   lines.push('');
   lines.push(`Reply: APPROVE ${request.id} · REJECT ${request.id} [why]`);
   return lines.join('\n');
@@ -259,6 +285,39 @@ export function renderPhaseUpdate({ project, state, tasksDone, tasksTotal, taskI
   return lines.join('\n');
 }
 
+/**
+ * `/service` — the health of the thing answering you.
+ *
+ * Leads with Running because that is what was asked, then spends its remaining
+ * lines on the question the owner did not know to ask: whether this survives a
+ * reboot. On 2026-07-28 the answer was no, and the way that surfaced was a
+ * phone console that had simply stopped replying.
+ */
+export function renderServiceStatus(report) {
+  const lines = ['🟢 Core Service — Running'];
+  if (report.uptimeMs != null) lines.push(`Up for ${formatDuration(report.uptimeMs)}`);
+  if (report.version) lines.push(`Version ${report.version}${report.pid ? ` · pid ${report.pid}` : ''}`);
+
+  const max = report.maxWorkers ? `/${report.maxWorkers}` : '';
+  lines.push(`Missions running: ${report.workers ?? 0}${max}`);
+  lines.push(`Remote channel: ${report.telegramInbound ? 'active' : 'not configured'}`);
+
+  const autostart = report.autostart ?? {};
+  if (autostart.supported) {
+    lines.push('');
+    lines.push(autostart.installed
+      ? 'After a reboot: starts automatically ✔'
+      : 'After a reboot: ⚠️ it will NOT come back on its own.');
+    if (!autostart.installed) {
+      // The remedy has to run on the machine, so the message says so plainly
+      // rather than offering a remote command that cannot exist.
+      lines.push('This console goes silent until someone starts it by hand.');
+      lines.push('Fix it once, at the machine: ai-orchestrator daemon install');
+    }
+  }
+  return lines.join('\n');
+}
+
 /** `/help` — generated from the grammar, so it can never drift from it. */
 export function renderHelp({ active } = {}) {
   const lines = ['AI-Orchestrator — remote console', ''];
@@ -287,5 +346,6 @@ export function truncate(text, maxChars) {
 export default {
   relativeTime, renderProjectLine, renderProjectList, renderProjectDetail,
   renderTasks, renderApprovals, renderMissionProposal, renderMissionRequests,
-  renderEvents, renderConfirmation, renderPhaseUpdate, renderHelp, truncate,
+  renderEvents, renderConfirmation, renderPhaseUpdate, renderServiceStatus,
+  renderHelp, truncate,
 };

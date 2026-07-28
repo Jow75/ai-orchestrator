@@ -30,6 +30,12 @@ config/local.json
 # The machine-owned run tracking in state/schedules.json is already ignored.
 config/schedules.json
 
+# Port reservations, edited at runtime via `ports reserve`. Per-machine for the
+# same reason project configs are: which port THE FINISHER must hold is a fact
+# about THIS machine's environment. Only the template is tracked. (Dynamic
+# allocations live in state/ports.json and are already ignored by /state/.)
+/config/ports.json
+
 # Credentials handed over out-of-band (never commit plaintext secrets)
 *credentilas*.txt
 *credentials*.txt

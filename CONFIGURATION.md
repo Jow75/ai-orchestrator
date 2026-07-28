@@ -448,6 +448,21 @@ anything has been recorded.
 
 ### mock (used when `driver` is `"mock"`)
 
+> **This driver is SIMULATED. It writes no code, runs no tests, and reports a
+> scripted result regardless of what was asked of it.**
+>
+> Every operator surface discloses this automatically — the `/projects` badge,
+> `/status`, both approval gates, and the Mission Card. That disclosure exists
+> because of a real incident (2026-07-28): a mock project was asked for a React
+> and Electron calculator from a phone and reported *"Mission complete · Tests
+> passed · Verified"* over an empty workspace. Nothing had malfunctioned; the
+> fixture replayed exactly as configured and every layer above reported what it
+> was told. What was missing was anyone saying it was a fixture.
+>
+> Add `"simulated": true` to any project config to declare this explicitly.
+> The flag overrides driver-based detection in **both** directions, so a plugin
+> driver can declare itself simulated and a real driver is never mislabelled.
+
 Scriptable fake engine for testing your setup end-to-end:
 
 ```json
@@ -842,6 +857,67 @@ from static config). Both cases say exactly how to clear them.
 Destructive-action confirmations are deliberately **in memory only**: a
 five-minute conversational state, not a fact about the system. A service
 restart should forget them, because your intent has not survived either.
+
+## Port registry (Phase 12 M2.1) — `ports` block + `config/ports.json`
+
+Stops projects on one machine fighting over localhost ports. Two files, and the
+split is the design:
+
+| File | Owner | Contents |
+| --- | --- | --- |
+| `config/ports.json` | **you** | Permanent reservations. Hand-edited, safe to commit. |
+| `state/ports.json` | the machine | Dynamic allocations. Safe to delete — they regenerate identically. |
+
+The allocation window lives in `config/orchestrator.json`:
+
+```json
+"ports": {
+  "range": { "start": 5200, "end": 5899 }
+}
+```
+
+The default sits **above** the ports frameworks scaffold into (3000 React/Next,
+4200 Angular, 5173 Vite, 8080 everything else) and **below** the ephemeral range
+Windows assigns outbound sockets from (49152+). Allocating inside the ephemeral
+range produces the classic intermittent bug: the port probes free and is stolen
+by an outbound connection thirty seconds later.
+
+A reservation is a statement that something *outside* this machine expects a
+service at a fixed address:
+
+```json
+{
+  "reservations": [
+    {
+      "project": "THE FINISHER",
+      "service": "web",
+      "port": 5173,
+      "note": "stable endpoint expected by external callers"
+    }
+  ]
+}
+```
+
+Everything else is allocated automatically and **deterministically**: the port
+is derived from `project:service` (FNV-1a, modulo the range), so the same
+service gets the same port on every machine and every run — before anything has
+been written down, and again after `state/ports.json` is deleted.
+
+Three properties worth knowing:
+
+- **Availability is decided by the operating system, not by these files.** Ports
+  are tested by binding them. A registry answering from its own records would
+  hand out a port Docker or a stale process already holds.
+- **A port is free only if it binds on both `0.0.0.0` and `127.0.0.1`.** On
+  Windows the wildcard bind succeeds while another process holds loopback, and
+  loopback is the default for dev servers — a wildcard-only probe called this
+  project's own live API "free".
+- **A reservation holds its number even while the service is down.** That is the
+  point of one. If something else is on the port, you are told; the reservation
+  is not silently surrendered.
+
+Ask for a port from a script (`ports get` prints a bare number on stdout), or at
+runtime over HTTP — see `GET /api/ports/:project/:service` in [API.md](API.md).
 
 ## Environment notes
 

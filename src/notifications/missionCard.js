@@ -16,6 +16,39 @@
 import { formatDuration } from '../infra/time.js';
 import { gitHead } from '../progress/progressEngine.js';
 import { outcomeIcon, outcomeLabel, confidenceLabel } from '../shared/vocabulary.js';
+import { SIMULATION_NOTICE_PAST } from '../drivers/simulation.js';
+
+/**
+ * Verifier result types that are NOT evidence.
+ *
+ * `marker` is the completion-marker fallback a task gets when it declares no
+ * verifiers of its own (orchestrator.js `markerFallbackVerify`). It records
+ * one fact: the agent emitted the string "MISSION COMPLETE". That is the agent
+ * grading its own homework, and counting it as a passing test is how a mission
+ * that wrote zero files came back to an owner as "Tests: 1/1 passed ·
+ * Confidence: Verified" during the 2026-07-28 live validation.
+ *
+ * The marker still has a job — it is how the orchestrator knows a task ended —
+ * so it stays in `verify.results`. It is simply not allowed to be counted as
+ * verification here, which restores this file's own stated rule: never dress
+ * an unchecked task up as a verified one.
+ */
+const NON_EVIDENCE_VERIFIERS = Object.freeze(['marker']);
+
+/**
+ * Is this verifier result actual evidence about the work?
+ *
+ * Exported because more than one surface aggregates verifier results into a
+ * number an owner will trust — the Mission Card's "Tests: n/m" and the
+ * operator console's "Verifier pass rate: n%". Both were counting markers, and
+ * a rule enforced in one place and not the other is not a rule.
+ *
+ * @param {{type?: string}} result - One entry of a checkpoint's `verify.results`.
+ * @returns {boolean}
+ */
+export function isEvidenceVerifier(result) {
+  return !NON_EVIDENCE_VERIFIERS.includes(result?.type);
+}
 
 /**
  * Build a Mission Card.
@@ -33,13 +66,18 @@ import { outcomeIcon, outcomeLabel, confidenceLabel } from '../shared/vocabulary
  *   next-work-item, when the caller has it. Omitted if not supplied.
  * @param {string} [params.operatorAction] - The remedy hint, when the
  *   mission is blocked/needs the owner (e.g. block()'s own hint text).
+ * @param {boolean} [params.simulated] - True when the engine behind this
+ *   mission was a fixture rather than a real one (see drivers/simulation.js).
+ *   Surfaces at the TOP of the rendered card, because a reader who stops after
+ *   one line must still learn the most important thing about it.
  * @returns {object} The card. Every field beyond `project`/`status` is optional.
  */
 export function buildMissionCard({
   project, session, queue, status = 'complete', reason,
-  workingDirectory, nextRecommendation, operatorAction,
+  workingDirectory, nextRecommendation, operatorAction, simulated = false,
 }) {
   const card = { project, status };
+  if (simulated) card.simulated = true;
 
   if (session?.createdAt) {
     const elapsedMs = Date.now() - Date.parse(session.createdAt);
@@ -65,10 +103,13 @@ export function buildMissionCard({
       if (!cp) continue;
       for (const f of cp.filesTouched ?? []) filesTouched.add(f);
       for (const f of cp.filesDeleted ?? []) filesDeleted.add(f);
-      if (cp.verify?.results) {
-        verifiersTotal += cp.verify.results.length;
-        verifiersPassed += cp.verify.results.filter((r) => r.passed).length;
-      }
+      // Only real checks count. A completion marker is the agent's own claim
+      // about itself, not a check of it (see NON_EVIDENCE_VERIFIERS).
+      const evidence = (cp.verify?.results ?? []).filter(
+        (r) => !NON_EVIDENCE_VERIFIERS.includes(r.type)
+      );
+      verifiersTotal += evidence.length;
+      verifiersPassed += evidence.filter((r) => r.passed).length;
     }
     if (filesTouched.size || filesDeleted.size) {
       card.filesChanged = [...filesTouched, ...[...filesDeleted].map((f) => `${f} (deleted)`)];
@@ -78,8 +119,18 @@ export function buildMissionCard({
       card.confidence = verifiersPassed === verifiersTotal ? 'verified' : 'partial';
     } else {
       // Real, honest gap: tasks completed but nothing automated checked
-      // them — never dress this up as "verified" when it wasn't.
+      // them — never dress this up as "verified" when it wasn't. Reached both
+      // by a task that declared no verifiers and by one whose only "result"
+      // was the completion marker; those are the same situation.
       card.confidence = 'unverified';
+    }
+    // A completed mission that touched no file is worth saying out loud. It is
+    // the signature of both failure modes this card has actually produced: a
+    // simulated engine, and a real engine that answered without write
+    // permission (the 2026-07-04 incident). Neither is visible from
+    // "Tasks: 1/1 done".
+    if (status === 'complete' && !filesTouched.size && !filesDeleted.size) {
+      card.noFilesChanged = true;
     }
   }
 
@@ -105,13 +156,20 @@ export function buildMissionCard({
  */
 export function renderMissionCardText(card) {
   const statusLabel = `${outcomeIcon(card.status)} ${outcomeLabel(card.status)}`;
-  const lines = [`Mission: ${card.project}`, `Status: ${statusLabel}`];
+  // The simulation notice goes ABOVE the status line, not below the fold. A
+  // phone notification preview shows the first line or two, and "Mission
+  // complete" is precisely the line that must not travel alone.
+  const lines = card.simulated ? [`🧪 ${SIMULATION_NOTICE_PAST}`, ''] : [];
+  lines.push(`Mission: ${card.project}`, `Status: ${statusLabel}`);
 
   if (card.duration) lines.push(`Duration: ${card.duration}`);
   if (card.tasksTotal) lines.push(`Tasks: ${card.tasksDone}/${card.tasksTotal} done`);
   if (card.tests) lines.push(`Tests: ${card.tests.passed}/${card.tests.total} passed`);
   if (card.confidence) {
     lines.push(`Confidence: ${confidenceLabel(card.confidence)}`);
+  }
+  if (card.noFilesChanged) {
+    lines.push('Files changed: none — this mission completed without writing anything.');
   }
   if (card.filesChanged?.length) {
     lines.push(`Files changed (${card.filesChanged.length}): ${card.filesChanged.slice(0, 8).join(', ')}` +
@@ -127,4 +185,4 @@ export function renderMissionCardText(card) {
   return lines.join('\n');
 }
 
-export default { buildMissionCard, renderMissionCardText };
+export default { buildMissionCard, renderMissionCardText, isEvidenceVerifier };

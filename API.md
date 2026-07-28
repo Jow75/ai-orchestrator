@@ -227,6 +227,36 @@ additive supervisor, never a required one.
 | GET | `/api/operator/missions` | Open mission requests; `?all=true` for the full history, `?project=` to scope |
 | POST | `/api/operator/command` 🔒 | Body `{text, channel?, chatId?, from?}` → `{ok, reply}` |
 
+### Port registry (Phase 12 M2.1)
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/ports` | Every registered port, with whether anything is actually listening |
+| GET | `/api/ports/:project/:service` | The port this service should use, allocating one if it has none. `?preferred=<n>` tries that first |
+
+Unlike the routes above, these are **not daemon-only in spirit**: a project
+asking which port it owns should not need the Core Service running, so the same
+answer is available from the CLI (`ports get`, which prints a bare number) with
+no service at all. The HTTP route exists for callers already running — an
+Electron main process, a Vite config — that would rather ask than shell out.
+
+Deliberately **unauthenticated**, like every other GET: the API binds loopback
+only, and a dev server that must first locate a token in order to learn its own
+port is a dev server whose author will hard-code the port instead. The response
+exposes nothing that reading `config/ports.json` would not.
+
+```jsonc
+// GET /api/ports/my-app/web
+{ "ok": true, "port": 5313, "kind": "allocated", "moved": false, "previousPort": null }
+```
+
+`moved: true` means the port this service used last time is now occupied by
+something else and a new one was assigned — reported rather than hidden,
+because a silently moved endpoint is a debugging session nobody asked for.
+
+An exhausted range answers **409** with `{ok: false, reason}`: a state the
+caller can act on (widen `ports.range`, or release something), not a fault.
+
 `POST /api/operator/command` runs the **same router** an inbound Telegram
 message goes through. That is the architectural claim of Phase 12 M2 made
 concrete: Telegram is one client, not the interface, and the desktop (M3) or a

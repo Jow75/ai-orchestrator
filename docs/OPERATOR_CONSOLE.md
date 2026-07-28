@@ -66,6 +66,7 @@ added later can accidentally become reachable.
 | `/approvals` | Every decision waiting on you, across all projects |
 | `/missions` | Mission requests you raised and have not answered |
 | `/events [n]` | What the system actually did |
+| `/service` | Running / Starting / Stopped — and whether it survives a reboot |
 | `/shutdown` ⚠️ | Stop the Core Service itself |
 | `/confirm <code>` · `/cancel [code]` | Answer a ⚠️ prompt |
 

@@ -60,8 +60,16 @@ function fakeSupervisor(workerRegistry) {
   };
 }
 
-/** A throwaway installation with every collaborator the router needs. */
-function harness({ projects = ['alpha', 'beta'], operator = {} } = {}) {
+/**
+ * A throwaway installation with every collaborator the router needs.
+ *
+ * `driver` defaults to 'claude' — a REAL engine id — because the router never
+ * launches anything here (the supervisor is a stub) and the operator surfaces
+ * now render differently for a simulated project. A harness that quietly used
+ * the mock driver would test the rehearsal wording everywhere and leave the
+ * ordinary path uncovered. Simulation is opted into explicitly, per test.
+ */
+function harness({ projects = ['alpha', 'beta'], operator = {}, driver = 'claude' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-router-'));
   const configManager = new ConfigManager({ rootDir: root });
   configManager.load();
@@ -76,7 +84,7 @@ function harness({ projects = ['alpha', 'beta'], operator = {} } = {}) {
     fs.writeFileSync(
       path.join(paths.projectsDir, `${name}.json`),
       JSON.stringify({
-        workingDirectory, promptFile: 'prompt.md', driver: 'mock',
+        workingDirectory, promptFile: 'prompt.md', driver,
         description: `The ${name} project.`,
       })
     );
@@ -199,6 +207,56 @@ test('the proposal states what is known and promises the plan gate — it invent
   assert.match(reply, /planning run starts/);
   assert.match(reply, /tasks, files, duration, risks/, 'the real estimates come from the plan');
   assert.doesNotMatch(reply, /\d+%/, 'no confidence percentage is invented before anything has run');
+  assert.doesNotMatch(reply, /Simulated|SIMULATED/,
+    'a real project must not be labelled as a rehearsal');
+});
+
+// ─────────────────────────────── simulated projects (Phase 12 M2.1) ─────────
+//
+// The 2026-07-28 live validation asked a mock-driver project for a React and
+// Electron calculator and was told the mission was complete, verified. Nothing
+// had malfunctioned; nothing had disclosed that the engine was a fixture.
+// These tests pin the disclosure to the surfaces an owner actually reads.
+
+test('a simulated project is labelled in the project list', async () => {
+  const { say } = harness({ driver: 'mock' });
+
+  const { reply } = await say('/projects');
+
+  assert.match(reply, /SIMULATED/, 'the badge rides on the line that gets skimmed');
+});
+
+test('a simulated project discloses itself in its status detail', async () => {
+  const { say } = harness({ driver: 'mock' });
+  await say('/project alpha');
+
+  const { reply } = await say('/status');
+
+  assert.match(reply, /Simulated project/);
+  assert.match(reply, /No code is written/);
+});
+
+test('the mission proposal for a simulated project promises no code, not a plan gate', async () => {
+  const { say } = harness({ driver: 'mock' });
+  await say('/project alpha');
+
+  const { reply } = await say('Create a simple calculator with React and Electron.');
+
+  assert.match(reply, /Simulated project/, 'disclosed at gate 1, before a decision is spent');
+  assert.match(reply, /produces no code/);
+  assert.doesNotMatch(reply, /planning run starts/,
+    'the real flow promises a real plan; a fixture must not borrow that promise');
+});
+
+test('a real project is never labelled simulated', async () => {
+  const { say } = harness();
+  await say('/project alpha');
+
+  const list = await say('/projects');
+  const status = await say('/status');
+
+  assert.doesNotMatch(list.reply, /SIMULATED/);
+  assert.doesNotMatch(status.reply, /Simulated project/);
 });
 
 test('approving a mission request is what starts the work', async () => {

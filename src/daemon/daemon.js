@@ -85,6 +85,8 @@ import OperatorGateway from '../operator/operatorGateway.js';
 import MissionMonitor from '../operator/missionMonitor.js';
 
 import DaemonRecord from './daemonRecord.js';
+import { autostartState } from './serviceControl.js';
+import PortRegistry from '../runtime/portRegistry.js';
 import WorkerRegistry from './workerRegistry.js';
 import WorkerSupervisor from './workerSupervisor.js';
 
@@ -208,6 +210,15 @@ export class Daemon extends EventEmitter {
     this.buildOperatorInterface();
 
     this.apiToken = loadOrCreateToken(this.paths.apiTokenFile);
+    // Phase 12 M2.1: the port broker, so any project on this machine can ask
+    // the service which port it owns instead of hard-coding one and colliding.
+    this.portRegistry = new PortRegistry({
+      reservationsFile: this.paths.portsFile,
+      allocationsFile: this.paths.portAllocationsFile,
+      range: this.config.ports?.range,
+      logger: childLogger(this.logger, 'ports'),
+    });
+
     this.dashboard = new DashboardServer({
       config: this.config.api,
       logger: childLogger(this.logger, 'api'),
@@ -230,6 +241,7 @@ export class Daemon extends EventEmitter {
       // mission's own server) ⇒ the daemon routes 503 cleanly, exactly like
       // every other optional Phase 10 surface.
       daemon: this,
+      portRegistry: this.portRegistry,
     });
 
     this.scheduler = this.buildScheduler();
@@ -320,6 +332,20 @@ export class Daemon extends EventEmitter {
           this.stop('operator shutdown').finally(() => this.exitProcess(0));
         }, 1_000).unref();
       },
+      // Phase 12 M2.1: `/service`. The daemon answers this about ITSELF rather
+      // than the router probing a record and a port — a message that reached
+      // the router already proves the service is up, and re-deriving that from
+      // disk could only ever produce a less certain answer.
+      serviceReport: () => ({
+        pid: process.pid,
+        version: VERSION,
+        uptimeMs: this.startedAt ? Date.now() - this.startedAt.getTime() : null,
+        port: this.boundPort(),
+        workers: this.supervisor.list().length,
+        maxWorkers: this.daemonConfig.maxWorkers ?? null,
+        telegramInbound: this.canReceive,
+        autostart: autostartState(),
+      }),
       logger,
     });
 

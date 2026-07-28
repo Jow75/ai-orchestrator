@@ -49,7 +49,7 @@ export class DashboardServer {
     config, logger, statusManager, sessionManager, configManager, timeline, taskQueue, memoryStore,
     agentRegistry, agentHealth, orchestrator, apiToken,
     approvalStore, approvalManager, lifecycle, resourceLocks, messageBus, paths, stopAll,
-    daemon,
+    daemon, portRegistry,
   }) {
     this.config = config;
     this.logger = logger;
@@ -76,6 +76,10 @@ export class DashboardServer {
     // server leaves it undefined and every /api/daemon route 503s cleanly —
     // the same optional-collaborator contract every Phase 10 surface uses.
     this.daemon = daemon;
+    // Phase 12 M2.1 (optional): the port broker. Unlike `daemon`, this one is
+    // useful from a standalone mission's server too — a project asking which
+    // port it owns should not need the Core Service to be running.
+    this.portRegistry = portRegistry;
     this.server = null;
     this.app = this.buildApp();
   }
@@ -141,6 +145,36 @@ export class DashboardServer {
     });
 
     // The event log — the spine every interface reads.
+    // ── Phase 12 M2.1: the port registry ─────────────────────────────────
+    //
+    // The runtime integration point: an Electron main process, a Vite config,
+    // or any dev server asks the service which port it owns instead of each
+    // project hard-coding a number and colliding with the next one.
+    //
+    // Served WITHOUT auth, and deliberately: the API already binds loopback
+    // only, and a dev server that must first find a token in order to learn
+    // its own port is a dev server that will hard-code the port instead. The
+    // data is a port number for a name the caller supplied — it exposes
+    // nothing that reading config/ports.json would not.
+    app.get('/api/ports', async (req, res) => {
+      if (!this.portRegistry) return res.status(503).json({ error: 'Port registry not available.' });
+      res.json(await this.portRegistry.report());
+    });
+
+    app.get('/api/ports/:project/:service', async (req, res) => {
+      if (!this.portRegistry) return res.status(503).json({ error: 'Port registry not available.' });
+      const preferred = Number.parseInt(req.query.preferred, 10);
+      const result = await this.portRegistry.acquire({
+        project: req.params.project,
+        service: req.params.service,
+        preferred: Number.isFinite(preferred) ? preferred : undefined,
+      });
+      // 409 rather than 500: the range is exhausted, which is a state the
+      // caller can act on (widen it, or release something) rather than a fault.
+      if (!result.ok) return res.status(409).json(result);
+      return res.json(result);
+    });
+
     app.get('/api/events', (req, res) => {
       if (!this.daemon) return res.status(503).json({ error: 'Core Service not available.' });
       const sinceSeq = Number.parseInt(req.query.since, 10);

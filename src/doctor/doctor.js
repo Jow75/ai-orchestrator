@@ -31,6 +31,7 @@ import { readJsonSafe } from '../state/statePersistence.js';
 import { CHECK_MARK } from '../shared/vocabulary.js';
 import { isPidAlive } from '../state/heartbeat.js';
 import { silentLogger } from '../infra/logger.js';
+import { autostartState, CORE_SERVICE_TASK_NAME } from '../daemon/serviceControl.js';
 
 /** Windows Task Scheduler task name used by `scheduler`/doctor's auto-resume check. */
 export const SCHEDULED_TASK_NAME = 'AI-Orchestrator Auto-Resume';
@@ -67,6 +68,11 @@ function defaultCheckScheduledTask() {
   return { installed: result.status === 0 };
 }
 
+/** Real check for the Core Service logon task (injectable for tests). */
+function defaultCheckCoreServiceTask() {
+  return autostartState();
+}
+
 /**
  * Recursively find quarantined corrupt-state files (see
  * statePersistence.js's `readJsonSafe` — a damaged file is renamed to
@@ -101,6 +107,7 @@ function findCorruptFiles(dir) {
  * @param {DriverRegistry} [options.driverRegistry]
  * @param {string} [options.platform] - Defaults to `process.platform` (tests override).
  * @param {() => {installed: boolean}} [options.checkScheduledTask] - Injectable (tests).
+ * @param {() => {installed: boolean}} [options.checkCoreServiceTask] - Injectable (tests).
  * @returns {Promise<DoctorFinding[]>}
  */
 export async function buildDoctorFindings({
@@ -108,6 +115,7 @@ export async function buildDoctorFindings({
   driverRegistry = new DriverRegistry({ logger: silentLogger }),
   platform = process.platform,
   checkScheduledTask = defaultCheckScheduledTask,
+  checkCoreServiceTask = defaultCheckCoreServiceTask,
 } = {}) {
   const findings = [];
 
@@ -348,6 +356,40 @@ export async function buildDoctorFindings({
               try {
                 ctx.runSchedulerScript('install-task.ps1');
                 return { ok: true, message: 'Auto-resume task installed.' };
+              } catch (error) {
+                return { ok: false, message: error.message };
+              }
+            },
+          },
+        }));
+
+    // Phase 12 M2.1: the Core Service's own logon task.
+    //
+    // Added because its absence is invisible until it matters. On 2026-07-28
+    // this machine rebooted, the operator console went silent, and every
+    // diagnostic available said the installation was healthy — `doctor`
+    // checked only the auto-resume task above, which was installed and which
+    // does a different job. A remote interface that cannot survive a reboot is
+    // a FAILURE, not a warning: being there when nobody is at the machine is
+    // the entire purpose of the daemon.
+    const service = checkCoreServiceTask();
+    findings.push(service.installed
+      ? okFinding('core-service-task', 'Core Service starts at logon', 'installed')
+      : failFinding('core-service-task', 'Core Service starts at logon',
+        'not installed — "daemon install"', {
+          cause: `No scheduled task named "${CORE_SERVICE_TASK_NAME}" is registered for this user.`,
+          impact:
+            'After a reboot nothing starts the Core Service, so Telegram commands, remote approvals, ' +
+            'scheduled missions and the desktop client all stay silent until someone runs "serve" by hand.',
+          fix: {
+            description: 'Install the Core Service logon task (it also restarts the service if it crashes).',
+            safe: true,
+            apply: async (ctx) => {
+              try {
+                ctx.runSchedulerScript('install-daemon-task.ps1');
+                return autostartState().installed
+                  ? { ok: true, message: 'Core Service logon task installed.' }
+                  : { ok: false, message: 'The script ran but the task was not registered. Retry from an elevated PowerShell.' };
               } catch (error) {
                 return { ok: false, message: error.message };
               }

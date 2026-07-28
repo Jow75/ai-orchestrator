@@ -134,6 +134,8 @@ prompt (same conversation) → … → mission complete." See
 | `init` | Guided first-run setup: project + phone, no JSON editing (see [docs/DAY_ONE.md](docs/DAY_ONE.md)) |
 | `serve` | Run the Core Service — the always-on daemon (Phase 12 M1) |
 | `daemon status/start/stop/install/uninstall` | Inspect and control the service; `daemon start <p>` runs projects **side by side** |
+| `daemon ensure` | Start the service only if it is not already running — safe to run on every login |
+| `ports get/reserve/release/list/check` | Assign and track localhost ports so projects never collide (Phase 12 M2.1) |
 | `operator "<message>"` | Run one operator command — what you would type on your phone (Phase 12 M2) |
 | `events` | Recent events from the durable log (what the system actually did) |
 | `start [project] [--fresh]` | Start or resume supervising a project |
@@ -154,7 +156,7 @@ prompt (same conversation) → … → mission complete." See
 | `api-token [--rotate]` | Show/rotate the dashboard API's mutating-endpoint token |
 | `projects list` / `projects add [--interactive]` | Manage project definitions |
 | `projects status [project]` | Full registry: status, worker, branch, latest commit, health (Phase 12 M2) |
-| `drivers` | List available AI engine drivers (`claude`, `cli`, `mock`) |
+| `drivers` | List available AI engine drivers (`claude`, `cli`, `mock` — `mock` is **simulated** and writes nothing) |
 | `scheduler install/uninstall/status` | Windows auto-resume task |
 | `doctor [--fix]` | Diagnose environment, config, and engine installation — `--fix` offers to repair what it finds |
 
@@ -189,7 +191,53 @@ duration, risks — for a second approval before any code is written. Destructiv
 commands (`/stop`, `/reset`, `/shutdown`) return a single-use code that expires,
 and only `/confirm <code>` performs them.
 
+`/service` reports whether the service is Running, Starting or Stopped — and
+whether it will still be running after the next reboot.
+
 Full guide: **[docs/OPERATOR_CONSOLE.md](docs/OPERATOR_CONSOLE.md)**.
+
+## Keeping the service resident
+
+The Core Service is what answers your phone, so it has to be there when nobody
+is at the machine. Run this once:
+
+```text
+ai-orchestrator daemon install     # start at logon; restart if it ever crashes
+```
+
+`doctor` **fails** if that task is missing, because a remote console that
+cannot survive a reboot is a broken installation, not a preference. To start it
+by hand at any time, `ai-orchestrator daemon ensure` (or double-click
+`START_SERVICE.bat`) — both are safe to run repeatedly and never start a second
+service.
+
+## Simulated projects
+
+A project on the `mock` driver **replays a scripted fixture and writes nothing**.
+It exists to exercise the approval flow without spending engine credits. Every
+surface says so — the project list, `/status`, both approval gates, and the
+Mission Card — because a mission that reports "complete, verified" after
+building nothing is indistinguishable from one that worked, unless something
+says otherwise. Set `"simulated": true` in a project config to declare it
+explicitly. Real work needs the `claude` driver.
+
+## Ports
+
+Projects on one machine collide on localhost ports because every framework
+scaffolds into the same few numbers. The registry hands out ports that are
+stable per project and verified free with the operating system:
+
+```text
+ai-orchestrator ports get my-app web        # prints the port; call it on every start
+ai-orchestrator ports reserve THE FINISHER 5173 --service web
+ai-orchestrator ports list                  # who has what, and what is actually listening
+ai-orchestrator ports check 4711            # who has this port?
+```
+
+Apps can ask at runtime instead: `GET /api/ports/:project/:service`. Ports are
+derived deterministically from the project and service name, so the answer is
+the same on every machine and every run — and availability is confirmed by
+binding the port, never by trusting the registry file.
 
 ## Extending
 
@@ -213,6 +261,7 @@ Full guide: **[docs/OPERATOR_CONSOLE.md](docs/OPERATOR_CONSOLE.md)**.
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | The by-hand route, step by step — useful to understand or fine-tune each piece |
 | [docs/CLI_GUIDE.md](docs/CLI_GUIDE.md) | Every command and flag, grouped by what you're trying to do |
 | [docs/OPERATOR_CONSOLE.md](docs/OPERATOR_CONSOLE.md) | Running your projects from your phone: the command grammar, mission requests, the two approval gates |
+| [docs/PHASE_12_M2.1_REPORT.md](docs/PHASE_12_M2.1_REPORT.md) | Keeping the service resident, why a simulated mission must say so, and the port registry |
 | [docs/](docs/) | More guides: Telegram setup, email setup, remote approvals, desktop, FAQ |
 | [INSTALL.md](INSTALL.md) | Installation, auto-start setup |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every setting, with defaults |

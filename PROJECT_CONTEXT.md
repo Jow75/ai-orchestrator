@@ -12,10 +12,58 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-27, after **Phase 12 M2 (Telegram Operator
-Interface), v2.9.0** — committed + tagged, NOT pushed.
+**Last updated:** 2026-07-28, after **Phase 12 M2.1 (Residency, Honesty,
+Ports), v2.10.0** — committed + tagged, NOT pushed.
 
-**Phase 12 is 2 of 4 done.** M1 made the daemon always present; **M2 makes it
+---
+
+## Where things stand right now (2026-07-28)
+
+**M2 was live-validated on the real machine and the real bot, and the console
+passed** — `/help` → `/projects` → `/project` → proposal → M-approval →
+A-approval → execution → completion all behaved as designed. The two-stage
+approval model is confirmed correct. **M2.1 is the response to what that run
+found.** Full report: `docs/PHASE_12_M2.1_REPORT.md`.
+
+Three things came out of it, and all three are now closed:
+
+1. **The service did not survive a reboot.** Not a crash — the
+   `AI-Orchestrator Core Service` logon task shipped in M1 and had *never been
+   installed*, and `doctor` checked only the unrelated auto-resume task, so
+   every diagnostic called the machine healthy while a phone got silence. Now:
+   `daemon ensure` (idempotent, never starts a second daemon),
+   `START_SERVICE.bat`, restart-on-failure on the task, `/service` +
+   `daemon status` reporting Running/Starting/Stopped **and** reboot survival,
+   and `doctor` **failing** when the task is missing. Task is installed on this
+   machine and verified in Task Scheduler.
+
+2. **A simulated mission reported itself as real work.** A `mock`-driver
+   project asked for a React/Electron calculator reported "complete, verified"
+   over an empty workspace. Nothing malfunctioned; nothing *disclosed*.
+   Simulation is now a first-class fact (`src/drivers/simulation.js`) disclosed
+   at every surface. Two sub-defects fell out of it, and **one affected real
+   missions**: the completion marker (the agent emitting `MISSION COMPLETE`)
+   was being counted as a passing *test*, producing "Tests: 1/1 · Verified" for
+   work nothing checked. Markers are now excluded from test counts and pass
+   rates everywhere.
+
+3. **The port registry** (`src/runtime/portRegistry.js`) — the architectural
+   request. Deterministic per `project:service`, availability confirmed by
+   binding rather than by trusting a file, reservations in `config/ports.json`
+   and allocations in `state/ports.json`. `ports get/reserve/release/list/check`
+   plus `GET /api/ports/:project/:service`.
+
+`m2-validation` is retired in favour of **`validation-sandbox`**, which says in
+its name, description, README and fixture text that it is simulated.
+
+**NEXT: Phase 12 M3 — Operator Control Center (desktop as daemon client),
+`v3.0.0`.** Note for M3: `projectRegistry.describe()` already carries
+`simulated` on every record, so the desktop gets the disclosure for free — it
+must render it.
+
+---
+
+**Phase 12 was 2 of 4 done at M2.** M1 made the daemon always present; **M2 makes it
 something you can operate from a phone**. The remote channel stopped being a
 place to reply `APPROVE A7` and became a console: `/projects` (a real registry
 the daemon owns — status, worker, branch, commit, health), `/project X` (a
@@ -225,13 +273,14 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 11 — Operator Experience (M1–M4: onboarding, phone/notifications, doctor/recovery, UX consistency) | ✅ done | `v2.7.0` |
 | Phase 12 M1 — AI-Orchestrator Core Service (daemon, worker supervision, exclusive remote channel) | ✅ done | `v2.8.0` |
 | Phase 12 M2 — Telegram Operator Interface (project registry, command grammar, event log, mission requests) | ✅ done | `v2.9.0` |
+| Phase 12 M2.1 — Residency, honesty, ports (from M2 live validation) | ✅ done | `v2.10.0` |
 | Phase 12 M3 — Operator Control Center (desktop as daemon client) | ⏳ next | `v3.0.0` |
 | Phase 12 M4 — Launch experience & remote project creation | ⏳ planned | `v3.1.0` |
 
-**Test suite (current, 2026-07-27):** 878/878 backend + 20/20 desktop —
-see the "Last updated" section above for what Phase 12 M2 added; the
-608/608 figure was the Phase 11 M4 snapshot and 436/436 below is this
-section's original Phase-10.5-era one.
+**Test suite (current, 2026-07-28):** 919/919 backend + 20/20 desktop —
+M2.1 added 33 (`serviceControl` 14, `portRegistry` 19) plus the simulation and
+marker regressions; the 608/608 figure was the Phase 11 M4 snapshot and
+436/436 below is this section's original Phase-10.5-era one.
 
 The user's master prompt arc (desktop app → multi-agent → autonomous
 project management) completed at Phase 10; the stated intent at the time

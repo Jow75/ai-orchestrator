@@ -28,6 +28,7 @@ import { gitBranch, gitHead, gitHeadSubject, gitDirty } from '../progress/progre
 import { isPidAlive } from '../state/heartbeat.js';
 import { readJsonSafe } from '../state/statePersistence.js';
 import { TaskState } from '../mission/taskState.js';
+import { isSimulatedProject } from '../drivers/simulation.js';
 
 /**
  * Every status a project can report, IN THE ORDER THE LIST SORTS BY — which
@@ -146,6 +147,10 @@ export class ProjectRegistry {
       record.path = project.workingDirectory;
       record.driver = project.driver;
       record.enabled = project.enabled !== false;
+      // Carried on EVERY record, not just where it is currently rendered: M3's
+      // desktop client reads this same registry, and a fact this important
+      // must not depend on each surface remembering to look up the driver.
+      record.simulated = isSimulatedProject(project);
     } catch (error) {
       // A project whose config is broken still EXISTS and must still be
       // listed — silently dropping it is how an operator ends up staring at a

@@ -107,6 +107,18 @@ export function resolvePaths(overrides = {}) {
   //    to. Deliberately under state/ and NEVER inside the user's repository —
   //    a message typed on a phone must not create an untracked file in a
   //    project the owner is about to commit.
+  // Phase 12 M2.1: the port registry (see src/runtime/portRegistry.js). Split
+  // across config and state on purpose, and the split is the design:
+  //  - portsFile (config): PERMANENT reservations. A human decided THE FINISHER
+  //    lives on 5173 because something outside this machine expects it there.
+  //    Hand-editable, and safe to commit.
+  //  - portAllocationsFile (state): dynamic allocations. Machine-owned, derived,
+  //    and safe to delete — the deterministic hash regenerates the same ports.
+  resolved.portsFile = path.resolve(
+    root, overrides.portsFile ?? path.join(resolved.configDir, 'ports.json')
+  );
+  resolved.portAllocationsFile = path.join(resolved.stateDir, 'ports.json');
+
   resolved.eventsDir = path.join(resolved.stateDir, 'events');
   resolved.operatorDir = path.join(resolved.stateDir, 'operator');
   resolved.operatorContextFile = path.join(resolved.operatorDir, 'context.json');

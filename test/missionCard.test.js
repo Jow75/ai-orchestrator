@@ -78,6 +78,90 @@ test('confidence is "partial" when some verifiers failed, "unverified" when none
   assert.equal(unverified.tests, undefined);
 });
 
+// ─────────────────────── the completion marker is not a test ────────────────
+//
+// Regression for the 2026-07-28 live validation. A mock-driver mission that
+// wrote nothing came back as "Tests: 1/1 passed · Confidence: Verified". Its
+// only verifier result was the `marker` fallback — the agent's own claim that
+// it had finished. A claim is not a check.
+
+test('the completion marker is not counted as a passing test', () => {
+  const card = buildMissionCard({
+    project: 'p',
+    queue: {
+      tasks: [{
+        state: 'done',
+        checkpoint: {
+          filesTouched: [], filesDeleted: [],
+          verify: { passed: true, results: [{ type: 'marker', passed: true, detail: 'Completion marker found' }] },
+        },
+      }],
+    },
+  });
+  assert.equal(card.tests, undefined, 'a marker produces no test count at all');
+  assert.equal(card.confidence, 'unverified',
+    'a task whose only "result" was the agent announcing success is unverified');
+});
+
+test('real verifiers still count when a marker sits alongside them', () => {
+  const card = buildMissionCard({
+    project: 'p',
+    queue: {
+      tasks: [{
+        state: 'done',
+        checkpoint: {
+          filesTouched: ['a.js'],
+          verify: {
+            passed: true,
+            results: [
+              { type: 'marker', passed: true },
+              { type: 'command', passed: true },
+              { type: 'file-exists', passed: true },
+            ],
+          },
+        },
+      }],
+    },
+  });
+  assert.deepEqual(card.tests, { passed: 2, total: 2 }, 'the marker is excluded, the two real checks are not');
+  assert.equal(card.confidence, 'verified');
+});
+
+test('a completed mission that touched no file says so', () => {
+  const card = buildMissionCard({
+    project: 'p',
+    status: 'complete',
+    queue: { tasks: [{ state: 'done', checkpoint: { filesTouched: [], filesDeleted: [], verify: null } }] },
+  });
+  assert.equal(card.noFilesChanged, true);
+  assert.match(renderMissionCardText(card), /completed without writing anything/);
+
+  const wrote = buildMissionCard({
+    project: 'p',
+    status: 'complete',
+    queue: { tasks: [{ state: 'done', checkpoint: { filesTouched: ['a.js'], verify: null } }] },
+  });
+  assert.equal(wrote.noFilesChanged, undefined);
+});
+
+test('a simulated mission is disclosed above its status line', () => {
+  const card = buildMissionCard({ project: 'p', status: 'complete', simulated: true });
+  assert.equal(card.simulated, true);
+
+  const text = renderMissionCardText(card);
+  assert.match(text, /Simulated project/);
+  assert.ok(
+    text.indexOf('Simulated project') < text.indexOf('Status:'),
+    'a notification preview shows the first line — "complete" must not travel alone'
+  );
+
+  assert.doesNotMatch(
+    renderMissionCardText(buildMissionCard({ project: 'p', status: 'complete' })),
+    /Simulated/,
+    'a real mission carries no notice'
+  );
+});
+
 test('a task with no checkpoint yet (still pending) is counted but contributes nothing else', () => {
   const card = buildMissionCard({
     project: 'p',

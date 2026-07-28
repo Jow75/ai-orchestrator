@@ -1,0 +1,18 @@
+{
+  "$comment": "Example permanent port reservations (Phase 12 M2.1). Copy to config/ports.json — or just use `ai-orchestrator ports reserve <project> <port> --service <name>`, which writes this file for you. A reservation means: something OUTSIDE this machine expects to find a service at this address, so it must not move. Everything else should be left to automatic allocation, which derives a stable port from the project and service name and confirms it is free by binding it. Dynamic allocations live in state/ports.json and are machine-owned — never put them here. See CONFIGURATION.md 'Port registry'.",
+
+  "reservations": [
+    {
+      "project": "THE FINISHER",
+      "service": "web",
+      "port": 5173,
+      "note": "stable endpoint expected by external callers"
+    },
+    {
+      "project": "AI-Orchestrator",
+      "service": "api",
+      "port": 4711,
+      "note": "Core Service API; must match api.port in config/orchestrator.json"
+    }
+  ]
+}

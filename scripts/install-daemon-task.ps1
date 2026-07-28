@@ -23,10 +23,18 @@
 
     Installing both is the normal configuration for an always-on machine.
 
-    Note the deliberate absence of -RestartCount: the service's own record
-    (state/daemon.json) is what makes a restart safe, and Task Scheduler
-    restarting a service that is deliberately stopped would fight the
-    operator. Use `ai-orchestrator serve` to start it again by hand.
+    RESTART ON FAILURE. The task restarts the service if it dies unexpectedly,
+    but never if it was stopped on purpose. That distinction is carried by the
+    process exit code, not by a flag:
+
+        exit 0    SIGINT/SIGTERM, or `daemon stop`   -> deliberate, no restart
+        exit 1    uncaught exception / rejection     -> a crash, restart it
+
+    Task Scheduler's -RestartCount applies only when a task FAILS, so a clean
+    shutdown is left alone and `ai-orchestrator daemon stop` does not turn into
+    a fight with the scheduler. (An earlier revision of this script omitted
+    restart entirely for fear of exactly that fight; the exit-code contract is
+    what makes it safe, and daemon.js has honoured it since M1.)
 
 .PARAMETER InstallRoot
     AI-Orchestrator installation directory (contains bin/ai-orchestrator.js).
@@ -76,11 +84,21 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 # Let networking settle before the Telegram long-poll makes its first call.
 $trigger.Delay = 'PT30S'
 
+# ExecutionTimeLimit Zero: a service runs until stopped, never on a timer.
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
-    -ExecutionTimeLimit ([TimeSpan]::Zero)   # a service has no time limit
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -RestartCount 3 `
+    -RestartInterval (New-TimeSpan -Minutes 1)
+
+# MultipleInstances=IgnoreNew: if the service is somehow already running when
+# the trigger fires, do NOT start a second one. Two daemons both claim the
+# Telegram long-poll, and getUpdates hands each message to exactly one caller —
+# the symptom is a console that answers every other message. The daemon's own
+# record refuses a second instance too; this makes the scheduler agree.
+$settings.MultipleInstances = 'IgnoreNew'
 
 # Replace any previous version of the task.
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue

@@ -22,11 +22,12 @@
 import { isLegacyMission, validateSingleTask } from '../mission/missionPlan.js';
 import { TaskState } from '../mission/taskState.js';
 import { approvalEventFor } from '../events/eventTypes.js';
+import { isEvidenceVerifier } from '../notifications/missionCard.js';
 import { parseCommand } from './commandGrammar.js';
 import {
   renderProjectList, renderProjectDetail, renderTasks, renderApprovals,
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
-  renderHelp, truncate,
+  renderHelp, renderServiceStatus, truncate,
 } from './render.js';
 
 /** How many events `/events` returns when no count is given. */
@@ -57,7 +58,7 @@ export class CommandRouter {
   constructor({
     registry, context, requests, confirmations, events, approvalStore, approvalManager,
     supervisor, taskQueue, sessionManager, ledger, configManager, config,
-    requestShutdown, logger,
+    requestShutdown, serviceReport, logger,
   }) {
     this.registry = registry;
     this.context = context;
@@ -73,6 +74,7 @@ export class CommandRouter {
     this.configManager = configManager;
     this.config = config ?? {};
     this.requestShutdown = requestShutdown;
+    this.serviceReport = serviceReport;
     this.logger = logger;
   }
 
@@ -369,6 +371,7 @@ export class CommandRouter {
       case 'tasks': return this.commandTasks(rest, ctx);
       case 'approvals': return this.commandApprovals();
       case 'missions': return this.commandMissions(ctx);
+      case 'service': return await this.commandService();
       case 'events': return this.commandEvents(rest, ctx);
       case 'confirm': return await this.commandConfirm(rest, ctx);
       case 'cancel': return this.commandCancel(rest, ctx);
@@ -458,6 +461,22 @@ export class CommandRouter {
         ? `No mission requests are waiting.\nType what you want done to ${active} and it becomes one.`
         : 'No mission requests are waiting. Select a project first: /project <name>',
     };
+  }
+
+  /**
+   * `/service` — "is it running, and will it still be running tomorrow?"
+   *
+   * The first half is answered by the fact that this reply exists at all: a
+   * message only reaches the router through a live service. The second half is
+   * the one worth asking remotely, and the one nothing reported before M2.1 —
+   * after the 2026-07-28 reboot the console was silent, and no command on the
+   * phone could have explained why.
+   */
+  async commandService() {
+    if (!this.serviceReport) {
+      return { reply: 'This interface cannot see the service record from here.' };
+    }
+    return { reply: renderServiceStatus(await this.serviceReport()) };
   }
 
   commandEvents(rest, ctx) {
@@ -656,6 +675,9 @@ export class CommandRouter {
       dirty: record.git?.dirty ?? null,
       commit: record.git?.commit ?? null,
       queuedTasks: queue ? Math.max(0, queue.tasks.length - queue.currentIndex) : 0,
+      // The single most important thing to know BEFORE approving: whether
+      // approving this can produce anything at all.
+      simulated: record.simulated === true,
     };
     const history = this.historyFor(projectName);
     if (history) context.history = history;
@@ -676,7 +698,10 @@ export class CommandRouter {
     let passed = 0;
     let total = 0;
     for (const task of queue?.tasks ?? []) {
-      for (const result of task.checkpoint?.verify?.results ?? []) {
+      // Completion markers are excluded for the same reason Mission Cards
+      // exclude them: a run whose only "verifier" was the agent announcing its
+      // own success would otherwise report a 100% pass rate forever.
+      for (const result of (task.checkpoint?.verify?.results ?? []).filter(isEvidenceVerifier)) {
         total += 1;
         if (result.passed) passed += 1;
       }

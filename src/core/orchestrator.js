@@ -54,6 +54,7 @@ import { selectAgent } from '../agents/agentRouter.js';
 import { effectiveApprovalConfig } from '../approvals/approvalPolicy.js';
 import { buildImplementationSummary } from '../approvals/implementationSummary.js';
 import { buildMissionCard } from '../notifications/missionCard.js';
+import { isSimulatedProject } from '../drivers/simulation.js';
 import { userFacingError } from '../infra/errors.js';
 
 /**
@@ -316,6 +317,7 @@ export class Orchestrator extends EventEmitter {
         card: buildMissionCard({
           project: project.name, session, queue: this.taskQueueState,
           status: 'complete', reason, workingDirectory: project.workingDirectory,
+          simulated: isSimulatedProject(project),
         }),
       });
       return { complete: true, session, reason };
@@ -607,6 +609,7 @@ export class Orchestrator extends EventEmitter {
             card: buildMissionCard({
               project: project.name, session, status: 'complete',
               reason: 'completion marker found', workingDirectory: project.workingDirectory,
+              simulated: isSimulatedProject(project),
             }),
           });
           return {
@@ -845,6 +848,7 @@ export class Orchestrator extends EventEmitter {
           card: buildMissionCard({
             project: project.name, session, queue, status: 'complete',
             reason, workingDirectory: project.workingDirectory,
+            simulated: isSimulatedProject(project),
           }),
         });
         return { done: true, result: { complete: true, session, reason } };
@@ -1178,6 +1182,7 @@ export class Orchestrator extends EventEmitter {
       planText: finalText,
       queue: this.taskQueueState,
       averageRunMs: this.averageRunMs(project.name),
+      simulated: isSimulatedProject(project),
     });
     const { approved, request } = await this.approvalManager.requestImplementationReview({
       project: project.name, summary, taskId, projectConfig: project,
@@ -1359,6 +1364,7 @@ export class Orchestrator extends EventEmitter {
         queue: this.missionMode ? this.taskQueueState : undefined,
         status: 'blocked', reason, operatorAction: hint,
         workingDirectory: project.workingDirectory,
+        simulated: isSimulatedProject(project),
       }),
     });
     return {

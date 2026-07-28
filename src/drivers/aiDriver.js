@@ -104,6 +104,18 @@ export class AIDriver {
     /** @type {string} Human-readable engine name. */
     this.name = 'Abstract AI Driver';
     /**
+     * Does this driver only PRETEND to work? False for every driver that
+     * runs a real engine against a real working directory.
+     *
+     * Declared on the base class so a plugin driver can opt in without
+     * editing the built-in list in drivers/simulation.js, and so that every
+     * surface has one question to ask. A driver that simulates work and does
+     * not say so will be reported to the owner as if it had built something —
+     * see simulation.js for the incident that made this a first-class field.
+     * @type {boolean}
+     */
+    this.simulated = false;
+    /**
      * Engine-specific output patterns consumed by the exit classifier.
      * @type {{ usageLimit: RegExp[], network: RegExp[] }}
      */

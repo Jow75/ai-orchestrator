@@ -86,6 +86,10 @@ import { buildStartupBanner, renderStartupBanner } from './banner.js';
 import { outcomeIcon, checkMark } from '../shared/vocabulary.js';
 import Daemon, { DAEMON_STOP_FILENAME } from '../daemon/daemon.js';
 import DaemonClient from '../daemon/daemonClient.js';
+import {
+  describeService, ensureRunning, autostartState, CORE_SERVICE_TASK_NAME,
+} from '../daemon/serviceControl.js';
+import PortRegistry from '../runtime/portRegistry.js';
 import WorkerRegistry from '../daemon/workerRegistry.js';
 // Phase 12 M2 surfaces.
 import EventStore from '../events/eventStore.js';
@@ -101,6 +105,26 @@ function readOnlyContext() {
     logger: silentLogger,
   });
   return { configManager, paths, sessionManager };
+}
+
+/**
+ * Phase 12 M2.1: the port registry.
+ *
+ * Deliberately built LOCALLY rather than reached through the daemon. A dev
+ * script asking "which port do I use?" must get an answer whether or not the
+ * Core Service happens to be running — a port broker that only works when
+ * another service is up has moved the dependency problem rather than solved it.
+ */
+function buildPortRegistry() {
+  const configManager = new ConfigManager();
+  configManager.load();
+  const paths = configManager.getPaths();
+  return new PortRegistry({
+    reservationsFile: paths.portsFile,
+    allocationsFile: paths.portAllocationsFile,
+    range: configManager.getAll().ports?.range,
+    logger: silentLogger,
+  });
 }
 
 /** Phase 12 M1: a client for the Core Service, using the same resolved paths. */
@@ -378,12 +402,57 @@ export function buildProgram() {
     .action(async () => {
       try {
         const client = buildDaemonClient();
+        // Always lead with Running/Starting/Stopped and whether it survives a
+        // reboot. Before M2.1 a stopped service printed one yellow line and
+        // said nothing about autostart — which is how a machine can sit for a
+        // day with a service that never comes back and never says why.
+        const service = await describeService({ client });
+        printServiceState(service);
+        if (service.state !== 'running') return;
+
         const result = await client.status();
         if (!result.ok) {
           console.log(chalk.yellow(result.reason));
           return;
         }
         printDaemonStatus(result.report);
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  daemonCmd
+    .command('ensure')
+    .description('Start the Core Service if it is not already running (safe to run repeatedly)')
+    .option('--no-wait', 'return as soon as it is launched, without waiting for it to answer')
+    .action(async (options) => {
+      try {
+        const client = buildDaemonClient();
+        const result = await ensureRunning({ client, wait: options.wait !== false });
+
+        if (!result.ok) {
+          console.error(chalk.red(result.reason ?? 'The Core Service could not be started.'));
+          process.exitCode = 1;
+          return;
+        }
+        if (!result.started) {
+          console.log(chalk.green(`The Core Service is already ${result.state} (pid ${result.pid}).`));
+        } else if (result.state === 'running') {
+          console.log(chalk.green(`Core Service started (pid ${result.pid}).`));
+        } else {
+          console.log(`Core Service launched; it is still coming up.`);
+        }
+
+        // Being up is only half the requirement. A service that will not
+        // return after a reboot is the exact condition that made the operator
+        // console silent on 2026-07-28, so say so every time.
+        const autostart = autostartState();
+        if (autostart.supported && !autostart.installed) {
+          console.log(chalk.yellow(
+            '\nIt will NOT start again by itself after a reboot.\n' +
+            'Fix that once with: ai-orchestrator daemon install'
+          ));
+        }
       } catch (error) {
         fail(error);
       }
@@ -464,10 +533,34 @@ export function buildProgram() {
   daemonCmd
     .command('install')
     .description('Start the Core Service automatically when you log in to Windows')
-    .action(() => {
+    .option('--start-now', 'also start the service immediately, rather than waiting for the next logon')
+    .action(async (options) => {
       try {
         runSchedulerScript('install-daemon-task.ps1');
+
+        // Verify rather than announce. `runSchedulerScript` reports the script
+        // exited zero; only Task Scheduler can confirm the task actually
+        // exists, and "installed" is exactly the claim that was believed but
+        // never true on this machine before 2026-07-28.
+        const autostart = autostartState();
+        if (autostart.supported && !autostart.installed) {
+          console.error(chalk.red(
+            `The install script ran but no scheduled task named "${CORE_SERVICE_TASK_NAME}" exists.\n` +
+            'Check the output above, then retry from an elevated PowerShell if it mentions permissions.'
+          ));
+          process.exitCode = 1;
+          return;
+        }
         console.log(chalk.green('The Core Service will now start automatically when you log in.'));
+        console.log(chalk.dim('It also restarts itself (up to 3 times, a minute apart) if it ever crashes.'));
+
+        if (options.startNow) {
+          const client = buildDaemonClient();
+          const result = await ensureRunning({ client });
+          console.log(result.ok
+            ? chalk.green(`Core Service ${result.started ? 'started' : 'already running'} (pid ${result.pid}).`)
+            : chalk.red(result.reason));
+        }
       } catch (error) {
         fail(error);
       }
@@ -480,6 +573,141 @@ export function buildProgram() {
       try {
         runSchedulerScript('uninstall-daemon-task.ps1');
         console.log('The Core Service will no longer start automatically.');
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  // ── Phase 12 M2.1: the port registry ────────────────────────────────────
+
+  const portsCmd = program
+    .command('ports')
+    .description('Assign and track localhost ports so projects on this machine never collide');
+
+  portsCmd
+    .command('list')
+    .alias('ls')
+    .description('Every registered port, with what the operating system says about it')
+    .action(async () => {
+      try {
+        const report = await buildPortRegistry().report();
+        if (!report.length) {
+          console.log('No ports are registered yet.');
+          console.log(chalk.dim('  Assign one with: ai-orchestrator ports get <project> [service]'));
+          return;
+        }
+        console.log(chalk.bold('\nPort registry'));
+        for (const entry of report) {
+          const kind = entry.kind === 'reserved' ? chalk.cyan('reserved ') : chalk.dim('allocated');
+          const live = entry.status === 'in-use' ? chalk.green('● in use') : chalk.dim('○ free');
+          console.log(`  ${chalk.bold(String(entry.port).padEnd(6))} ${kind}  ${live}  ${entry.project}/${entry.service}`);
+          if (entry.note) console.log(chalk.dim(`         ${entry.note}`));
+        }
+        console.log();
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  portsCmd
+    .command('get')
+    .argument('<project>')
+    .argument('[service]', 'e.g. web, api, devserver', 'default')
+    .option('--preferred <port>', 'try this port first', Number)
+    .description("The port this service should use — assigning one if it has none (safe to call on every start)")
+    .action(async (project, service, options) => {
+      try {
+        const result = await buildPortRegistry().acquire({
+          project, service, preferred: options.preferred,
+        });
+        if (!result.ok) {
+          console.error(chalk.red(result.reason));
+          process.exitCode = 1;
+          return;
+        }
+        // Bare number on stdout: this is the machine-readable path a dev
+        // script consumes (`for /f %i in ('... ports get app web') do ...`).
+        console.log(result.port);
+        if (result.moved) {
+          console.error(chalk.yellow(
+            `Moved from ${result.previousPort} — something else is listening there now.`
+          ));
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  portsCmd
+    .command('reserve')
+    .argument('<project>')
+    .argument('<port>', 'the port to hold permanently', Number)
+    .option('--service <name>', 'which service of the project', 'default')
+    .option('--note <text>', 'why this port specifically')
+    .option('--force', "move this project's existing reservation")
+    .description('Permanently hold a port for a project whose endpoint must not move')
+    .action(async (project, port, options) => {
+      try {
+        const result = await buildPortRegistry().reserve({
+          project, service: options.service, port, note: options.note, force: options.force === true,
+        });
+        if (!result.ok) {
+          console.error(chalk.red(result.reason));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(chalk.green(`Port ${port} reserved for ${project}/${options.service}.`));
+        if (result.occupiedByOther) {
+          // Reserved successfully, but it will not bind today. Saying so now
+          // beats an EADDRINUSE at the next start that names no culprit.
+          console.log(chalk.yellow(
+            `Note: something is already listening on ${port}. The reservation holds the number, ` +
+            'but that process must stop before this project can bind it.'
+          ));
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  portsCmd
+    .command('release')
+    .argument('<project>')
+    .option('--service <name>', 'which service of the project', 'default')
+    .option('--include-reserved', 'also drop a permanent reservation')
+    .description('Give a port back to the pool')
+    .action((project, options) => {
+      try {
+        const result = buildPortRegistry().release({
+          project, service: options.service, includeReserved: options.includeReserved === true,
+        });
+        console.log(result.ok
+          ? chalk.green(`Released ${project}/${options.service}.`)
+          : `Nothing to release for ${project}/${options.service}` +
+            (options.includeReserved ? '.' : ' (it may be reserved — pass --include-reserved).'));
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  portsCmd
+    .command('check')
+    .argument('<port>', 'the port to look up', Number)
+    .description('Who has this port, and is anything actually listening on it?')
+    .action(async (port) => {
+      try {
+        const result = await buildPortRegistry().inspect(port);
+        console.log(chalk.bold(`\nPort ${result.port}`));
+        console.log(`  Listening:  ${result.free ? chalk.dim('nothing') : chalk.green('yes')}`);
+        console.log(`  Registered: ${result.holder
+          ? `${result.holder.project}/${result.holder.service} (${result.holder.kind})`
+          : chalk.dim('not in the registry')}`);
+        if (result.conflict) {
+          console.log(chalk.red(
+            `\n  Conflict: ${result.holder.project} has this port, but another process is on it.`
+          ));
+        }
+        console.log();
       } catch (error) {
         fail(error);
       }
@@ -2065,6 +2293,30 @@ function printSession(session, label) {
     `rate limits ${session.rateLimits}` +
     (session.lastActivity ? chalk.dim(` — ${session.lastActivity}`) : '')
   );
+}
+
+/**
+ * Phase 12 M2.1: the two facts that decide whether a phone gets an answer —
+ * is the service up right now, and will it be up after the next reboot.
+ *
+ * Printed BEFORE the detailed report, and printed even when the service is
+ * down (when the detailed report does not exist). The reboot line is the one
+ * that matters: a running service with no autostart looks perfectly healthy
+ * right up until the machine restarts.
+ */
+export function printServiceState(service) {
+  const colour = { running: chalk.green, starting: chalk.yellow, stopped: chalk.red }[service.state];
+  console.log(chalk.bold('\nAI-Orchestrator Core Service'));
+  console.log(`  Service:      ${service.icon} ${colour(service.label)}`);
+  if (service.pid) console.log(`  Process:      pid ${service.pid}${service.port ? `, port ${service.port}` : ''}`);
+  if (service.state !== 'running') console.log(`  ${chalk.dim(service.detail)}`);
+
+  if (service.autostart.supported) {
+    console.log(`  After reboot: ${service.autostart.installed
+      ? chalk.green('starts automatically')
+      : chalk.yellow('does NOT start — remote control stays silent until started by hand')}`);
+  }
+  if (service.remedy) console.log(chalk.yellow(`\n  → ${service.remedy}`));
 }
 
 /**

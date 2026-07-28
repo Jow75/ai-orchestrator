@@ -3,6 +3,145 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.10.0] — 2026-07-28 — Phase 12 M2.1: Residency, Honesty, and Ports
+
+Driven entirely by the M2 live-validation report. The operator console itself
+passed — the full workflow (`/help` → `/projects` → `/project` → proposal →
+M-series approval → A-series approval → execution → completion) behaved as
+designed. Two defects and one architectural request came out of it, and this
+release is those three things.
+
+**THE PHASE 12 INVARIANT still holds:** with no daemon running and no operator
+configuration, a standalone `ai-orchestrator start` behaves exactly as in
+`v2.7.0`. Nothing in this release is reachable without the Core Service except
+the port registry, which is deliberately usable standalone.
+
+### Fixed
+
+- **The Core Service did not survive a reboot** (validation Bug 1). After a
+  Windows restart the operator console was silent: `/projects` went into a
+  void until someone ran `serve` by hand at the machine.
+
+  The cause was not a crash. `daemon install` had shipped in M1 and had never
+  been run, `doctor` checked only the *auto-resume* task (a different job), and
+  no surface could report the difference. The remedy is layered, because one
+  layer was exactly what failed:
+
+  - `daemon ensure` — starts the service only if it is not already running or
+    starting. Idempotent, so it is safe on every login, in a launcher, or in a
+    script. It never starts a second daemon: two of them both claim the
+    Telegram long-poll, and `getUpdates` gives each message to exactly one
+    caller, so the symptom is a console that answers every other message.
+  - `START_SERVICE.bat` — the double-click launcher for anyone who prefers
+    manual startup.
+  - **Restart on failure** in `install-daemon-task.ps1` (3 attempts, one minute
+    apart) plus `MultipleInstances=IgnoreNew`. A crash is restarted; a
+    deliberate stop is not. The distinction is carried by the exit code the
+    daemon has always used — `0` for a signal or `daemon stop`, `1` for an
+    uncaught exception — so the scheduler and `daemon stop` cannot fight.
+  - `/service` on the phone, and a new header on `daemon status`, reporting
+    **Running / Starting / Stopped** *and* whether the service survives a
+    reboot. "Starting" is a real state: between claiming `state/daemon.json`
+    and answering HTTP, the service is neither stopped nor usable.
+  - **`doctor` now fails** — not warns — when the Core Service logon task is
+    missing. A remote interface that cannot survive a reboot is a broken
+    installation, and on 2026-07-28 every available diagnostic called this
+    machine healthy.
+
+- **A simulated mission reported itself as real work** (validation Bug 2). A
+  project on the `mock` driver was asked for a React and Electron calculator
+  and reported the mission complete, tests passed, verified. The workspace
+  contained only the README it started with.
+
+  Nothing had malfunctioned — the mock driver replayed its fixture exactly as
+  configured, and every layer above reported what it was told. The defect was
+  that **no surface disclosed that the engine was a fixture**. Simulation is
+  now a fact the whole system carries (`src/drivers/simulation.js`) and every
+  operator surface discloses it: the project list badge, `/status`, the mission
+  proposal (gate 1), the implementation-plan approval (gate 2), and the Mission
+  Card — where the notice sits *above* the status line, because a phone
+  notification preview shows the first line and "Mission complete" must not
+  travel alone.
+
+- **The completion marker was being counted as a passing test.** Independent of
+  the mock driver, and the reason the card above said "Tests: 1/1 passed ·
+  Confidence: Verified" for a mission that wrote nothing. A task with no
+  verifiers of its own falls back to the mission completion marker, which
+  records exactly one fact: the agent emitted `MISSION COMPLETE`. That is the
+  agent grading its own homework. Markers are now excluded from both the
+  Mission Card's test count and the operator console's verifier pass rate; a
+  marker-only task is `unverified`, which is what it always was. **This
+  affected real missions, not only simulated ones.**
+
+- **A completed mission that changed no files now says so** on its Mission
+  Card. It is the shared signature of both failure modes this card has actually
+  produced: a simulated engine, and a real engine answering without write
+  permission (the 2026-07-04 incident). Neither is visible from "Tasks: 1/1".
+
+- **Port probing missed loopback-bound services.** Found while live-validating
+  the new port registry: `ports check 4711` reported "nothing listening" while
+  this project's own API was serving on it. Binding `0.0.0.0` succeeds on
+  Windows while another process holds `127.0.0.1:<port>`, and loopback is the
+  *default* for dev servers (Vite, Next, this API). The probe now requires both
+  addresses to bind before calling a port free.
+
+### Added
+
+- **The port registry** (`src/runtime/portRegistry.js`) — the architectural
+  request. One machine, many projects, no collisions:
+
+  | Command | What it does |
+  | --- | --- |
+  | `ports get <project> [service]` | The port this service should use, assigning one if needed. Idempotent — call it on every start. Prints a bare number for scripts. |
+  | `ports reserve <project> <port>` | Permanently hold a port whose endpoint must not move |
+  | `ports release <project>` | Give a port back |
+  | `ports list` | Every registered port, with what the OS says about it |
+  | `ports check <port>` | Who has this port, and is anything actually on it? |
+
+  Three ideas, in order of importance:
+
+  1. **The OS is the authority on "in use", not the registry file.** Ports are
+     tested by binding them. A registry answering from its own records would
+     hand out a port Docker or a stale node process already holds, and be
+     confidently wrong exactly when it matters. The registry records *intent*;
+     the kernel reports *reality*; an allocation requires both.
+  2. **Stable without bookkeeping.** A port is derived deterministically from
+     `project:service` (FNV-1a, modulo the range), so the same service gets the
+     same port on every machine and every run — before anything is written
+     down, and again after the state file is deleted. Linear probing resolves
+     collisions.
+  3. **Reservations are a human decision; allocations are not.** THE FINISHER
+     needs 5173 because something outside the machine expects it there — that
+     lives in `config/ports.json`, hand-editable and committable. Dynamic
+     allocations are machine-owned and live in `state/ports.json`.
+
+  Allocation draws from `5200–5899` by default: above the ports frameworks
+  scaffold into (3000, 4200, 5173, 8080) and below the ephemeral range Windows
+  assigns outbound sockets from (49152+), where a port probes free and is
+  stolen minutes later.
+
+- **`GET /api/ports` and `GET /api/ports/:project/:service`** — the runtime
+  integration point, so an Electron main process or a Vite config asks the
+  service which port it owns instead of hard-coding one. Unauthenticated on
+  purpose: the API is loopback-only, and a dev server that must first find a
+  token to learn its own port will hard-code the port instead.
+
+- **`daemon install --start-now`**, and `daemon install` now *verifies* the
+  task was registered rather than trusting the script's exit code — "installed"
+  is precisely the claim that was believed and untrue on this machine.
+
+### Changed
+
+- `m2-validation` is retired and replaced by **`validation-sandbox`**, whose
+  name, description, README, and fixture text all state that it is simulated
+  and writes nothing. The old name said what the project was *for*, not what it
+  *does*, and that ambiguity is what turned a working fixture into a bug
+  report. Its historical state under `state/` is left intact as the record.
+
+- `config/projects/*.json` accepts an explicit `"simulated": true`, which
+  overrides driver-based detection in both directions — a plugin driver can
+  declare itself simulated, and a real driver is never mislabelled.
+
 ## [2.9.0] — 2026-07-27 — Phase 12 M2: Telegram Operator Interface
 
 The second milestone of Phase 12. M1 made the daemon always present; M2 makes

@@ -96,6 +96,12 @@ export const COMMANDS = Object.freeze([
     description: 'Mission requests you have raised and not yet answered.',
   },
   {
+    name: 'service',
+    aliases: ['daemon', 'uptime'],
+    usage: '/service',
+    description: 'Is the service running, and will it survive a reboot?',
+  },
+  {
     name: 'events',
     aliases: ['log', 'activity'],
     usage: '/events [count]',

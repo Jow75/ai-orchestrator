@@ -17,6 +17,8 @@
  * duration). Pure logic, no I/O.
  */
 
+import { SIMULATION_NOTICE } from '../drivers/simulation.js';
+
 /** Cap list sections so a phone notification stays readable. */
 const MAX_ITEMS = 8;
 
@@ -39,9 +41,15 @@ const LIST_ITEM = /^\s*(?:[-*•]|\d+[.)])\s+(.*)$/;
  * @param {string} params.planText - The agent's final output containing the plan.
  * @param {object} [params.queue] - The persisted task queue (adds remaining plan).
  * @param {number} [params.averageRunMs] - Ledger-derived average run duration.
+ * @param {boolean} [params.simulated] - True when the plan came from a scripted
+ *   fixture rather than a real engine. The heuristics below cannot tell the
+ *   difference — a canned plan parses exactly like an earned one — so the fact
+ *   has to be carried in, and disclosed at the gate where it is approved.
  * @returns {object} The summary (see fields below).
  */
-export function buildImplementationSummary({ project, planText, queue, averageRunMs }) {
+export function buildImplementationSummary({
+  project, planText, queue, averageRunMs, simulated = false,
+}) {
   const text = planText ?? '';
   const lines = text.split('\n');
 
@@ -79,6 +87,7 @@ export function buildImplementationSummary({ project, planText, queue, averageRu
 
   return {
     project,
+    simulated,
     objective: truncate(objective, 200),
     estimatedDuration,
     estimatedFilesChanged,
@@ -96,11 +105,17 @@ export function buildImplementationSummary({ project, planText, queue, averageRu
  * @returns {string}
  */
 export function renderImplementationSummary(summary) {
-  const parts = [
+  const parts = [];
+  if (summary.simulated) {
+    // Above the objective: the estimates below are fiction, and an owner who
+    // reads only the first line should learn that rather than the estimates.
+    parts.push(`🧪 ${SIMULATION_NOTICE}`, '');
+  }
+  parts.push(
     `Objective: ${summary.objective}`,
     `Estimated duration: ${summary.estimatedDuration}`,
-    `Estimated files changed: ${summary.estimatedFilesChanged}`,
-  ];
+    `Estimated files changed: ${summary.estimatedFilesChanged}`
+  );
   if (summary.tasks.length) {
     parts.push('', 'Tasks:', ...summary.tasks.map((t) => `  • ${t}`));
   }
