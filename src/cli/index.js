@@ -52,6 +52,11 @@ import { validateSingleTask } from '../mission/missionPlan.js';
 import MemoryStore from '../memory/memoryStore.js';
 import { loadOrCreateToken } from '../api/apiAuth.js';
 import DriverRegistry from '../drivers/driverRegistry.js';
+import {
+  isSimulatedProject, SIMULATION_BADGE, SIMULATION_NOTICE,
+} from '../drivers/simulation.js';
+import TelegramApprovalProvider from '../approvals/providers/telegramProvider.js';
+import { buildCommandMenu, menusMatch } from '../operator/commandMenu.js';
 import AgentRegistry from '../agents/agentRegistry.js';
 import AgentHealth from '../agents/agentHealth.js';
 import { readJsonSafe } from '../state/statePersistence.js';
@@ -1228,7 +1233,16 @@ export function buildProgram() {
         for (const name of names) {
           const session = sessionManager.getActiveSession(name);
           const marker = session ? chalk.green(` [active: ${session.state}]`) : '';
-          console.log(`  ${chalk.bold(name)}${marker}`);
+          // Cheap enough to answer here: this listing already reads nothing but
+          // names, and a name is exactly where a fixture project hides.
+          let simulated = false;
+          try {
+            simulated = isSimulatedProject(configManager.getProject(name));
+          } catch {
+            // A broken config is not a simulated one; `projects status` reports it.
+          }
+          const badge = simulated ? `  ${chalk.yellow(SIMULATION_BADGE)}` : '';
+          console.log(`  ${chalk.bold(name)}${badge}${marker}`);
         }
       } catch (error) {
         fail(error);
@@ -1407,6 +1421,64 @@ export function buildProgram() {
         } finally {
           prompter.close();
         }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  notify
+    .command('commands')
+    .option('--force', 're-publish even when Telegram already shows this exact menu')
+    .option('--dry-run', 'print the menu that would be published and change nothing')
+    .description('Publish the operator command menu to Telegram, so the commands appear in the chat (Phase 12 M2.2)')
+    .action(async (options) => {
+      try {
+        const menu = buildCommandMenu();
+        if (options.dryRun) {
+          console.log(`\n${menu.length} commands would be published to the owner's chat:\n`);
+          // Two columns, mirroring how Telegram lays the menu out — the CLI's
+          // usual "name — description" would collide with the argument hint
+          // that is already part of the description.
+          const width = Math.max(...menu.map((e) => e.command.length)) + 2;
+          for (const entry of menu) {
+            console.log(`  ${chalk.bold(`/${entry.command}`.padEnd(width))} ${entry.description}`);
+          }
+          return;
+        }
+
+        const configManager = new ConfigManager();
+        const config = configManager.getAll();
+        const telegram = config.approvals?.providers?.telegram ?? {};
+        const fallback = config.notifications?.telegram ?? {};
+        const botToken = telegram.botToken || fallback.botToken;
+        const chatId = telegram.chatId || fallback.chatId;
+        if (!telegram.enabled || !botToken || !chatId) {
+          throw userFacingError({
+            cause: 'Telegram is not configured as an approval provider.',
+            fix: 'run "ai-orchestrator notify setup telegram" first — it registers the menu for you.',
+          });
+        }
+
+        const provider = new TelegramApprovalProvider({
+          config: { botToken, chatId }, logger: silentLogger,
+        });
+        if (!options.force) {
+          const current = await provider.fetchRegisteredCommands();
+          if (menusMatch(current, menu)) {
+            console.log(`✔ Telegram already shows all ${menu.length} commands — nothing to do.`);
+            console.log('  Re-publish anyway with --force.');
+            return;
+          }
+        }
+        const result = await provider.registerCommands(menu);
+        if (!result.ok) {
+          throw userFacingError({
+            cause: `Telegram refused the command menu: ${result.error}`,
+            fix: 'check the bot token, then run "ai-orchestrator notify setup telegram" to re-validate it.',
+          });
+        }
+        console.log(`✔ Published ${result.count} commands to your Telegram chat.`);
+        console.log('  Open the chat and tap the ☰ menu (or type "/") to see them.');
       } catch (error) {
         fail(error);
       }
@@ -2393,8 +2465,15 @@ export function printRegistryRecord(record) {
     return;
   }
 
-  console.log(`\n${projectStatusIcon(record.status)} ${chalk.bold(record.name)} — ${projectStatusLabel(record.status)}`);
+  // The terminal twin of `/status`, and it was the last surface still silent
+  // about a fixture engine after v2.10.0 disclosed every remote one. An owner
+  // standing at the machine deserves the answer the phone already gets — the
+  // whole point of simulation.js is that no single surface is allowed to be
+  // the one that omits it.
+  const badge = record.simulated ? `  ${chalk.yellow(SIMULATION_BADGE)}` : '';
+  console.log(`\n${projectStatusIcon(record.status)} ${chalk.bold(record.name)}${badge} — ${projectStatusLabel(record.status)}`);
   if (record.description) console.log(chalk.dim(`    ${record.description}`));
+  if (record.simulated) console.log(chalk.yellow(`    🧪 ${SIMULATION_NOTICE}`));
   if (record.lifecycle) console.log(`    Phase:        ${record.lifecycle}`);
   if (record.tasks?.total) {
     const current = record.tasks.current ? ` (current: ${record.tasks.current})` : '';

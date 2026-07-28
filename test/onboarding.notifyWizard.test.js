@@ -13,6 +13,7 @@ import path from 'node:path';
 import { ConfigManager } from '../src/config/configManager.js';
 import { createPrompter } from '../src/onboarding/prompts.js';
 import { runTelegramSetup, runEmailSetup, runNotifyTune } from '../src/onboarding/notifyWizard.js';
+import { COMMANDS } from '../src/operator/commandGrammar.js';
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aio-notify-'));
@@ -32,16 +33,27 @@ function harness(root, answers) {
   return { prompter, out: () => out.join(''), configManager: new ConfigManager({ rootDir: root }) };
 }
 
-/** A fake Telegram API: per-method queues of response bodies. */
+/**
+ * A fake Telegram API: per-method queues of response bodies.
+ *
+ * `sent` records every call so a test can assert on WHAT was published, not
+ * merely that the wizard survived — the M2.2 command menu is a payload whose
+ * contents matter (chat scope, the real grammar).
+ */
 function fakeTelegram(map) {
   const queues = {};
   for (const k of Object.keys(map)) queues[k] = [...map[k]];
-  return async (url) => {
-    const method = ['getMe', 'getUpdates', 'sendMessage'].find((m) => url.includes(`/${m}`)) ?? 'unknown';
+  const sent = [];
+  const fetchFn = async (url, options) => {
+    const method = ['getMe', 'getUpdates', 'sendMessage', 'setMyCommands']
+      .find((m) => url.includes(`/${m}`)) ?? 'unknown';
+    sent.push({ method, body: options?.body ? JSON.parse(options.body) : null });
     const queue = queues[method] ?? [];
     const body = queue.length > 1 ? queue.shift() : (queue[0] ?? { ok: true, result: {} });
     return { ok: body.ok !== false, status: body.status ?? 200, json: async () => body };
   };
+  fetchFn.sent = sent;
+  return fetchFn;
 }
 
 function localConfig(root) {
@@ -65,6 +77,52 @@ test('telegram: validates token, discovers chat id, writes local.json', async ()
   const cfg = localConfig(root);
   assert.deepEqual(cfg.notifications.telegram, { enabled: true, botToken: '123:ABC', chatId: '6522731464' });
   assert.equal(cfg.approvals.providers.telegram.enabled, true);
+});
+
+test('telegram: setup publishes the command menu, scoped to the discovered chat', async () => {
+  // Phase 12 M2.2. Setup is the one moment the token is known to work and the
+  // chat id is known to be right — the cheapest place to give the owner a menu
+  // instead of a grammar to memorize.
+  const root = tmpRoot();
+  const { prompter, configManager } = harness(root, ['123:ABC', '']);
+  const fetchFn = fakeTelegram({
+    getMe: [{ ok: true, result: { username: 'jowgei_bot' } }],
+    getUpdates: [{ ok: true, result: [{ message: { chat: { id: 6522731464 } } }] }],
+    sendMessage: [{ ok: true, result: {} }],
+    setMyCommands: [{ ok: true, result: true }],
+  });
+
+  const result = await runTelegramSetup({ configManager, prompter, fetchFn, sleepFn: immediate, pollAttempts: 3 });
+
+  assert.equal(result.commandsRegistered, true);
+  const call = fetchFn.sent.find((c) => c.method === 'setMyCommands');
+  assert.ok(call, 'the menu must be published during setup, not left for the owner to discover');
+  assert.deepEqual(call.body.scope, { type: 'chat', chat_id: 6522731464 },
+    'scoped to the owner — the only chat the provider will honour');
+  assert.deepEqual(
+    call.body.commands.map((c) => c.command).sort(),
+    COMMANDS.map((c) => c.name).sort(),
+    'the published menu is the real grammar, not a copy of it'
+  );
+});
+
+test('telegram: a refused command menu does not fail the setup', async () => {
+  const root = tmpRoot();
+  const { prompter, configManager, out } = harness(root, ['123:ABC', '']);
+  const fetchFn = fakeTelegram({
+    getMe: [{ ok: true, result: { username: 'bot' } }],
+    getUpdates: [{ ok: true, result: [{ message: { chat: { id: 7 } } }] }],
+    sendMessage: [{ ok: true, result: {} }],
+    setMyCommands: [{ ok: false, description: 'BAD_REQUEST: too many commands' }],
+  });
+
+  const result = await runTelegramSetup({ configManager, prompter, fetchFn, sleepFn: immediate, pollAttempts: 3 });
+
+  assert.equal(result.chatId, '7', 'the channel is configured either way — a menu is a convenience');
+  assert.equal(result.commandsRegistered, false);
+  assert.match(out(), /too many commands/);
+  assert.match(out(), /notify commands/, 'and the owner is told how to retry it');
+  assert.equal(localConfig(root).approvals.providers.telegram.enabled, true);
 });
 
 test('telegram: rejects a bad token then accepts a good one', async () => {

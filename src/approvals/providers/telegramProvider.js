@@ -155,6 +155,84 @@ export class TelegramApprovalProvider extends ApprovalProvider {
   }
 
   /**
+   * Phase 12 M2.2: publish the command menu Telegram shows in the chat.
+   *
+   * SCOPED TO THE OWNER'S CHAT, not to the bot globally. The provider has
+   * dropped every message from any other chat since Phase 10C
+   * (`fetchMessages`), so a global menu would advertise a control surface to
+   * strangers that the system would then refuse to honour — an invitation to
+   * probe, and a misleading one. `BotCommandScopeChat` makes the menu match the
+   * permission: the one person who can use these commands is the one person who
+   * can see them.
+   *
+   * Best-effort by contract. A menu is a convenience; a failure to publish one
+   * must never take down the inbound channel, so this reports rather than
+   * throws — the caller decides whether anyone needs to hear about it.
+   *
+   * @param {{command: string, description: string}[]} commands - From
+   *   operator/commandMenu.js. Built by the caller so this method stays a
+   *   transport and the grammar stays the single source of the list.
+   * @returns {Promise<{ok: boolean, count: number, error?: string}>}
+   */
+  async registerCommands(commands) {
+    this.requireConfig();
+    if (!Array.isArray(commands) || !commands.length) {
+      return { ok: false, count: 0, error: 'no commands to register' };
+    }
+    try {
+      const response = await this.fetchFn(this.api('setMyCommands'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commands,
+          scope: { type: 'chat', chat_id: Number(this.config.chatId) || this.config.chatId },
+        }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body?.ok === false) {
+        // Telegram's `description` says exactly which entry it rejected, which
+        // is the only useful thing to log — "HTTP 400" is not actionable.
+        return { ok: false, count: 0, error: body?.description ?? `Telegram API responded ${response.status}` };
+      }
+      return { ok: true, count: commands.length };
+    } catch (error) {
+      return { ok: false, count: 0, error: error.message };
+    }
+  }
+
+  /**
+   * What Telegram currently shows for this chat.
+   *
+   * Used to skip a redundant write on every service start — the daemon starts
+   * at every logon, and re-publishing an identical menu is a network call that
+   * buys nothing. Returns null when the answer cannot be established, which the
+   * caller must treat as "unknown", not as "empty": registering again is
+   * harmless, whereas assuming a menu exists when it does not leaves the owner
+   * without one forever.
+   *
+   * @returns {Promise<{command: string, description: string}[]|null>}
+   */
+  async fetchRegisteredCommands() {
+    this.requireConfig();
+    try {
+      const response = await this.fetchFn(this.api('getMyCommands'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scope: { type: 'chat', chat_id: Number(this.config.chatId) || this.config.chatId },
+        }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body?.ok === false || !Array.isArray(body?.result)) return null;
+      return body.result;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Phase 12 M2: reply in the owner's chat.
    *
    * Same HTML formatting as `publish()` and the notification channel, for the

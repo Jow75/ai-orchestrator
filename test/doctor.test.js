@@ -77,6 +77,9 @@ test('golden path: a healthy single-project setup yields only ok findings', asyn
   assert.equal(byId(findings, 'remote-channel').status, 'warn');
   // No claude project -> no write-permission finding at all.
   assert.equal(byId(findings, 'write-permission:demo'), undefined);
+  // …but a mock project IS a fixture, and doctor is where an owner arrives
+  // after a mission "worked" over an empty workspace.
+  assert.equal(byId(findings, 'simulated:demo').status, 'warn');
   // No fail-status findings at all in the healthy path (remote-channel is warn, expected).
   assert.deepEqual(findings.filter((f) => f.status === 'fail'), []);
 });
@@ -328,4 +331,33 @@ test('renderer preserves the special running-instance line format', () => {
   assert.ok(lines.some((l) => l.includes('An orchestrator is currently running (pid 1234).')));
   // Must NOT be rendered with a ✔/⚠/✘ mark like a normal finding.
   assert.ok(!lines.some((l) => /[✔⚠✘].*running/.test(l)));
+});
+
+test('a simulated project is warned about, and a real one is not', async () => {
+  // Born from the 2026-07-28 incident: a mock-driver project reported a React
+  // and Electron calculator complete over an empty workspace. `doctor` is the
+  // first place an owner looks when that happens, and it used to be silent.
+  const root = scaffold({
+    projects: { sandbox: (r) => healthyProject(r), real: (r) => claudeProject(r, { claude: { permissionMode: 'acceptEdits' } }) },
+  });
+  const findings = await findingsFor(root);
+
+  const sandbox = byId(findings, 'simulated:sandbox');
+  assert.equal(sandbox.status, 'warn', 'a fixture project is expected to exist — warn, never fail');
+  assert.match(sandbox.impact, /without producing any artifacts/);
+  assert.match(sandbox.fix.description, /claude/);
+  assert.equal(sandbox.fix.safe, false, 'switching a project to a real engine is the owner\'s call');
+
+  assert.equal(byId(findings, 'simulated:real'), undefined,
+    'a real project must produce no simulation finding at all');
+});
+
+test('an explicit simulated flag is honoured over the driver id', async () => {
+  const root = scaffold({
+    projects: {
+      pretend: (r) => claudeProject(r, { simulated: true, claude: { permissionMode: 'acceptEdits' } }),
+    },
+  });
+  const findings = await findingsFor(root);
+  assert.equal(byId(findings, 'simulated:pretend').status, 'warn');
 });

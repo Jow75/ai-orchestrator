@@ -34,6 +34,30 @@ const SECTION_HEADINGS = [
 const LIST_ITEM = /^\s*(?:[-*•]|\d+[.)])\s+(.*)$/;
 
 /**
+ * Drop markdown emphasis so a heading can be recognized through it.
+ *
+ * Found live (2026-07-28, mission M8): a real engine writes plans in markdown,
+ * so its headings arrive as `**Tasks (in order):**` and `**Risks:**`. Neither
+ * matched SECTION_HEADINGS, so every bullet in the plan — tasks, files and
+ * risks alike — accumulated under whichever section had matched last, and the
+ * owner's approval showed eight "tasks" with no risks and no files at all.
+ *
+ * A BULLET MUST SURVIVE THIS. `* item` and `**bold**` both start with an
+ * asterisk, and collapsing the first would turn a list item into something that
+ * looks like a heading. So a marker is only removed when it is glued to the text
+ * it emphasises — `**Risks` — and never when it is followed by a space.
+ *
+ * Used for MATCHING only. The stripped text is discarded, which is what makes
+ * it safe to be slightly over-eager (a line-leading `*.js` loses its asterisk
+ * here and nowhere else).
+ */
+function stripEmphasis(line) {
+  return line
+    .replace(/(^|\s)[*_]{1,3}(?=[^\s*_])/g, '$1')
+    .replace(/(?<=[^\s*_])[*_]{1,3}(?=$|[\s:])/g, '');
+}
+
+/**
  * Build the structured summary.
  *
  * @param {object} params
@@ -56,7 +80,7 @@ export function buildImplementationSummary({
   const sections = { tasks: [], risks: [], files: [], systems: [] };
   let currentField = null;
   for (const line of lines) {
-    const heading = SECTION_HEADINGS.find((s) => s.pattern.test(line.trim()));
+    const heading = SECTION_HEADINGS.find((s) => s.pattern.test(stripEmphasis(line.trim())));
     if (heading) {
       currentField = heading.field;
       continue;
@@ -128,11 +152,22 @@ export function renderImplementationSummary(summary) {
   return parts.join('\n');
 }
 
-/** "Label: value" extraction for explicit plan metadata lines. */
+/**
+ * "Label: value" extraction for explicit plan metadata lines.
+ *
+ * The label is matched through markdown emphasis (a label is never a glob, so
+ * stripping is unconditionally safe there). The VALUE is only relieved of a
+ * leading emphasis CLOSER — the `**` that `**Objective:** Deliver…` leaves
+ * behind, which was being shown to owners verbatim as part of the objective.
+ * Nothing else is touched, so a value that legitimately starts with `*` (a
+ * glob, a footnote) survives intact.
+ */
 function extractLabeled(text, labelPattern) {
   for (const line of text.split('\n')) {
     const match = line.match(/^\s*(?:[-*•]\s*)?([^:]{2,40}):\s*(.+)$/);
-    if (match && labelPattern.test(match[1])) return match[2].trim();
+    if (!match || !labelPattern.test(stripEmphasis(match[1]))) continue;
+    const value = match[2].replace(/^[*_]{1,3}\s+/, '').trim();
+    if (value) return value;
   }
   return null;
 }

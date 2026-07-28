@@ -41,6 +41,8 @@
  * still exactly one reader per provider.
  */
 
+import { buildCommandMenu, menusMatch } from './commandMenu.js';
+
 /** Default inbound poll cadence when the daemon config does not say. */
 export const DEFAULT_POLL_MS = 10_000;
 
@@ -188,6 +190,83 @@ export class OperatorGateway {
       });
     }
     return reply;
+  }
+
+  /**
+   * Phase 12 M2.2: tell every routing channel what commands exist, so the owner
+   * gets a tappable menu instead of a grammar to memorize.
+   *
+   * Gated on the operator interface being ENABLED. With `operator.enabled:
+   * false` the router honours decisions and refuses everything else (see
+   * commandRouter.handle), so publishing a menu there would hand the owner a
+   * screen of buttons that all answer "the operator interface is disabled".
+   * Advertising a capability the system will refuse is worse than advertising
+   * nothing.
+   *
+   * Skips the write when the channel already shows exactly this menu. The
+   * service starts at every logon and the menu changes about once a release; an
+   * unknown current state (a failed read) counts as "different", because
+   * re-publishing costs one call and guessing wrong costs the owner their menu.
+   *
+   * Never throws. A menu is a convenience and the inbound channel is not.
+   *
+   * @param {{force?: boolean}} [options] - `force` re-publishes even when the
+   *   remote menu already matches (the CLI's `--force`, for a menu someone
+   *   changed in BotFather).
+   * @returns {Promise<{channel: string, ok: boolean, count: number, skipped?: boolean, error?: string}[]>}
+   */
+  async publishCommandMenu({ force = false } = {}) {
+    if (this.router?.operatorConfig?.enabled === false) {
+      this.logger?.info('Operator interface disabled; no command menu published');
+      return [];
+    }
+
+    let menu;
+    try {
+      menu = buildCommandMenu();
+    } catch (error) {
+      // A grammar that cannot be published is a programming error worth seeing.
+      this.logger?.warn('Cannot build the command menu', { error: error.message });
+      return [];
+    }
+
+    const results = [];
+    for (const provider of this.routing) {
+      if (typeof provider.registerCommands !== 'function') continue;
+      try {
+        if (!force && typeof provider.fetchRegisteredCommands === 'function') {
+          // eslint-disable-next-line no-await-in-loop
+          const current = await provider.fetchRegisteredCommands();
+          if (menusMatch(current, menu)) {
+            results.push({ channel: provider.name, ok: true, count: menu.length, skipped: true });
+            continue;
+          }
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const result = await provider.registerCommands(menu);
+        results.push({ channel: provider.name, ...result });
+        if (result.ok) {
+          this.logger?.info('Command menu published', {
+            channel: provider.name, commands: result.count,
+          });
+          this.events?.append({
+            type: 'notification.sent',
+            actor: `daemon:${provider.name}`,
+            payload: { kind: 'command-menu', commands: result.count },
+          });
+        } else {
+          this.logger?.warn('Could not publish the command menu', {
+            channel: provider.name, error: result.error,
+          });
+        }
+      } catch (error) {
+        results.push({ channel: provider.name, ok: false, count: 0, error: error.message });
+        this.logger?.warn('Could not publish the command menu', {
+          channel: provider.name, error: error.message,
+        });
+      }
+    }
+    return results;
   }
 
   /**

@@ -449,13 +449,19 @@ export class CommandRouter {
   }
 
   commandApprovals() {
-    return { reply: renderApprovals(this.approvalStore.pendingAll()) };
+    return {
+      reply: renderApprovals(this.approvalStore.pendingAll(), {
+        simulated: this.registry.simulatedNames(),
+      }),
+    };
   }
 
   commandMissions(ctx) {
     const active = this.activeProject(ctx);
     const open = this.requests.open();
-    if (open.length) return { reply: renderMissionRequests(open) };
+    if (open.length) {
+      return { reply: renderMissionRequests(open, { simulated: this.registry.simulatedNames() }) };
+    }
     return {
       reply: active
         ? `No mission requests are waiting.\nType what you want done to ${active} and it becomes one.`

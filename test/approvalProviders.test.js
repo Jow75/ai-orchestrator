@@ -137,6 +137,75 @@ test('buildImplementationSummary extracts sections and explicit metadata', () =>
   assert.match(rendered, /Risks:\n {2}• session invalidation/);
 });
 
+test('a plan written in markdown parses the same as a plain one', () => {
+  // Found live on 2026-07-28 (mission M8, the first REAL run of the calculator
+  // objective). Engines write plans in markdown, so every heading and label
+  // arrives emphasised. None of them matched, with two visible consequences:
+  // the objective was shown to the owner as "** Deliver a real…" with the
+  // closing bold still attached, and every bullet in the plan — tasks, files
+  // and risks alike — piled into whichever section had matched last, so the
+  // approval offered eight "tasks", no risks and no files.
+  const planText = [
+    '## Implementation Plan',
+    '',
+    '**Objective:** Deliver a runnable calculator built with React and Electron.',
+    '**Estimated duration:** ~20 minutes',
+    '**Estimated files changed:** 11',
+    '',
+    '**Tasks (in order):**',
+    '1. Scaffold `package.json` and `.gitignore`.',
+    '2. Write the pure engine `src/calculator.js`.',
+    '',
+    '**Files:**',
+    '- `package.json`',
+    '- `src/calculator.js`',
+    '',
+    '**Risks:**',
+    '- `npm install` needs network access',
+    '',
+    'IMPLEMENTATION PLAN READY',
+  ].join('\n');
+
+  const summary = buildImplementationSummary({ project: 'proj', planText });
+
+  assert.equal(summary.objective,
+    'Deliver a runnable calculator built with React and Electron.',
+    'the closing ** must not travel into the objective the owner reads');
+  assert.equal(summary.estimatedDuration, '~20 minutes');
+  assert.equal(summary.estimatedFilesChanged, '11');
+  assert.deepEqual(summary.tasks, [
+    'Scaffold `package.json` and `.gitignore`.',
+    'Write the pure engine `src/calculator.js`.',
+  ], 'the Files and Risks bullets must not be counted as tasks');
+  assert.deepEqual(summary.files, ['`package.json`', '`src/calculator.js`']);
+  assert.deepEqual(summary.risks, ['`npm install` needs network access']);
+});
+
+test('emphasis stripping never turns a bullet into a heading', () => {
+  // `* item` and `**bold**` both start with an asterisk. Collapsing the first
+  // would make every asterisk-bulleted line a candidate section heading.
+  const planText = [
+    '## Tasks',
+    '* build the thing',
+    '* Risks: none worth listing',   // a bullet that MENTIONS a section word
+    '* test the thing',
+  ].join('\n');
+
+  const summary = buildImplementationSummary({ project: 'proj', planText });
+
+  assert.deepEqual(summary.tasks,
+    ['build the thing', 'Risks: none worth listing', 'test the thing']);
+  assert.deepEqual(summary.risks, [], 'a bullet is a bullet, whatever it says');
+});
+
+test('a value that legitimately starts with an asterisk survives', () => {
+  const summary = buildImplementationSummary({
+    project: 'proj',
+    planText: 'Objective: *.js files are rewritten in place\nIMPLEMENTATION PLAN READY',
+  });
+  assert.equal(summary.objective, '*.js files are rewritten in place');
+});
+
 test('summary falls back to the queue plan and ledger-average duration', () => {
   const queue = {
     currentIndex: 1,

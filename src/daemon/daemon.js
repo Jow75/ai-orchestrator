@@ -599,6 +599,15 @@ export class Daemon extends EventEmitter {
       this.emit('approval:resolved', request);
     });
     this.gateway.start();
+
+    // Phase 12 M2.2: publish the command menu. Deliberately NOT awaited — the
+    // service owns the machine's only inbound channel, and it must be listening
+    // whether or not api.telegram.org is reachable in this second. The gateway
+    // skips the call entirely when the menu is already current, so the common
+    // case (every logon after the first) costs one cheap read.
+    this.gateway.publishCommandMenu().catch((error) => {
+      this.logger.warn('Command menu publish failed', { error: error.message });
+    });
   }
 
   /**

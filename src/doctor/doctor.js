@@ -26,6 +26,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import ConfigManager from '../config/configManager.js';
 import DriverRegistry from '../drivers/driverRegistry.js';
+import { isSimulatedProject } from '../drivers/simulation.js';
 import SessionManager from '../state/sessionManager.js';
 import { readJsonSafe } from '../state/statePersistence.js';
 import { CHECK_MARK } from '../shared/vocabulary.js';
@@ -162,6 +163,25 @@ export async function buildDoctorFindings({
     try {
       const project = configManager.getProject(name);
       findings.push(okFinding(`project-valid:${name}`, `Project "${name}" is valid`, project.workingDirectory));
+
+      // A fixture project is not a fault — validation-sandbox is supposed to
+      // exist — so this warns rather than fails. It is here because `doctor` is
+      // where an owner goes when a mission "worked" and the workspace is empty,
+      // and that question deserves an answer from the diagnostic tool rather
+      // than from reading a project file.
+      if (isSimulatedProject(project)) {
+        findings.push(warnFinding(
+          `simulated:${name}`, `Project "${name}" is simulated`,
+          'it reports missions complete without writing any code', {
+            cause: `"${name}" uses the "${project.driver}" driver, which replays scripted output instead of running an engine.`,
+            impact: 'Missions on this project complete and verify without producing any artifacts. Correct for a sandbox; wrong for real work.',
+            fix: {
+              description: `Point "${name}" at the "claude" driver if it is meant to build something real.`,
+              safe: false,
+            },
+          }
+        ));
+      }
 
       const driver = driverRegistry.getDriver(project.driver);
       // eslint-disable-next-line no-await-in-loop

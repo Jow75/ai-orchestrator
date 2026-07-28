@@ -102,6 +102,34 @@ export class ProjectRegistry {
   }
 
   /**
+   * The names of every project whose engine is a fixture.
+   *
+   * Exists so a surface that renders things BELONGING to projects — approvals,
+   * mission requests — can disclose simulation without describing each project
+   * in full (`describe()` does git and health work no list needs) and without
+   * depending on whatever `simulated` flag happened to be frozen into a stored
+   * record. The config is the live truth: flipping a project to the `claude`
+   * driver must stop the badge appearing on its already-queued approvals.
+   *
+   * A project whose config cannot be loaded is deliberately NOT reported as
+   * simulated — "broken" and "pretend" are different answers, and guessing
+   * between them is how a real project quietly acquires a fixture badge.
+   *
+   * @returns {Set<string>}
+   */
+  simulatedNames() {
+    const simulated = new Set();
+    for (const name of this.names()) {
+      try {
+        if (isSimulatedProject(this.configManager.getProject(name))) simulated.add(name);
+      } catch {
+        // Reported as 'misconfigured' by describe(); not this method's business.
+      }
+    }
+    return simulated;
+  }
+
+  /**
    * Resolve an operator-typed project name to a real one.
    *
    * Phones make exact typing expensive, so this accepts a case-insensitive

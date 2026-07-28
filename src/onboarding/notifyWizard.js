@@ -18,6 +18,7 @@
 import { EmailChannel } from '../notifications/channels/email.js';
 import { silentLogger } from '../infra/logger.js';
 import { severityLabel } from '../shared/vocabulary.js';
+import { buildCommandMenu } from '../operator/commandMenu.js';
 
 /** Channels `notify tune` can set a per-channel `minSeverity` for. */
 const TUNABLE_CHANNELS = ['desktop', 'webhook', 'discord', 'telegram', 'email'];
@@ -139,13 +140,29 @@ export async function runTelegramSetup({
   });
   p.say(test.ok ? '  ✔ Test message sent — check Telegram.' : `  ✘ Test send failed: ${test.error}`);
 
+  // Phase 12 M2.2: publish the command menu here, at the one moment we are
+  // certain the token works and the chat id is right. Doing it during setup is
+  // the difference between an owner who discovers /status and one who types
+  // prose at a bot forever. Scoped to this chat for the same reason every other
+  // Telegram surface is: only the owner may use these commands.
+  const menu = buildCommandMenu();
+  const registered = await telegramCall(fetchFn, botToken, 'setMyCommands', {
+    commands: menu,
+    scope: { type: 'chat', chat_id: Number(chatId) || chatId },
+  });
+  p.say(registered.ok
+    ? `  ✔ ${menu.length} commands added to the chat menu — tap ☰ in Telegram to see them.`
+    : `  ⚠ Command menu not published: ${registered.error}` +
+      '\n     Everything still works; retry later with "ai-orchestrator notify commands".');
+
   const file = configManager.writeLocalConfig({
     notifications: { telegram: { enabled: true, botToken, chatId } },
     approvals: { providers: { telegram: { enabled: true } } },
   });
   p.say(`\n✅ Telegram configured and saved to ${file}`);
   p.say('   Your phone will now receive approvals; reply APPROVE <id> to decide remotely.');
-  return { botToken, chatId, file };
+  p.say('   Type "/" in the chat to see every command, or /help for the full list.');
+  return { botToken, chatId, file, commandsRegistered: registered.ok };
 }
 
 /** Turn common SMTP failures into plain-language remedies. */

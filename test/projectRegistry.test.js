@@ -280,3 +280,35 @@ test('every status the registry can produce is declared', () => {
     ['blocked', 'idle', 'misconfigured', 'queued', 'running', 'waiting-approval']
   );
 });
+
+test('simulatedNames answers from config, and never calls a broken project a fixture', () => {
+  const { configManager, paths } = installation();
+  defineProject(paths, 'sandbox');                      // defineProject uses the mock driver
+  defineProject(paths, 'real', { driver: 'claude' });
+  defineProject(paths, 'declared', { driver: 'claude', simulated: true });
+  fs.writeFileSync(path.join(paths.projectsDir, 'broken.json'), '{ not json');
+  const { registry } = buildRegistry(configManager, paths);
+
+  const simulated = registry.simulatedNames();
+
+  assert.ok(simulated.has('sandbox'), 'the mock driver is a fixture');
+  assert.ok(simulated.has('declared'), 'an explicit flag wins over a real driver id');
+  assert.ok(!simulated.has('real'));
+  assert.ok(!simulated.has('broken'),
+    'unloadable is "misconfigured", not "simulated" — guessing between them mislabels real work');
+});
+
+test('simulatedNames tracks the config rather than a snapshot', () => {
+  const { configManager, paths } = installation();
+  defineProject(paths, 'sandbox');
+  const { registry } = buildRegistry(configManager, paths);
+  assert.ok(registry.simulatedNames().has('sandbox'));
+
+  const file = path.join(paths.projectsDir, 'sandbox.json');
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  raw.driver = 'claude';
+  fs.writeFileSync(file, JSON.stringify(raw));
+
+  assert.ok(!registry.simulatedNames().has('sandbox'),
+    'pointing a project at a real engine must clear the badge everywhere at once');
+});

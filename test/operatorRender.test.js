@@ -106,6 +106,37 @@ test('the approvals list distinguishes a human action from a decision', () => {
   assert.equal(renderApprovals([]), 'Nothing is waiting for your decision.');
 });
 
+test('the approvals list badges only the projects it was told are simulated', () => {
+  const requests = [
+    { id: 'A7', project: 'sandbox', title: 'Plan review', approvalClass: 'review' },
+    { id: 'A8', project: 'alpha', title: 'Plan review', approvalClass: 'review' },
+  ];
+
+  const badged = renderApprovals(requests, { simulated: new Set(['sandbox']) });
+  assert.match(badged, /A7 · sandbox {2}🧪 SIMULATED/);
+  assert.match(badged, /A8 · alpha\n/, 'a real project stays clean');
+
+  assert.doesNotMatch(renderApprovals(requests), /SIMULATED/,
+    'no set supplied ⇒ no badges, so every pre-existing caller is unchanged');
+});
+
+test('the mission-request list badges from the live set, not the frozen context', () => {
+  const stale = [{
+    id: 'M1', project: 'alpha', status: 'pending', objective: 'Build a calculator.',
+    context: { simulated: true },
+  }];
+
+  assert.doesNotMatch(renderMissionRequests(stale, { simulated: new Set() }), /SIMULATED/,
+    'the project is real now, whatever the request recorded when it was raised');
+  assert.match(renderMissionRequests(stale), /SIMULATED/,
+    'with no set, the recorded context is still better than nothing');
+  assert.match(
+    renderMissionRequests([{ id: 'M2', project: 'sandbox', status: 'pending', objective: 'x' }],
+      { simulated: new Set(['sandbox']) }),
+    /M2 · sandbox {2}🧪 SIMULATED/
+  );
+});
+
 test('the task list marks where the queue actually is', () => {
   const text = renderTasks('alpha', {
     currentIndex: 1,

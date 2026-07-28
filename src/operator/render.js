@@ -158,12 +158,26 @@ export function renderTasks(project, queue) {
   return lines.join('\n');
 }
 
-/** `/approvals` — every decision waiting, across every project. */
-export function renderApprovals(requests) {
+/**
+ * `/approvals` — every decision waiting, across every project.
+ *
+ * The badge matters more in this list than in most: `/approvals` is the screen
+ * an owner acts from without opening anything first, so it is the one place a
+ * decision can be spent on a fixture with no other surface in between. The
+ * per-request gate messages disclose too (see implementationSummary.js) — this
+ * is for the owner who replies straight from the list.
+ *
+ * @param {object[]} requests
+ * @param {{simulated?: Set<string>}} [options] - Simulated project names, from
+ *   ProjectRegistry.simulatedNames(). Absent ⇒ no badges, which keeps every
+ *   existing caller working unchanged.
+ */
+export function renderApprovals(requests, { simulated } = {}) {
   if (!requests.length) return 'Nothing is waiting for your decision.';
   const lines = [`Waiting for you (${requests.length})`, ''];
   for (const request of requests.slice(0, MAX_LIST)) {
-    lines.push(`${request.id} · ${request.project}`);
+    const badge = simulated?.has(request.project) ? `  ${SIMULATION_BADGE}` : '';
+    lines.push(`${request.id} · ${request.project}${badge}`);
     lines.push(`   ${request.title}`);
     lines.push(request.approvalClass === 'human-action'
       ? `   Reply: DONE ${request.id}`
@@ -231,12 +245,22 @@ export function renderMissionProposal(request) {
   return lines.join('\n');
 }
 
-/** `/missions` — open mission requests. */
-export function renderMissionRequests(requests) {
+/**
+ * `/missions` — open mission requests.
+ *
+ * @param {object[]} requests
+ * @param {{simulated?: Set<string>}} [options] - See {@link renderApprovals}.
+ *   Preferred over each request's frozen `context.simulated` because a request
+ *   raised before its project was pointed at a real engine would otherwise keep
+ *   claiming to be a rehearsal after it stopped being one.
+ */
+export function renderMissionRequests(requests, { simulated } = {}) {
   if (!requests.length) return 'No mission requests are waiting.';
   const lines = [`Mission requests (${requests.length})`, ''];
   for (const request of requests.slice(0, MAX_LIST)) {
-    lines.push(`${request.id} · ${request.project} · ${decisionLabel(request.status)}`);
+    const isSim = simulated ? simulated.has(request.project) : request.context?.simulated === true;
+    const badge = isSim ? `  ${SIMULATION_BADGE}` : '';
+    lines.push(`${request.id} · ${request.project}${badge} · ${decisionLabel(request.status)}`);
     lines.push(`   ${truncate(request.objective, 120)}`);
   }
   return lines.join('\n');

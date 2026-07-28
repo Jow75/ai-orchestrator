@@ -3,6 +3,101 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [2.11.0] — 2026-07-28 — Phase 12 M2.2: The Artifact Investigation, Closed
+
+The demanded full trace of the mission that reported success over an empty
+workspace, the disclosure gaps that trace exposed, and automatic Telegram
+command registration.
+
+**THE PHASE 12 INVARIANT still holds:** with no daemon running and no operator
+configuration, a standalone `ai-orchestrator start` behaves exactly as in
+`v2.7.0`.
+
+### The investigation
+
+Mission M4 was traced end to end from the durable event log, the task queue, the
+approval store and the mission-request store. Findings, all evidence-backed:
+
+- The project used `"driver": "mock"`. **No Claude process was ever spawned** —
+  the mock driver is in-process and replays scripted strings.
+- The prompt file was built correctly and completely, and never delivered.
+- No code was generated, so none was lost.
+- The task's own checkpoint recorded `filesTouched: []`. **The truth was
+  written down; nothing rendered it.**
+- The plan the owner approved from their phone proposed editing `payroll.js` —
+  left over from an earlier payroll fixture — for a request that asked for a
+  React and Electron calculator.
+
+**Answer:** expected behaviour *and* a genuine defect. A fixture replaying a
+fixture is correct; no surface disclosing it is not. See
+[docs/PHASE_12_M2.2_REPORT.md](docs/PHASE_12_M2.2_REPORT.md).
+
+**Validated against a real engine.** The identical objective was re-run through
+the identical operator path on a `claude`-driver project: mission complete in
+13 m 13 s, **12 real files** written, and `npm test` in the resulting workspace
+passes 16 tests. `filesTouched` went from `[]` to twelve entries.
+
+### Fixed
+
+- **Simulation disclosure stopped at the phone.** v2.10.0 covered `/projects`,
+  `/status`, both approval gates and the Mission Card, and left five surfaces
+  silent. Now disclosed in `projects list`, `projects status` (the terminal twin
+  of `/status`, which was already handed the field and simply did not print it),
+  `/approvals`, `/missions`, and `doctor` — which is where an owner goes *after*
+  a mission "worked" over an empty workspace.
+
+  The two list surfaces derive the badge from the **live config**
+  (`ProjectRegistry.simulatedNames()`), not from the flag frozen into a stored
+  record: pointing a project at a real engine must clear the badge on its
+  already-queued approvals, and the reverse.
+
+- **A plan written in markdown parsed wrongly** — found by the first real
+  engine run. `**Objective:**` left its closing `**` glued to the text the
+  owner read, and `**Tasks:**` / `**Files:**` / `**Risks:**` matched no heading
+  at all, so every bullet piled under whichever heading had matched last. The
+  approval gate showed eight "tasks", no risks and no files. The emphasis
+  stripper is bullet-safe: `* item` and `**bold**` both start with an asterisk,
+  and collapsing the first would turn every list item into a heading.
+
+### Added
+
+- **Automatic Telegram command registration** (`setMyCommands`). The bot now
+  publishes its own command menu, so the commands appear in the chat instead of
+  having to be memorized. All 16 are registered: `/help`, `/projects`,
+  `/project`, `/status`, `/start`, `/stop`, `/tasks`, `/approvals`,
+  `/missions`, `/service`, `/events`, `/reset`, `/shutdown`, `/confirm`,
+  `/cancel`, `/whoami`.
+
+  - **The menu is derived from the parser, never maintained beside it.**
+    `operator/commandMenu.js` reads the same `COMMANDS` table
+    `commandGrammar.js` parses with, and a test asserts set-equality between
+    them — so a command added to the grammar appears on every phone menu
+    without anyone remembering to add it.
+  - **Scoped to the owner's chat** (`BotCommandScopeChat`), not published
+    globally. The provider has dropped messages from every other chat since
+    Phase 10C; a global menu would advertise a control surface to strangers
+    that the system then refuses.
+  - Descriptions carry the argument (`/project` → `<name> — Select the active
+    project`), because tapping an entry inserts the bare command. Destructive
+    commands say *"(asks you to confirm first)"*.
+  - Published at three moments: during `notify setup telegram`, on every Core
+    Service start (skipped when already current), and on demand via
+    `ai-orchestrator notify commands` (`--force`, `--dry-run`). The service
+    start never awaits it — the inbound channel must come up whether or not
+    Telegram is reachable.
+
+### Verified
+
+Reboot persistence was **closed on live evidence**: a real Windows restart with
+nothing launched by hand, `/projects`, `/status` and `/service` all answering
+from a phone, and `scripts/verify-reboot-persistence.ps1` passing **11/11**
+— including the checks that separate "autostarted" from "survived the shutdown"
+and from "someone started it by hand".
+
+969 backend tests (+50), 38 desktop tests (+18), all passing.
+
+---
+
 ## [2.10.0] — 2026-07-28 — Phase 12 M2.1: Residency, Honesty, and Ports
 
 Driven entirely by the M2 live-validation report. The operator console itself

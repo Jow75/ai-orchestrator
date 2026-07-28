@@ -71,6 +71,40 @@ PT0S`); `daemon ensure` started the service and, run again, correctly declined
 to start a second; `/service` over the real bot reported *"After a reboot: starts
 automatically ✔"*.
 
+### Closed by a real reboot — 2026-07-28 21:10 (11/11 PASS)
+
+The above verified the *mechanism*. Bug 1 is about the machine coming back on
+its own, and only a real reboot can show that. The owner performed a Windows
+**Restart**, launched nothing by hand — no daemon, no Electron, no CLI — and
+messaged the bot from a phone. `/projects`, `/status` and `/service` all
+answered. `scripts/verify-reboot-persistence.ps1` then passed every check:
+
+| Check | What it establishes | Result |
+| --- | --- | --- |
+| C1 | A boot happened recently enough to be a reboot test (48 min old) | PASS |
+| C2 | The Core Service logon task is registered | PASS |
+| C3 | Task Scheduler ran it during **this** boot (21:11:31, boot 21:10:57) | PASS |
+| C3b | It restarts itself after a crash (`RestartCount=3`, `PT1M`, `IgnoreNew`) | PASS |
+| C3c | It ran at **logon**, 0.6 min after boot — not a later hand-start | PASS |
+| C4 | A live process matches the recorded pid (12104, v2.10.0) | PASS |
+| C5 | The process started **after** the reboot — not a survivor | PASS |
+| C6 | The running process is the one the task launched (0.2 s apart) | PASS |
+| C7 | The API answers (`GET /api/daemon`) | PASS |
+| C8 | The exclusive Telegram inbound channel is live | PASS |
+| C9 | The operator console responds on the router a phone message uses | PASS |
+
+The checks are worth more than their count. C5 and C6 exist because "a service
+is running after a reboot" is the *conclusion*, not the evidence: a process that
+survived the shutdown, or one an operator started by hand while testing, both
+produce a green `daemon status` and neither proves autostart. Comparing process
+start time against `LastBootUpTime` and against the task's `LastRunTime`
+separates the three. C1 exists because a stale session makes the entire run
+meaningless, and the script detects Windows **Fast Startup** for the same
+reason — with it enabled, "Shut down" does not produce a real boot, so the
+script tells the operator to use *Restart* instead.
+
+**Bug 1 is closed on live evidence**, not on the fix having been written.
+
 ---
 
 ## Bug 2 — a mission completed with no implementation

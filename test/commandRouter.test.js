@@ -259,6 +259,65 @@ test('a real project is never labelled simulated', async () => {
   assert.doesNotMatch(status.reply, /Simulated project/);
 });
 
+// The two LISTS an owner can act from without opening anything first. v2.10.0
+// disclosed at the gates themselves and left these silent, so a decision could
+// still be spent on a fixture from a screen that never mentioned one.
+
+test('/approvals badges a decision that belongs to a simulated project', async () => {
+  const { say, approvalStore } = harness({ driver: 'mock' });
+  approvalStore.create('alpha', {
+    category: 'implementation-plan', approvalClass: 'implementation-review',
+    title: 'Implementation review — alpha',
+  });
+
+  const { reply } = await say('/approvals');
+
+  assert.match(reply, /SIMULATED/, 'the badge must reach the list replies are sent from');
+  assert.match(reply, /APPROVE A1/, 'and the decision itself still works');
+});
+
+test('/approvals leaves a real project unbadged', async () => {
+  const { say, approvalStore } = harness();
+  approvalStore.create('alpha', {
+    category: 'implementation-plan', approvalClass: 'implementation-review',
+    title: 'Implementation review — alpha',
+  });
+
+  const { reply } = await say('/approvals');
+
+  assert.doesNotMatch(reply, /SIMULATED/);
+});
+
+test('/missions badges an open request against a simulated project', async () => {
+  const { say } = harness({ driver: 'mock' });
+  await say('/project alpha');
+  await say('Create a simple calculator with React and Electron.');
+
+  const { reply } = await say('/missions');
+
+  assert.match(reply, /SIMULATED/);
+  assert.match(reply, /calculator/);
+});
+
+test('a request keeps its badge from the CONFIG, not from what was frozen into it', async () => {
+  // The failure this pins: a request raised while a project was a fixture, then
+  // pointed at a real engine, must stop claiming to be a rehearsal — and the
+  // reverse. The stored context is a snapshot; the config is the truth.
+  const { say, paths } = harness({ driver: 'mock' });
+  await say('/project alpha');
+  await say('Build something.');
+
+  const file = path.join(paths.projectsDir, 'alpha.json');
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  raw.driver = 'claude';
+  fs.writeFileSync(file, JSON.stringify(raw));
+
+  const { reply } = await say('/missions');
+
+  assert.doesNotMatch(reply, /SIMULATED/,
+    'the project is real now; its open request must not still be labelled a rehearsal');
+});
+
 test('approving a mission request is what starts the work', async () => {
   const { say, supervisor, taskQueue, events, paths } = harness();
   await say('/project alpha');
