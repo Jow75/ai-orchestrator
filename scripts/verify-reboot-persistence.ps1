@@ -58,14 +58,39 @@ Write-Host "AI-Orchestrator - reboot persistence validation" -ForegroundColor Cy
 Write-Host "================================================"
 
 # --- The reboot itself -------------------------------------------------------
-$boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+#
+# Win32_OperatingSystem.LastBootUpTime is NOT sufficient on its own. With Fast
+# Startup enabled (HiberbootEnabled=1, the Windows default), "Shut down" then
+# power on is a hybrid resume that can leave LastBootUpTime reporting the last
+# FULL boot — so a perfectly valid test would be scored as "no reboot happened".
+# The Event Log service start (System log, id 6005) is written on every boot
+# including a hybrid one, so the session marker is the LATER of the two.
+$reportedBoot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+$eventBoot = $null
+try {
+    $eventBoot = (Get-WinEvent -FilterHashtable @{LogName='System'; Id=6005} -MaxEvents 1 -ErrorAction Stop).TimeCreated
+} catch { }
+
+$boot = $reportedBoot
+if (($null -ne $eventBoot) -and ($eventBoot -gt $reportedBoot)) { $boot = $eventBoot }
+
 $sinceBoot = (Get-Date) - $boot
 Write-Host ""
-Write-Host "Last boot: $boot  ($([int]$sinceBoot.TotalMinutes) min ago)"
+Write-Host "Session start: $boot  ($([int]$sinceBoot.TotalMinutes) min ago)"
+Write-Host "  LastBootUpTime : $reportedBoot" -ForegroundColor DarkGray
+Write-Host "  EventLog 6005  : $eventBoot" -ForegroundColor DarkGray
 
-Check -Id 'C1' -Claim 'The machine really rebooted recently' `
-    -Ok ($sinceBoot.TotalHours -lt 24) `
-    -Evidence "Uptime $([int]$sinceBoot.TotalMinutes) min. If this is large, you are testing a stale service, not a reboot."
+$fastStartup = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name HiberbootEnabled -ErrorAction SilentlyContinue
+if (($null -ne $fastStartup) -and ($fastStartup.HiberbootEnabled -eq 1)) {
+    Write-Host "  Fast Startup is ON - prefer 'Restart' over 'Shut down' for a clean test." -ForegroundColor DarkYellow
+}
+
+# 3 hours, not 24: this script exists to prove a service came back from a boot
+# that just happened. A machine up all day cannot demonstrate that, and calling
+# it a pass is precisely the false confidence this milestone was fixing.
+Check -Id 'C1' -Claim 'A boot happened recently enough for this to be a reboot test' `
+    -Ok ($sinceBoot.TotalHours -lt 3) `
+    -Evidence "Session is $([int]$sinceBoot.TotalMinutes) min old. Over 3 h means you are looking at a service that never went down."
 
 # --- Did the scheduled task run? --------------------------------------------
 Write-Host ""
