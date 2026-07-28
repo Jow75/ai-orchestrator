@@ -18,7 +18,7 @@ import path from 'node:path';
 import TelegramApprovalProvider from '../src/approvals/providers/telegramProvider.js';
 import { silentLogger } from '../src/infra/logger.js';
 
-const CHAT_ID = '6522731464';
+const CHAT_ID = '1234567890';
 
 /** A fetch stand-in that serves canned getUpdates payloads and records posts. */
 function fakeFetch(updateBatches) {

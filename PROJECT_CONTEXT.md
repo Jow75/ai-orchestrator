@@ -252,7 +252,7 @@ telegram|email`); see CHANGELOG for full detail.
 
 Before that: **Phase 10.5 (v2.3.1), 2026-07-13** — an engineering-validation
 phase, no new architecture. Remote notifications configured AND live-verified (two-way
-Telegram bot `@jowgei_orchestrator_bot`, chat id 6522731464, + Gmail SMTP
+Telegram bot (owner-configured), chat id redacted, + Gmail SMTP
 through the built-in smtpClient); credentials now live in the new
 git-ignored `config/local.json`. Two real Haiku Claude missions run end to
 end (`validation-demo`: approval A7 → implement → 5 verifiers → commit →

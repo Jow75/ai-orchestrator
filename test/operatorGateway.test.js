@@ -115,7 +115,7 @@ test('one tick performs exactly ONE consuming read per routing provider', async 
 
 test('every routed message carries its channel and sender to the router', async () => {
   const provider = routingProvider();
-  provider.inbox.push({ text: '/status', from: 'moses', chatId: '6522731464' });
+  provider.inbox.push({ text: '/status', from: 'moses', chatId: '1234567890' });
   const router = recordingRouter();
   const gateway = new OperatorGateway({
     router, approvalManager: managerWith([provider]), logger: silentLogger,
@@ -124,7 +124,7 @@ test('every routed message carries its channel and sender to the router', async 
   await gateway.tick();
 
   assert.deepEqual(router.seen[0], {
-    text: '/status', channel: 'telegram', chatId: '6522731464', from: 'moses',
+    text: '/status', channel: 'telegram', chatId: '1234567890', from: 'moses',
   });
 });
 

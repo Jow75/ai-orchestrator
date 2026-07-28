@@ -6,7 +6,7 @@ complexity.
 
 Every item below is justified by something that actually cost time or
 confused a new user during Phase 10.5. This is a UX phase: the engine is
-already production-grade (see [PHASE_10.5_READINESS.md](PHASE_10.5_READINESS.md)).
+already production-grade (see [PHASE_10.5_READINESS.md](../../PHASE_10.5_READINESS.md)).
 
 ---
 

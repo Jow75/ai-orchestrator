@@ -89,7 +89,7 @@ Run against the real installation, the real bot, and real processes.
 | 1 | Service starts and answers with **zero** missions running | ✅ `daemon status` at 12s uptime, 0 missions, Telegram inbound active |
 | 2 | A second CLI process reaches it | ✅ status + `curl /api/daemon/workers` |
 | 3 | **Two projects supervised simultaneously** | ✅ `p12-svc-a` (pid 7444) + `p12-svc-b` (pid 18928) — the E1 capability |
-| 4 | Real Telegram inbound, exclusively owned | ✅ `@jowgei_orchestrator_bot` reachable; offset advanced to `532518247`; **zero** poll failures over the whole session |
+| 4 | Real Telegram inbound, exclusively owned | ✅ owner's bot reachable; getUpdates offset advanced monotonically; **zero** poll failures over the whole session |
 | 5 | Worker crash detected, service survives | ✅ stale records reaped, service unaffected |
 | 6 | **Missions survive the service dying** | ✅ *after a fix* — see §5 |
 | 7 | A restarted service **re-adopts** them | ✅ same pid 25900, listed `(adopted)` |

@@ -31,14 +31,14 @@ test('nothing is selected until something is selected', () => {
 
 test('a selection is remembered, and survives a new instance (a service restart)', () => {
   const { contextFile, context: c } = context();
-  const result = c.select('telegram', '6522731464', 'Remote Work', 'moses');
+  const result = c.select('telegram', '1234567890', 'Remote Work', 'moses');
 
   assert.equal(result.project, 'Remote Work');
   assert.equal(result.previous, null);
 
   const afterRestart = new OperatorContext({ contextFile, logger: silentLogger });
-  assert.equal(afterRestart.activeProject('telegram', '6522731464'), 'Remote Work');
-  assert.equal(afterRestart.get('telegram', '6522731464').by, 'moses');
+  assert.equal(afterRestart.activeProject('telegram', '1234567890'), 'Remote Work');
+  assert.equal(afterRestart.get('telegram', '1234567890').by, 'moses');
 });
 
 test('selections are per channel — the phone and the desktop keep their own cursor', () => {

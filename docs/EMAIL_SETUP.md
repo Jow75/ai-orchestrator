@@ -23,9 +23,9 @@ Uses the built-in dependency-free SMTP client
 
 ## Step 1 — Choose the sending mailbox
 
-Any SMTP-capable account works. For Gmail (your case:
-`mosesmusa2026ai@gmail.com`), Google requires an **App Password** — your
-normal password will NOT work and "less secure apps" no longer exists.
+Any SMTP-capable account works. For Gmail, Google requires an **App
+Password** — your normal password will NOT work and "less secure apps"
+no longer exists.
 
 > ⏸ **PAUSE.** Decide which account sends. Gmail → Step 2. Another
 > provider → find its SMTP host/port and jump to Step 3.
@@ -56,11 +56,11 @@ can never end up in a commit. Create it (or add to it):
         "host": "smtp.gmail.com",
         "port": 587,
         "starttls": true,
-        "user": "mosesmusa2026ai@gmail.com",
+        "user": "me@gmail.com",
         "pass": "<16-char app password>"
       },
-      "from": "mosesmusa2026ai@gmail.com",
-      "to": "mosesmusa2026ai@gmail.com"
+      "from": "me@gmail.com",
+      "to": "me@gmail.com"
     }
   },
   "approvals": {

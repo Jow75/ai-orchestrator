@@ -6,7 +6,7 @@
  * The selection must be REMEMBERED — a phone conversation that forgets which
  * project it is in between two messages is not a console, it is a form.
  *
- * Keyed by CHANNEL, not globally: `telegram:6522731464`. Today there is one
+ * Keyed by CHANNEL, not globally: `telegram:<chatId>`. Today there is one
  * owner on one channel, so a single global value would work — but the whole
  * point of the M2 architecture is that Telegram is merely the first client.
  * When the desktop (M3) and a future Discord/web client attach, each needs its

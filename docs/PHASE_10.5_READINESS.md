@@ -23,8 +23,8 @@ document records what was done, the evidence, and an evidence-based score.
 
 ### Remote notifications (Part 2)
 
-- **Telegram** — token `8671814218:…` validated via `getMe`
-  (bot `@jowgei_orchestrator_bot`). Chat id **6522731464** discovered from
+- **Telegram** — token `<redacted>` validated via `getMe`
+  (bot handle redacted). Chat id **`<redacted>`** discovered from
   the owner's first message. Two-way approval provider + one-way channel
   both live. `notify test` → ✔ telegram.
 - **Email** — real Gmail SMTP (`smtp.gmail.com:587`, STARTTLS, app
@@ -159,4 +159,4 @@ re-verified live.
 production-grade and now proven under real-world conditions — including
 the full phone-first remote workflow. The remaining friction is entirely
 in onboarding and operator experience, which is exactly Phase 11's
-mandate. See [PHASE_11_PROPOSAL.md](PHASE_11_PROPOSAL.md).
+mandate. See [PHASE_11_PROPOSAL.md](archive/phase-11/PHASE_11_PROPOSAL.md).

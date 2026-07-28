@@ -68,14 +68,14 @@ test('telegram: validates token, discovers chat id, writes local.json', async ()
   const { prompter, configManager } = harness(root, ['123:ABC', '']);
   const fetchFn = fakeTelegram({
     getMe: [{ ok: true, result: { username: 'jowgei_bot' } }],
-    getUpdates: [{ ok: true, result: [{ message: { chat: { id: 6522731464 } } }] }],
+    getUpdates: [{ ok: true, result: [{ message: { chat: { id: 1234567890 } } }] }],
     sendMessage: [{ ok: true, result: {} }],
   });
   const result = await runTelegramSetup({ configManager, prompter, fetchFn, sleepFn: immediate, pollAttempts: 3 });
-  assert.equal(result.chatId, '6522731464');
+  assert.equal(result.chatId, '1234567890');
 
   const cfg = localConfig(root);
-  assert.deepEqual(cfg.notifications.telegram, { enabled: true, botToken: '123:ABC', chatId: '6522731464' });
+  assert.deepEqual(cfg.notifications.telegram, { enabled: true, botToken: '123:ABC', chatId: '1234567890' });
   assert.equal(cfg.approvals.providers.telegram.enabled, true);
 });
 
@@ -87,7 +87,7 @@ test('telegram: setup publishes the command menu, scoped to the discovered chat'
   const { prompter, configManager } = harness(root, ['123:ABC', '']);
   const fetchFn = fakeTelegram({
     getMe: [{ ok: true, result: { username: 'jowgei_bot' } }],
-    getUpdates: [{ ok: true, result: [{ message: { chat: { id: 6522731464 } } }] }],
+    getUpdates: [{ ok: true, result: [{ message: { chat: { id: 1234567890 } } }] }],
     sendMessage: [{ ok: true, result: {} }],
     setMyCommands: [{ ok: true, result: true }],
   });
@@ -97,7 +97,7 @@ test('telegram: setup publishes the command menu, scoped to the discovered chat'
   assert.equal(result.commandsRegistered, true);
   const call = fetchFn.sent.find((c) => c.method === 'setMyCommands');
   assert.ok(call, 'the menu must be published during setup, not left for the owner to discover');
-  assert.deepEqual(call.body.scope, { type: 'chat', chat_id: 6522731464 },
+  assert.deepEqual(call.body.scope, { type: 'chat', chat_id: 1234567890 },
     'scoped to the owner — the only chat the provider will honour');
   assert.deepEqual(
     call.body.commands.map((c) => c.command).sort(),
