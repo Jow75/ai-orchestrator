@@ -56,6 +56,12 @@ function backend() {
       import('../../src/coordination/resourceLocks.js'),
       import('../../src/coordination/agentMessages.js'),
       import('../../src/coordination/dependencyGraph.js'),
+      // Phase 12 M3: the desktop becomes a client of the Core Service, using
+      // the SAME discovery and auth the CLI has used since M1 rather than a
+      // second implementation of them.
+      import('../../src/daemon/daemonClient.js'),
+      import('../../src/daemon/daemonRecord.js'),
+      import('../../src/drivers/simulation.js'),
     ]).then(
       ([
         configManagerMod, sessionManagerMod, missionTimelineMod, taskQueueMod,
@@ -64,6 +70,7 @@ function backend() {
         agentHealthMod, appMod,
         approvalStoreMod, missionLifecycleMod, resourceLocksMod, agentMessagesMod,
         dependencyGraphMod,
+        daemonClientMod, daemonRecordMod, simulationMod,
       ]) => ({
         ConfigManager: configManagerMod.ConfigManager,
         ConfigError: configManagerMod.ConfigError,
@@ -86,6 +93,9 @@ function backend() {
         AgentMessageBus: agentMessagesMod.AgentMessageBus,
         readyTasks: dependencyGraphMod.readyTasks,
         blockedByDependencies: dependencyGraphMod.blockedByDependencies,
+        DaemonClient: daemonClientMod.DaemonClient,
+        readDaemon: daemonRecordMod.readDaemon,
+        isSimulatedProject: simulationMod.isSimulatedProject,
       })
     );
   }
@@ -126,15 +136,73 @@ class OrchestratorBridge {
 
   // ------------------------------------------------------------ liveness --
 
-  /** Is an orchestrator process currently supervising (any project)? */
-  async isLive() {
+  /**
+   * The Core Service client — shared discovery and auth, not a second copy.
+   *
+   * Rebuilt on demand rather than cached: `DaemonClient.discover()` re-reads
+   * `state/daemon.json` on every call, and a desktop window that outlives three
+   * service restarts must not be holding the first one's port.
+   */
+  async service() {
+    const { DaemonClient } = await backend();
+    const cm = await this.configManager();
+    return new DaemonClient({
+      paths: cm.getPaths(),
+      config: cm.getAll(),
+      // The bridge's injectable fetch has to reach the service calls too, or a
+      // test asserting on desktop behaviour silently talks to whatever real
+      // daemon happens to be listening on this machine.
+      fetchImpl: this.fetchImpl,
+    });
+  }
+
+  /**
+   * WHO is supervising right now: 'daemon', 'standalone', or null.
+   *
+   * Phase 12 M3 exists largely because of this method. Before it, liveness
+   * meant one thing — `state/heartbeat.json`, which only a STANDALONE
+   * `ai-orchestrator start` writes. With the Core Service supervising two
+   * workers and answering a phone, the desktop read that file, found nothing,
+   * and displayed "Idle — no orchestrator running" while pointing every read
+   * at stale files on disk. The service is checked FIRST because when both
+   * exist the service is the one that owns the API port.
+   *
+   * @returns {Promise<'daemon'|'standalone'|null>}
+   */
+  async supervisor() {
+    const client = await this.service();
+    if (client.isRunning()) return 'daemon';
     const { readJsonSafe, isPidAlive } = await backend();
     const paths = await this.paths();
     const heartbeat = readJsonSafe(paths.heartbeatFile);
-    return Boolean(heartbeat && heartbeat.state === 'running' && isPidAlive(heartbeat.pid));
+    return heartbeat && heartbeat.state === 'running' && isPidAlive(heartbeat.pid)
+      ? 'standalone'
+      : null;
   }
 
+  /**
+   * Is an HTTP API reachable at all?
+   *
+   * Kept as a boolean with its original name and meaning — "can I use the API
+   * path rather than the file path" — because every read below branches on it
+   * and none of them care which process answers. What changed is that a daemon
+   * now counts, which is the entire M3 fix expressed in one line.
+   */
+  async isLive() {
+    return (await this.supervisor()) !== null;
+  }
+
+  /**
+   * The API base URL, preferring the port the SERVICE actually bound.
+   *
+   * The configured port is a request, not a fact: the daemon records what it
+   * got. Trusting config here would send every desktop read to a port nothing
+   * is listening on the moment 4711 was taken — precisely the collision the
+   * port registry exists to handle (M2.1).
+   */
   async apiBase() {
+    const client = await this.service();
+    if (client.isRunning()) return client.baseUrl();
     const cm = await this.configManager();
     const api = cm.getAll().api ?? {};
     return `http://${api.host ?? '127.0.0.1'}:${api.port ?? 4711}`;
@@ -181,11 +249,155 @@ class OrchestratorBridge {
   /** Defined projects + whether each has an active session (idle-safe). */
   async listProjects() {
     const cm = await this.configManager();
-    const { SessionManager, silentLogger } = await backend();
+    const { SessionManager, silentLogger, isSimulatedProject } = await backend();
     const paths = cm.getPaths();
     const sessionManager = new SessionManager({ sessionsDir: paths.sessionsDir, logger: silentLogger });
     const active = new Set(sessionManager.listActiveSessions().map((s) => s.project));
-    return cm.listProjects().map((name) => ({ name, hasActiveSession: active.has(name) }));
+    return cm.listProjects().map((name) => {
+      // Carried on the cheapest listing there is, because the project picker is
+      // where a fixture project is chosen — and a mission on one completes,
+      // verifies and writes nothing (see src/drivers/simulation.js).
+      let simulated = false;
+      try {
+        simulated = isSimulatedProject(cm.getProject(name));
+      } catch {
+        // Broken config: reported as 'misconfigured' by the registry, not here.
+      }
+      return { name, hasActiveSession: active.has(name), simulated };
+    });
+  }
+
+  /**
+   * Phase 12 M3: EVERY project at once, with the state the operator actually
+   * decides on — status, worker, branch, commit, health, pending approvals.
+   *
+   * This is the Control Center's data, and it comes from the service's own
+   * `/api/registry` — the identical records `/projects` renders on a phone.
+   * Two surfaces disagreeing about what "blocked" means is exactly the drift
+   * Phase 11 M4 removed, and the fix is that there is one registry, not two.
+   *
+   * Without a service there is no registry to ask, so it degrades to the
+   * per-project listing the desktop has always had. The Control Center renders
+   * that as "the service is not running" rather than as an empty machine.
+   *
+   * @returns {Promise<{records: object[], source: 'daemon'|'local'}>}
+   */
+  async getRegistry({ health = true, git = true } = {}) {
+    const client = await this.service();
+    if (client.isRunning()) {
+      const records = await client.registry({ health, git });
+      if (records.length) return { records, source: 'daemon' };
+    }
+    const projects = await this.listProjects();
+    return {
+      records: projects.map((p) => ({
+        name: p.name,
+        simulated: p.simulated,
+        status: p.hasActiveSession ? 'running' : 'idle',
+      })),
+      source: 'local',
+    };
+  }
+
+  /**
+   * Phase 12 M3: is the Core Service up, and will it survive a reboot?
+   *
+   * The same two questions `/service` answers on a phone and `daemon status`
+   * answers in a terminal. Never throws: a desktop that cannot render its own
+   * header because a service is down is worse than one that says so.
+   */
+  async getServiceStatus() {
+    // Answered LOCALLY, from Task Scheduler, so it is still available when the
+    // service is down — which is precisely when "will it come back?" is the
+    // question being asked. Bug 1 (M2.1) was invisible for months because every
+    // surface that could have answered it needed the thing it was asking about.
+    let autostart = { supported: false, installed: false };
+    try {
+      const { autostartState } = await import('../../src/daemon/serviceControl.js');
+      autostart = autostartState();
+    } catch {
+      // A probe failure is not a claim that autostart is missing; leave it
+      // unsupported rather than telling the owner their service will not return.
+    }
+
+    try {
+      const client = await this.service();
+      const status = await client.status();
+      if (!status.ok) {
+        return { running: false, stale: status.stale ?? false, reason: status.reason, autostart };
+      }
+      const report = status.report ?? {};
+      return {
+        running: true,
+        ...report,
+        autostart,
+        // `/api/daemon` returns the worker LIST; every consumer here wants the
+        // count. Normalized once, in the bridge, rather than in each view —
+        // `workers.length` rendered as "[]" is the kind of thing a UI does when
+        // two layers disagree about a field's type.
+        workers: Array.isArray(report.workers) ? report.workers.length : (report.workers ?? 0),
+        workerList: Array.isArray(report.workers) ? report.workers : [],
+      };
+    } catch (error) {
+      return { running: false, reason: error.message, autostart };
+    }
+  }
+
+  /** Phase 12 M3: every worker the service is supervising right now. */
+  async getWorkers() {
+    const client = await this.service();
+    if (!client.isRunning()) return [];
+    return client.workers();
+  }
+
+  /**
+   * Is THIS project currently running — under the service or standalone?
+   *
+   * `isLive()` answers "is an API reachable at all", which under the service is
+   * true for the whole machine the instant ANY project has a worker. Before
+   * this method existed, the Missions tab used exactly that signal to gate one
+   * project's Start/Stop buttons — so the moment a Core Service became the
+   * normal state (Bug 1, M2.1), every idle project would have shown as running
+   * and disabled Start everywhere. This asks the narrower, correct question.
+   *
+   * @param {string} project
+   * @returns {Promise<boolean>}
+   */
+  async isProjectLive(project) {
+    if (!project) return false;
+    const client = await this.service();
+    if (client.isRunning()) {
+      const workers = await client.workers();
+      return workers.some((w) => w.project === project && w.alive !== false);
+    }
+    const { readJsonSafe, isPidAlive } = await backend();
+    const paths = await this.paths();
+    const heartbeat = readJsonSafe(paths.heartbeatFile);
+    return Boolean(
+      heartbeat && heartbeat.project === project &&
+      heartbeat.state === 'running' && isPidAlive(heartbeat.pid)
+    );
+  }
+
+  /**
+   * Phase 12 M3: every decision waiting, across EVERY project.
+   *
+   * `getApprovals(project)` has always answered for one. An operator with six
+   * projects wants the question "what is waiting on me?" answered once, which
+   * is the same question `/approvals` answers remotely.
+   */
+  async getAllApprovals() {
+    const { records } = await this.getRegistry({ health: false, git: false });
+    const pending = [];
+    for (const record of records) {
+      // eslint-disable-next-line no-await-in-loop
+      const requests = await this.getApprovals(record.name);
+      for (const request of requests ?? []) {
+        if (request.status && request.status !== 'pending') continue;
+        pending.push({ ...request, project: record.name, simulated: Boolean(record.simulated) });
+      }
+    }
+    return pending;
   }
 
   async getStatus() {
@@ -468,7 +680,19 @@ class OrchestratorBridge {
    * Observability instead comes from the winston log files (see logTail.js).
    */
   async startMission(project, { fresh = false } = {}) {
-    if (await this.isLive()) {
+    // Phase 12 M3. Before this, "something is live" meant "refuse", which was
+    // right when only one orchestrator could exist. Under the Core Service it
+    // would have been a regression in the exact capability M1 was built for:
+    // the service supervises SEVERAL projects at once, so a second project is
+    // a request it can grant. Hand it over rather than spawning a competitor —
+    // two supervisors on one project is the failure the worker registry exists
+    // to prevent, and the service is the one that can see the whole machine.
+    const supervisor = await this.supervisor();
+    if (supervisor === 'daemon') {
+      const client = await this.service();
+      return client.startMission(project, { fresh });
+    }
+    if (supervisor === 'standalone') {
       return { ok: false, reason: 'An orchestrator is already running. Stop it before starting another.' };
     }
     const args = [BIN_PATH, 'start', project];
@@ -503,9 +727,24 @@ class OrchestratorBridge {
    * case where the API itself is unreachable (e.g. `api.enabled: false`)
    * even though the process is alive.
    */
-  async stopMission(reason) {
-    if (!(await this.isLive())) {
+  async stopMission(reason, project) {
+    const supervisor = await this.supervisor();
+    if (!supervisor) {
       return { ok: false, reason: 'No running orchestrator found.' };
+    }
+    // Under the service, "stop" needs to say WHAT to stop — `/api/control/stop`
+    // would ask the service itself to shut down, taking every other project's
+    // mission and the phone channel with it. `project` is optional only for
+    // backward compatibility with the single-orchestrator call shape.
+    if (supervisor === 'daemon') {
+      if (!project) {
+        return {
+          ok: false,
+          reason: 'The Core Service supervises several projects — say which mission to stop.',
+        };
+      }
+      const client = await this.service();
+      return client.stopMission(project, reason);
     }
     const result = await this.apiCall('/api/control/stop', { method: 'POST', auth: true, body: { reason } });
     if (result.ok) return result.data ?? { ok: true };

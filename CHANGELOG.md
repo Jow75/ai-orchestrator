@@ -3,6 +3,58 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.0.0] — 2026-07-28 — Phase 12 M3: Operator Control Center
+
+The desktop app becomes a pure client of the Core Service, closing the gap M1
+deliberately left open. `docs/PHASE_12_M3_REPORT.md`.
+
+**THE PHASE 12 INVARIANT still holds:** standalone `ai-orchestrator start`
+takes the identical code path it always has.
+
+### Fixed
+
+- **The desktop's liveness check did not know the Core Service existed.**
+  `isLive()` read only `state/heartbeat.json`, written exclusively by a
+  standalone `ai-orchestrator start`. The moment reboot persistence (M2.1)
+  made the service the normal state, every desktop read that branched on it —
+  status, tasks, memory, timeline, agents — silently took the stale-file path,
+  and the header read *"Idle — no orchestrator running"* while the service sat
+  one HTTP call away. Fixed with `supervisor()`, checked everywhere liveness
+  was: service first (it owns the API port when both exist), heartbeat second.
+
+- **The Missions tab gated one project's Start/Stop on machine-wide health.**
+  A second-order version of the same bug, found while fixing the first:
+  `getHealth()` answers true for the whole machine the instant any ONE project
+  has a worker, so every idle project would have shown as running the moment
+  the service — now the normal state — was up. Added `isProjectLive(project)`,
+  which asks the worker registry (service) or matches the heartbeat's own
+  project field (standalone) instead of applying a machine-wide answer to
+  whichever project happens to be selected.
+
+### Added
+
+- **The Operator Control Center** — a new landing tab, deliberately not
+  project-scoped. Every other tab answers a question about one project; this
+  one answers what an owner actually opens the desktop for: is the service up,
+  what is it running, and what is waiting on me. Service header (running,
+  uptime, worker count, Telegram inbound, reboot survival — resolved from Task
+  Scheduler locally, so the reboot answer works even while the service is
+  down); every project on one screen from the same `/api/registry` a phone's
+  `/projects` renders, each with a real Start/Stop; every pending approval
+  across every project; simulated projects disclosed in the picker and on the
+  card, closing the last gap from the M2.2 disclosure work.
+
+- `startMission()` now hands a second project to a running service instead of
+  refusing outright — the pre-M3 refusal was correct when one orchestrator
+  could exist at all, and a regression against the exact capability M1 built.
+  `stopMission(reason, project)` requires the project under the service (an
+  unqualified stop cannot be resolved when several missions may be running)
+  and never calls the standalone-only "stop everything" route.
+
+972 backend tests (+3), 41 desktop tests (+21), all passing.
+
+---
+
 ## [2.11.0] — 2026-07-28 — Phase 12 M2.2: The Artifact Investigation, Closed
 
 The demanded full trace of the mission that reported success over an empty

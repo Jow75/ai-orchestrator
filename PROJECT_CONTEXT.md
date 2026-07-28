@@ -12,54 +12,81 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-28, after **Phase 12 M2.1 (Residency, Honesty,
-Ports), v2.10.0** — committed + tagged, NOT pushed.
+**Last updated:** 2026-07-28, after **Phase 12 M3 (Operator Control Center),
+v3.0.0** — committed + tagged, NOT pushed. **Phase 12 is DONE (M1→M3, plus the
+M2.1/M2.2 response milestones).** M4 (Launch Experience & Remote Project
+Creation, `v3.1.0`) is next, whenever picked up.
 
 ---
 
 ## Where things stand right now (2026-07-28)
 
-**M2 was live-validated on the real machine and the real bot, and the console
-passed** — `/help` → `/projects` → `/project` → proposal → M-approval →
-A-approval → execution → completion all behaved as designed. The two-stage
-approval model is confirmed correct. **M2.1 is the response to what that run
-found.** Full report: `docs/PHASE_12_M2.1_REPORT.md`.
+**Reboot persistence closed on live evidence, not just a fix having been
+written.** A real Windows Restart, nothing started by hand, `/projects` /
+`/status` / `/service` all answering from a phone, and
+`scripts/verify-reboot-persistence.ps1` passing **11/11** — including the
+checks that separate "autostarted" from "survived the shutdown" and from
+"started by hand" (C5/C6, the ones that actually matter).
 
-Three things came out of it, and all three are now closed:
+**The artifact investigation (M2.2, `v2.11.0`) is closed.** Live-operator
+testing produced a mission that reported "complete, verified" over an empty
+workspace. Traced end to end with no assumptions: the project used
+`"driver": "mock"`, no Claude process was ever spawned, no code was generated,
+the checkpoint correctly recorded `filesTouched: []`. **Nothing malfunctioned —
+the defect was that no surface disclosed it.** v2.10.0 had already fixed the
+phone (`/projects`, `/status`, both approval gates, the Mission Card); this
+release found and closed five more: `projects list`/`projects status` (CLI),
+`/approvals`, `/missions`, and `doctor`. The two list surfaces derive the badge
+from **live config**, not a frozen snapshot, so a project switched to a real
+engine stops being labelled a rehearsal immediately.
 
-1. **The service did not survive a reboot.** Not a crash — the
-   `AI-Orchestrator Core Service` logon task shipped in M1 and had *never been
-   installed*, and `doctor` checked only the unrelated auto-resume task, so
-   every diagnostic called the machine healthy while a phone got silence. Now:
-   `daemon ensure` (idempotent, never starts a second daemon),
-   `START_SERVICE.bat`, restart-on-failure on the task, `/service` +
-   `daemon status` reporting Running/Starting/Stopped **and** reboot survival,
-   and `doctor` **failing** when the task is missing. Task is installed on this
-   machine and verified in Task Scheduler.
+**Validated with a positive control, not just root-cause narrative.** The
+identical objective ("create a simple calculator desktop app with React and
+Electron") was re-run through the identical operator path against a real
+`claude`-driver project (`calculator-proof`). Result: **12 real files**
+(React, Electron, Vite, a pure calculator engine), 16 passing tests of its own.
+`filesTouched` went from `[]` (the mock) to twelve entries (the real engine) —
+the single field the whole investigation turned on. That run also surfaced a
+live defect of its own: engines write plans in markdown, and
+`**Tasks:**`/`**Files:**`/`**Risks:**` matched no heading at all (fixed —
+bullet-safe emphasis stripping in `implementationSummary.js`).
 
-2. **A simulated mission reported itself as real work.** A `mock`-driver
-   project asked for a React/Electron calculator reported "complete, verified"
-   over an empty workspace. Nothing malfunctioned; nothing *disclosed*.
-   Simulation is now a first-class fact (`src/drivers/simulation.js`) disclosed
-   at every surface. Two sub-defects fell out of it, and **one affected real
-   missions**: the completion marker (the agent emitting `MISSION COMPLETE`)
-   was being counted as a passing *test*, producing "Tests: 1/1 · Verified" for
-   work nothing checked. Markers are now excluded from test counts and pass
-   rates everywhere.
+**Telegram command registration shipped alongside it.** `setMyCommands`,
+scoped to the owner's chat, published at setup / every service start (skipped
+when unchanged) / on demand (`notify commands`). The menu is derived from
+`commandGrammar.js`'s own `COMMANDS` table — never hand-maintained — so a
+command added to the grammar reaches every phone menu automatically.
+Live-verified against the real bot: 16 commands registered and read back.
 
-3. **The port registry** (`src/runtime/portRegistry.js`) — the architectural
-   request. Deterministic per `project:service`, availability confirmed by
-   binding rather than by trusting a file, reservations in `config/ports.json`
-   and allocations in `state/ports.json`. `ports get/reserve/release/list/check`
-   plus `GET /api/ports/:project/:service`.
+**M3 — the desktop becomes a pure Core Service client (`v3.0.0`) — is done.**
+The defect it fixes: `orchestratorBridge.isLive()` read *only*
+`state/heartbeat.json`, written exclusively by a standalone
+`ai-orchestrator start`. The Core Service never touches that file, so once
+reboot persistence made the service the machine's normal state, every desktop
+read silently took the stale-file path and the header said "Idle — no
+orchestrator running" one HTTP call away from a live service. Fixed with
+`supervisor()` (`'daemon' | 'standalone' | null`, service checked first because
+it owns the API port when both exist), used everywhere liveness was checked.
+A second-order version of the same bug was found and fixed while working on
+it: the Missions tab gated one project's Start/Stop on `getHealth()` — true
+for the *whole machine* the instant any project has a worker — which would
+have shown every idle project as "running" the moment the service became
+normal. New `isProjectLive(project)` asks the narrower question. Also new: the
+**Operator Control Center**, a non-project-scoped landing tab reading the same
+`/api/registry` a phone's `/projects` renders — service header, every project
+with real Start/Stop, every pending approval across every project, simulated
+projects disclosed in the picker and the card.
 
-`m2-validation` is retired in favour of **`validation-sandbox`**, which says in
-its name, description, README and fixture text that it is simulated.
+`m2-validation` is retired in favour of **`validation-sandbox`** (simulated,
+says so everywhere) and **`calculator-proof`** (real engine, the investigation's
+positive control — do not delete; it is evidence).
 
-**NEXT: Phase 12 M3 — Operator Control Center (desktop as daemon client),
-`v3.0.0`.** Note for M3: `projectRegistry.describe()` already carries
-`simulated` on every record, so the desktop gets the disclosure for free — it
-must render it.
+Reports: `docs/PHASE_12_M2.1_REPORT.md`, `docs/PHASE_12_M2.2_REPORT.md`,
+`docs/PHASE_12_M3_REPORT.md`.
+
+**NEXT: Phase 12 M4 — Launch Experience & Remote Project Creation, `v3.1.0`**
+(launcher, Start Menu, `/new` with mandatory plan approval) — see
+`docs/PHASE_12_PLAN.md` §4. Nothing is blocking it; pick up whenever ready.
 
 ---
 

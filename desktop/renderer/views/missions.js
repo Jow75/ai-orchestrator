@@ -25,11 +25,16 @@ window.Views.missions = (function () {
   }
 
   async function render(root, ctx) {
-    const [health, drivers, projects, lifecycle] = await Promise.all([
-      ctx.api.getHealth(), ctx.api.listDrivers(), ctx.api.listProjects(),
+    const [live, drivers, projects, lifecycle] = await Promise.all([
+      // Phase 12 M3: THIS project's own liveness, not "is any API reachable".
+      // Under the Core Service, getHealth() answers true the instant ANY
+      // project has a worker — gating one project's buttons on it would show
+      // every idle project as running the moment the machine's normal state
+      // (the service, up) was reached.
+      ctx.project ? ctx.api.isProjectLive(ctx.project) : Promise.resolve(false),
+      ctx.api.listDrivers(), ctx.api.listProjects(),
       ctx.project ? ctx.api.getLifecycle(ctx.project) : Promise.resolve(null),
     ]);
-    const live = Boolean(health?.ok);
     const current = projects.find((p) => p.name === ctx.project);
 
     root.innerHTML = `
@@ -82,7 +87,10 @@ window.Views.missions = (function () {
     });
 
     root.querySelector('#stop-btn')?.addEventListener('click', async () => {
-      const result = await ctx.api.stopMission('stopped from desktop app');
+      // The project is passed explicitly: under the Core Service several
+      // missions can run at once, so an unqualified stop cannot be resolved
+      // and the bridge refuses it rather than guessing which one was meant.
+      const result = await ctx.api.stopMission('stopped from desktop app', ctx.project);
       ctx.toast(result.ok ? 'Stop requested.' : `Could not stop: ${result.reason}`, result.ok ? 'success' : 'error');
       setTimeout(() => render(root, ctx), 800);
     });

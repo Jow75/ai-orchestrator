@@ -15,6 +15,7 @@
       <select id="project-select"></select>
     </div>
     <nav class="nav">
+      <button class="nav-item" data-tab="control">Control Center</button>
       <button class="nav-item" data-tab="dashboard">Dashboard</button>
       <button class="nav-item" data-tab="missions">Missions</button>
       <button class="nav-item" data-tab="tasks">Tasks</button>
@@ -32,6 +33,7 @@
       <h1 id="view-title">Dashboard</h1>
     </header>
     <section id="view-root" class="view-root">
+      <div class="view-panel" data-view="control"></div>
       <div class="view-panel" data-view="dashboard"></div>
       <div class="view-panel" data-view="missions"></div>
       <div class="view-panel" data-view="tasks"></div>
@@ -47,6 +49,7 @@
 <div id="toast-root" class="toast-root"></div>
 
 <script src="views/util.js"></script>
+<script src="views/control.js"></script>
 <script src="views/dashboard.js"></script>
 <script src="views/missions.js"></script>
 <script src="views/tasks.js"></script>

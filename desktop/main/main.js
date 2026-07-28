@@ -45,7 +45,17 @@ const HANDLERS = {
   'agents:health': (project) => bridge.getAgentHealth(project),
 
   'mission:start': (project, options) => bridge.startMission(project, options),
-  'mission:stop': (reason) => bridge.stopMission(reason),
+  // Phase 12 M3: `project` is new and optional. Under the Core Service it is
+  // required (several missions run at once, so "stop" must say which); without
+  // one, the old single-orchestrator call shape still works unchanged.
+  'mission:stop': (reason, project) => bridge.stopMission(reason, project),
+
+  // Phase 12 M3 — the Operator Control Center: the whole machine at once.
+  'registry:get': (options) => bridge.getRegistry(options),
+  'service:status': () => bridge.getServiceStatus(),
+  'service:workers': () => bridge.getWorkers(),
+  'project:isLive': (project) => bridge.isProjectLive(project),
+  'approvals:all': () => bridge.getAllApprovals(),
 
   'token:get': () => bridge.getApiToken(),
   'token:rotate': () => bridge.rotateApiToken(),

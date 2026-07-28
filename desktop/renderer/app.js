@@ -1,11 +1,15 @@
 (function () {
   const api = window.orchestrator;
   const TAB_LABELS = {
+    control: 'Control Center',
     dashboard: 'Dashboard', missions: 'Missions', tasks: 'Tasks', agents: 'Agents', approvals: 'Approvals',
     timeline: 'Timeline', memory: 'Memory Center', logs: 'Logs', settings: 'Settings',
   };
 
-  const state = { project: localStorage.getItem('ao:project') || '', tab: 'dashboard' };
+  // Phase 12 M3: the Control Center lands first. Every other tab answers a
+  // question about ONE project; the question an owner opens this app with is
+  // "is the service up, what is running, and what is waiting on me?".
+  const state = { project: localStorage.getItem('ao:project') || '', tab: 'control' };
 
   const viewRoot = document.getElementById('view-root');
   const viewTitle = document.getElementById('view-title');
@@ -41,7 +45,9 @@
     const projects = await api.listProjects();
     const previous = state.project;
     projectSelect.innerHTML = projects.length
-      ? projects.map((p) => `<option value="${OViz.escapeHtml(p.name)}">${OViz.escapeHtml(p.name)}${p.hasActiveSession ? ' (active)' : ''}</option>`).join('')
+      // The 🧪 marker is in the PICKER because that is where a fixture project
+      // is chosen — a mission on one completes, verifies and writes nothing.
+      ? projects.map((p) => `<option value="${OViz.escapeHtml(p.name)}">${OViz.escapeHtml(p.name)}${p.simulated ? ' 🧪 simulated' : ''}${p.hasActiveSession ? ' (active)' : ''}</option>`).join('')
       : '<option value="">(no projects yet)</option>';
     const stillExists = projects.some((p) => p.name === previous);
     state.project = stillExists ? previous : (projects[0]?.name ?? '');
@@ -49,13 +55,30 @@
     return projects;
   }
 
+  /**
+   * Phase 12 M3. This badge used to read `getHealth()`, which only ever knew
+   * about a standalone orchestrator — so with the Core Service supervising two
+   * missions and answering a phone, the desktop said "Idle — no orchestrator
+   * running". The service is asked first because it is the thing that is
+   * usually running.
+   */
   async function refreshLiveBadge() {
+    const service = await api.getServiceStatus();
+    if (service?.running) {
+      const missions = service.workers ?? 0;
+      liveBadge.textContent = `Core Service — ${missions} mission${missions === 1 ? '' : 's'}`;
+      liveBadge.className = 'live-indicator live';
+      return;
+    }
     const health = await api.getHealth();
     if (health?.ok) {
       liveBadge.textContent = `Live — pid ${health.pid}`;
       liveBadge.className = 'live-indicator live';
     } else {
-      liveBadge.textContent = 'Idle — no orchestrator running';
+      // Distinguished, because they need different remedies.
+      liveBadge.textContent = service?.stale
+        ? 'Core Service crashed — restart it'
+        : 'Idle — Core Service not running';
       liveBadge.className = 'live-indicator idle';
     }
   }

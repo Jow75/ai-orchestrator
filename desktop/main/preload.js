@@ -42,6 +42,13 @@ contextBridge.exposeInMainWorld('orchestrator', {
   startMission: invoke('mission:start'),
   stopMission: invoke('mission:stop'),
 
+  // Phase 12 M3 — Operator Control Center.
+  getRegistry: invoke('registry:get'),
+  getServiceStatus: invoke('service:status'),
+  getWorkers: invoke('service:workers'),
+  isProjectLive: invoke('project:isLive'),
+  getAllApprovals: invoke('approvals:all'),
+
   getApiToken: invoke('token:get'),
   rotateApiToken: invoke('token:rotate'),
 
