@@ -12,18 +12,17 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-29. **Phase 12 (M1→M3, plus the M2.1/M2.2 response
-milestones) and Phase 13 M1→M7 are ALL DONE and PUSHED to GitHub** —
-`main` and all 12 tags `v2.8.0`→`v3.7.0` are now on `origin`
-(`github.com/Jow75/ai-orchestrator`), following a fresh secrets/PII sweep of
-every commit since the 2026-07-28 audit (which found nothing new to redact)
-and a re-verification that every tag matches its commit and `package.json`
-(`3.7.0`) matches `CHANGELOG.md`'s `[3.7.0]` head. Full findings:
-`docs/PHASE_13_CONSOLIDATION_REVIEW.md`. **Phase 12 M4 (Launch Experience &
-Remote Project Creation, was `v3.1.0`) remains DEFERRED**, not cancelled —
-resumes under the next available `v3.x` once Phase 13 completes. **Phase 13
-M8 (Bot Experience & Discoverability, `v3.8.0`) is NEXT**, unchanged in
-scope after the consolidation review — see `docs/PHASE_13_PLAN.md`.
+**Last updated:** 2026-07-30. **Phase 12 (M1→M3, plus the M2.1/M2.2 response
+milestones) and Phase 13 M1→M7 are DONE and PUSHED to GitHub** — `main` and
+all 12 tags `v2.8.0`→`v3.7.0` are on `origin` (`github.com/Jow75/ai-
+orchestrator`) as of the 2026-07-29 consolidation review
+(`docs/PHASE_13_CONSOLIDATION_REVIEW.md`). **Phase 13 M8 (Bot Experience &
+Discoverability, `v3.8.0`) is now DONE, tagged locally, NOT yet pushed** —
+awaiting the owner's go-ahead, same as every prior push. **Phase 12 M4
+(Launch Experience & Remote Project Creation, was `v3.1.0`) remains
+DEFERRED**, not cancelled — resumes under the next available `v3.x` once
+Phase 13 completes. **Phase 13 M9 (Public Release Prep, process checkpoint,
+no code) is NEXT** — see `docs/PHASE_13_PLAN.md`.
 
 **Phase 13 M6 — Remote File System (`v3.6.0`) is DONE.** The first new
 runtime dependency since baseline (`archiver`) and the first filesystem
@@ -73,8 +72,30 @@ simulation-notice fix), and all three footer commands tapped through the
 real live API against the real result. Full report:
 `docs/PHASE_13_M7_REPORT.md`.
 
-**NEXT: Phase 13 M8 — Bot Experience & Discoverability, `v3.8.0`** — see
-`docs/PHASE_13_PLAN.md`.
+**Phase 13 M8 — Bot Experience & Discoverability (`v3.8.0`) is DONE.** No
+new command — an audit pass over the 29 that already existed across M2–M7.
+`commandGrammar.js`'s `COMMANDS` entries gain additive-only `category`/
+`examples` metadata the parser never consults; `render.js`'s `renderHelp()`
+groups by category with a tested fallback to the pre-M8 flat list if that
+metadata is ever missing (e.g. a revert); `commandMenu.js` — the Telegram
+menu builder — is byte-for-byte unchanged, regression-tested. First full
+`docs/OPERATOR_CONSOLE.md` pass since Phase 12 M2: now covers all 29
+commands and corrects two stale claims found in the process (the
+`projectRoots` default, and `/forget` vs. real file deletion). 1173 → 1178
+backend tests. Live-validated against the real Core Service — a real
+daemon restart (required, since `/help` runs in the daemon's own
+long-lived router, not a forked worker) and a real `/help` round trip
+through it. The check itself hit a real, disclosed incident: a first
+attempt from Git Bash hit this project's own documented "leading `/` gets
+rewritten into a path" gotcha, silently creating a real mission request
+(`M9`) on `calculator-proof`; caught immediately, cancelled before
+approval, nothing written, both events left in the log. Full report:
+`docs/PHASE_13_M8_REPORT.md`.
+
+**NEXT: Phase 13 M9 — Public Release Prep (process checkpoint, no code)** —
+repeats the `v3.0.0` process (full regression, docs staleness audit,
+README/QUICKSTART spot-check, tag verification), then presented for
+approval. See `docs/PHASE_13_PLAN.md`.
 
 ---
 
