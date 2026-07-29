@@ -450,11 +450,11 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ✅ done | `v3.5.0` |
 | Phase 13 M6 — Remote File System | ✅ done | `v3.6.0` |
 | Phase 13 M7 — Mission Completion Messaging | ✅ done | `v3.7.0` |
-| Phase 13 M8 — Bot Experience & Discoverability | ⏳ next | `v3.8.0` |
-| Phase 13 M9 — Public Release Prep | ⏳ planned | (audits `v3.8.0`) |
+| Phase 13 M8 — Bot Experience & Discoverability | ✅ done | `v3.8.0` |
+| Phase 13 M9 — Public Release Prep | ⏳ next | (audits `v3.8.0`) |
 
-**Test suite (current, 2026-07-29):** 1173/1173 backend (+20 Phase 13 M1,
-+31 M2, +34 M3, +17 M4, +26 M5, +55 M6, +18 M7) + 41 desktop — the 919/919 figure above was the Phase 12
+**Test suite (current, 2026-07-30):** 1178/1178 backend (+20 Phase 13 M1,
++31 M2, +34 M3, +17 M4, +26 M5, +55 M6, +18 M7, +5 M8) + 41 desktop — the 919/919 figure above was the Phase 12
 M2.1 snapshot; Phase 12 M2.2 and M3 each
 added more (see
 CHANGELOG for the exact per-release deltas).

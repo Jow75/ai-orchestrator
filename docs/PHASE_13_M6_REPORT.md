@@ -275,3 +275,26 @@ Phase 13 M7 — Mission Completion Messaging (`v3.7.0`): a copy change to
 the real commands this milestone just shipped
 (`/files`/`/file`/`/download-project`) with the real project name
 substituted in. See [PHASE_13_PLAN.md](PHASE_13_PLAN.md).
+
+---
+
+## Addendum (2026-07-30, reconciliation pass)
+
+The owner's original directive for remote file access asked for large
+files to be delivered by streaming or chunking when Telegram's limits are
+hit. What shipped instead, both here (`/file`) and for whole-project
+export, is a flat refusal with a redirect: over `MAX_DOCUMENT_BYTES`
+(50MB), `/file` points the owner at `/download-project` or the machine
+itself (`commandRouter.js`'s oversized-file branch); over the same limit
+post-zip, `/download-project` explains the size and suggests zipping by
+hand. No chunking mechanism was ever built, and this substitution was
+never disclosed as a deliberate decision in this report at the time — an
+audit surfaced it after the fact, not a stated design choice.
+
+**Decided on reconciliation, 2026-07-30: this is the permanent design.**
+Chunking a file's raw bytes across multiple Telegram messages would still
+require the recipient to manually reassemble it — strictly worse than the
+zip `/download-project` already produces, which is one file, one send,
+correctly ordered, with no reassembly step. `/file` under the 50MB limit
+already delivers the real file as a single document; nothing between "one
+message" and "one zip" is needed. No chunking implementation is planned.
