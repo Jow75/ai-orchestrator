@@ -200,6 +200,19 @@ export const COMMANDS = Object.freeze([
     takesRest: true,
     description: 'List, add, or remove a project root (where /scan looks for projects).',
   },
+  {
+    name: 'provider',
+    aliases: [],
+    usage: '/provider',
+    description: 'Current default provider/model, known drivers, and capabilities.',
+  },
+  {
+    name: 'model',
+    aliases: [],
+    usage: '/model [name|default]',
+    takesRest: true,
+    description: 'Show or set the default model. Never interrupts an active mission.',
+  },
 ]);
 
 /** name/alias → command definition. */

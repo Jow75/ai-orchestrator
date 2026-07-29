@@ -166,9 +166,10 @@ at the root (`deepMerge` now deep-clones), not patched around here.
 
 ---
 
-### M5 — Provider Architecture Completion & Remote Model/Provider Management (`v3.5.0`)
+### M5 — Provider Architecture Completion & Remote Model/Provider Management (`v3.5.0`) — ✅ DONE
 
-*Owner's items 3 and 4. Depends on M4.*
+*Owner's items 3 and 4. Depends on M4.* Full write-up:
+[PHASE_13_M5_REPORT.md](PHASE_13_M5_REPORT.md).
 
 **Explicitly not rebuilt** (already exists — stated so scope stays honest): `AIDriver`/`AgentRun` (`src/drivers/aiDriver.js`, already an `EventEmitter` — **Streaming** already exists), `DriverRegistry`/`BUILTIN_DRIVERS`/runtime `registerDriver()` (`src/drivers/driverRegistry.js` — a plugin can already add Gemini/OpenAI/local models with **zero core changes**), the generic `CliDriver` that already wraps any CLI-based engine from config alone (`src/drivers/cliDriver.js`), per-project `driver`/`claude` config block (`src/config/defaults.js:434`), Phase 9's per-task-role driver routing (`src/agents/`). **Execution** and **Cancellation** are likewise already covered by `AIDriver.launch()` and the existing worker-stop machinery (Phase 12 M1's stop-file + escalation) — nothing new needed. **Planning** is already the mission-planning/role-routing layer's job (`agentRouter`, role `planner`) and is out of scope here.
 

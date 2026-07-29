@@ -31,6 +31,7 @@ import {
   archive, restore, hide, unhide, forget, classifyProposal,
 } from './projectLifecycleOps.js';
 import { DEFAULT_CLASSIFICATION } from '../config/projectClassification.js';
+import { capabilitiesOf } from '../drivers/capabilities.js';
 import {
   renderProjectList, renderProjectDetail, renderTasks, renderApprovals,
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
@@ -59,13 +60,14 @@ export class CommandRouter {
    * @param {import('../progress/progressLedger.js').ProgressLedger} [deps.ledger]
    * @param {import('../config/configManager.js').ConfigManager} deps.configManager
    * @param {import('../config/liveConfig.js').LiveConfigLayer} [deps.liveConfig]
+   * @param {import('../drivers/driverRegistry.js').DriverRegistry} [deps.driverRegistry]
    * @param {object} deps.config - The full merged global config.
    * @param {() => void} [deps.requestShutdown] - Stops the Core Service.
    * @param {object} deps.logger
    */
   constructor({
     registry, context, requests, confirmations, events, approvalStore, approvalManager,
-    supervisor, taskQueue, sessionManager, ledger, configManager, liveConfig, config,
+    supervisor, taskQueue, sessionManager, ledger, configManager, liveConfig, driverRegistry, config,
     requestShutdown, serviceReport, logger,
   }) {
     this.registry = registry;
@@ -81,6 +83,7 @@ export class CommandRouter {
     this.ledger = ledger;
     this.configManager = configManager;
     this.liveConfig = liveConfig;
+    this.driverRegistry = driverRegistry;
     this.config = config ?? {};
     this.requestShutdown = requestShutdown;
     this.serviceReport = serviceReport;
@@ -391,6 +394,8 @@ export class CommandRouter {
       case 'hide': return this.commandHide(rest, ctx);
       case 'unhide': return this.commandUnhide(rest, ctx);
       case 'roots': return this.commandRoots(rest, ctx);
+      case 'provider': return this.commandProvider(ctx);
+      case 'model': return this.commandModel(rest, ctx);
       default:
         return { reply: `"/${name}" is recognized but not implemented. This is a bug — please report it.` };
     }
@@ -805,6 +810,91 @@ export class CommandRouter {
         '/scan discovery, never a registered project\'s ability to run.'
       : '';
     return { reply: `Removed ${resolved}.${note}` };
+  }
+
+  /**
+   * `/provider` — Phase 13 M5. Read-only: the machine-wide default, every
+   * known driver, and — when a project is selected — that project's own
+   * override, shown side by side so "what will my next mission actually
+   * use" is never ambiguous. No setter exists for provider in this
+   * milestone (only `/model`) — see docs/PHASE_13_PLAN.md M5.
+   */
+  commandProvider(ctx) {
+    const defaultProvider = this.operatorConfig.defaultProvider || 'claude';
+    const defaultModel = this.operatorConfig.defaultModel || '';
+    const caps = capabilitiesOf(defaultProvider);
+    const drivers = this.driverRegistry?.listDrivers() ?? [defaultProvider];
+
+    const lines = ['⚙️ Provider & model', ''];
+    lines.push(`Default provider: ${defaultProvider}${caps?.label ? ` — ${caps.label}` : ''}`);
+    lines.push(`Default model: ${defaultModel || '(engine default)'}`);
+    if (caps?.models.length) lines.push(`Available models: ${caps.models.join(', ')}`);
+    lines.push('');
+    lines.push(`Known drivers: ${drivers.join(', ')}`);
+
+    const active = this.activeProject(ctx);
+    if (active) {
+      const raw = this.configManager.getRawProject?.(active);
+      if (raw) {
+        lines.push('');
+        lines.push(`${active}'s own driver: ${raw.driver}`);
+        lines.push(`${active}'s own model: ${raw.claude?.model || '(uses the default above)'}`);
+      }
+    }
+    return { reply: lines.join('\n') };
+  }
+
+  /**
+   * `/model [name|default]` — Phase 13 M5. With no argument, shows the
+   * current default. `default` clears it back to per-project/engine
+   * behaviour. Otherwise validates against the default provider's known
+   * models (`capabilities.js`) before applying — a typo must not silently
+   * become the model every future mission launches with.
+   *
+   * Resolution happens only inside `ClaudeDriver.buildArgs()`, called once
+   * per launch — an in-flight mission's process is already spawned with
+   * whatever model it started with, so "never interrupts an active
+   * mission, new missions inherit the change" needs no special-casing here.
+   */
+  commandModel(rest, ctx) {
+    if (this.operatorConfig.liveConfig?.enabled === false) {
+      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
+    }
+    if (!this.liveConfig) {
+      return { reply: 'This interface cannot change configuration from here.' };
+    }
+
+    const trimmed = (rest ?? '').trim();
+    if (!trimmed) {
+      const current = this.operatorConfig.defaultModel;
+      return {
+        reply: current
+          ? `Default model: ${current}`
+          : 'No default model set — each project uses its own setting, or the engine default. /model <name> to set one.',
+      };
+    }
+
+    const previous = this.operatorConfig.defaultModel || '';
+    if (trimmed.toLowerCase() === 'default') {
+      this.liveConfig.applyPatch({ 'operator.defaultModel': '' });
+      this.events?.append({
+        type: 'provider.model-changed', actor: ctx.actor, payload: { model: '', previousModel: previous },
+      });
+      return { reply: 'Default model cleared. New missions use each project\'s own setting, or the engine default.' };
+    }
+
+    const provider = this.operatorConfig.defaultProvider || 'claude';
+    const caps = capabilitiesOf(provider);
+    const model = trimmed.toLowerCase();
+    if (caps?.models.length && !caps.models.includes(model)) {
+      return { reply: `"${trimmed}" is not a known ${provider} model. Valid: ${caps.models.join(', ')}.` };
+    }
+
+    this.liveConfig.applyPatch({ 'operator.defaultModel': model });
+    this.events?.append({
+      type: 'provider.model-changed', actor: ctx.actor, payload: { model, previousModel: previous },
+    });
+    return { reply: `Default model set to "${model}". Applies to the next mission that starts — never one already running.` };
   }
 
   // ------------------------------------------------------------ destructive --

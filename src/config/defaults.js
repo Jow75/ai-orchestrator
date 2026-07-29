@@ -369,6 +369,19 @@ export const ORCHESTRATOR_DEFAULTS = {
      */
     projectRoots: ['C:\\Users\\Admin\\Music'],
     /**
+     * Phase 13 M5: the machine-wide default provider/model, consulted only
+     * when a project's own config is silent on it (an explicit per-project
+     * `driver`/`claude.model` always wins — see drivers/claudeDriver.js).
+     * An empty `defaultModel` ⇒ every driver's own built-in default
+     * applies, unchanged from before this milestone existed. `defaultProvider`
+     * starts at `'claude'` (matching `PROJECT_DEFAULTS.driver`) purely so
+     * `/model <name>` has a provider to validate against out of the box —
+     * this milestone ships no `/provider <name>` setter (`/provider` is
+     * read-only display; see docs/PHASE_13_PLAN.md M5).
+     */
+    defaultProvider: 'claude',
+    defaultModel: '',
+    /**
      * Phase 13 M2: how `/scan` looks for real projects under `projectRoots`.
      * Deliberately shallow (one configured root → its immediate
      * subdirectories, marker-probed a few levels deep) and never cached —

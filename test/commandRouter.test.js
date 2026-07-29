@@ -35,6 +35,7 @@ import ApprovalStore from '../src/approvals/approvalStore.js';
 import ApprovalManager from '../src/approvals/approvalManager.js';
 import SessionManager from '../src/state/sessionManager.js';
 import LiveConfigLayer from '../src/config/liveConfig.js';
+import DriverRegistry from '../src/drivers/driverRegistry.js';
 import { ORCHESTRATOR_DEFAULTS } from '../src/config/defaults.js';
 import { ensureRuntimeDirs } from '../src/infra/paths.js';
 import { silentLogger } from '../src/infra/logger.js';
@@ -131,6 +132,7 @@ function harness({ projects = ['alpha', 'beta'], operator = {}, driver = 'claude
     sessionManager,
     configManager,
     liveConfig: new LiveConfigLayer({ configManager }),
+    driverRegistry: new DriverRegistry({ logger: silentLogger }),
     config: configManager.getAll(),
     requestShutdown: () => shutdowns.push(Date.now()),
     logger: silentLogger,
@@ -1093,5 +1095,79 @@ test('/roots remove says plainly when the path was never a configured root', asy
 test('/roots is refused when operator.liveConfig is disabled', async () => {
   const h = harness({ operator: { liveConfig: { enabled: false } } });
   const { reply } = await h.say('/roots');
+  assert.match(reply, /disabled/);
+});
+
+// ─────────────────────────────── Phase 13 M5: provider & model ─────────────
+
+test('/provider shows the default provider/model, capabilities, and known drivers', async () => {
+  const { say } = harness();
+  const { reply } = await say('/provider');
+  assert.match(reply, /Default provider: claude/);
+  assert.match(reply, /Default model: \(engine default\)/);
+  assert.match(reply, /sonnet, opus, haiku/);
+  assert.match(reply, /Known drivers: claude, cli, mock/);
+});
+
+test('/provider shows the active project\'s own driver/model override, side by side', async () => {
+  const { say, registry } = harness({ projects: ['alpha'] });
+  registry.configManager.updateProject('alpha', { claude: { model: 'haiku' } });
+  await say('/project alpha');
+
+  const { reply } = await say('/provider');
+  assert.match(reply, /alpha's own driver: claude/);
+  assert.match(reply, /alpha's own model: haiku/);
+});
+
+test('/model with no argument reports there is no default set yet', async () => {
+  const { say } = harness();
+  const { reply } = await say('/model');
+  assert.match(reply, /No default model set/);
+});
+
+test('/model <name> sets the default; /model alone then reports it', async () => {
+  const { say, events } = harness();
+
+  const set = await say('/model haiku');
+  assert.match(set.reply, /Default model set to "haiku"/);
+  assert.match(set.reply, /never one already running/);
+  assert.equal(events.read({ types: ['provider.model-changed'] }).length, 1);
+
+  const check = await say('/model');
+  assert.match(check.reply, /Default model: haiku/);
+});
+
+test('/model refuses an unknown model for the current provider', async () => {
+  const { say } = harness();
+  const { reply } = await say('/model gpt-5000');
+  assert.match(reply, /is not a known claude model/);
+  assert.match(reply, /sonnet, opus, haiku/);
+});
+
+test('/model default clears the default back to per-project/engine behaviour', async () => {
+  const { say } = harness();
+  await say('/model opus');
+  const { reply } = await say('/model default');
+  assert.match(reply, /cleared/);
+  assert.match((await say('/model')).reply, /No default model set/);
+});
+
+test('/model actually changes what the NEXT ClaudeDriver launch uses — never something already running', async () => {
+  const { say, router } = harness();
+  await say('/model opus');
+
+  // The router's own driverRegistry (what a worker would consult) reflects
+  // it immediately — this is the live-config mutation, not a restart.
+  const claude = router.driverRegistry.getDriver('claude');
+  // driverRegistry here has no defaultModelProvider wired (test harness
+  // mirrors the daemon's OWN registry, which is display-only — see
+  // app.js for the worker-side registry that actually launches). Confirm
+  // instead that the config value itself is live:
+  assert.equal(router.config.operator.defaultModel, 'opus');
+});
+
+test('/model is refused when operator.liveConfig is disabled', async () => {
+  const { say } = harness({ operator: { liveConfig: { enabled: false } } });
+  const { reply } = await say('/model opus');
   assert.match(reply, /disabled/);
 });

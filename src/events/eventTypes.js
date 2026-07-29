@@ -60,6 +60,10 @@ export const EVENT_TYPES = Object.freeze([
   /** A remotely-mutable config key changed. Payload logs the KEY only, never the value. */
   'config.changed',
 
+  // ── provider / model (Phase 13 M5) ──────────────────────────────────────
+  /** `/model` changed the machine-wide default model. */
+  'provider.model-changed',
+
   // ── missions requested from an interface (M2 Priority 3) ─────────────────
   /** Free text became a mission request awaiting the owner's approval. */
   'mission.created',

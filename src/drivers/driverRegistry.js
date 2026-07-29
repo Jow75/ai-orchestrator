@@ -28,9 +28,14 @@ export class DriverRegistry {
   /**
    * @param {object} options
    * @param {object} options.logger - Root logger (children are derived per driver).
+   * @param {() => string} [options.defaultModelProvider] - Phase 13 M5:
+   *   forwarded to every driver instance this registry creates. Only
+   *   `ClaudeDriver` currently reads it; passing it to drivers that don't
+   *   (`mock`, `cli`) is harmless — their constructors simply ignore it.
    */
-  constructor({ logger }) {
+  constructor({ logger, defaultModelProvider }) {
     this.logger = logger;
+    this.defaultModelProvider = defaultModelProvider;
     this.constructors = new Map(Object.entries(BUILTIN_DRIVERS));
     this.instances = new Map();
   }
@@ -70,7 +75,10 @@ export class DriverRegistry {
       );
     }
 
-    const instance = new DriverClass({ logger: childLogger(this.logger, `${id}-driver`) });
+    const instance = new DriverClass({
+      logger: childLogger(this.logger, `${id}-driver`),
+      defaultModelProvider: this.defaultModelProvider,
+    });
     this.instances.set(id, instance);
     return instance;
   }

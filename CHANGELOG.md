@@ -3,6 +3,66 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.5.0] — 2026-07-29 — Phase 13 M5: Provider Architecture Completion & Remote Model/Provider Management
+
+Completes the provider/model layer and exposes it remotely.
+`docs/PHASE_13_M5_REPORT.md`.
+
+### Already built, explicitly not rebuilt (stated so scope stays honest)
+
+`AIDriver`/`AgentRun` (already an `EventEmitter` — streaming already
+exists), `DriverRegistry`'s runtime `registerDriver()` (a plugin can already
+add Gemini/OpenAI/local models with zero core changes), the generic
+`CliDriver` (wraps any CLI engine from config alone), per-project
+`driver`/`claude` config, Phase 9's per-task-role driver routing. Execution
+and cancellation are already covered by `AIDriver.launch()` and the
+existing worker-stop machinery. Authentication: every built-in driver
+authenticates via the wrapped CLI's own ambient login; this milestone adds
+no credential vault (a future driver that genuinely needs one follows the
+existing `config/local.json` pattern SMTP/Telegram secrets already use).
+
+### Added
+
+- **`src/drivers/capabilities.js`**, `DRIVER_CAPABILITIES` — a plain data
+  map (models/streaming/cancellation/toolUse per driver id). `cli`'s
+  `toolUse: 'unknown'` is deliberate: a generic wrapper cannot introspect an
+  arbitrary engine, and inventing `true`/`false` would be exactly the
+  "confident fiction" `projectRegistry.js` already argues against.
+- **A machine-wide default model** (`operator.defaultModel`/
+  `operator.defaultProvider`, both allowlisted in M4's `LiveConfigLayer`).
+  Threaded into `ClaudeDriver` via an optional `defaultModelProvider`
+  closure (every existing caller/test unaffected when absent). Resolved
+  once per launch inside `buildArgs()`: `project.claude.model ||
+  defaultModelProvider()` — an explicit per-project model always wins.
+- **`/provider`** (read-only: default provider/model, capabilities, known
+  drivers, and — when a project is selected — that project's own override
+  shown side by side) and **`/model [name|default]`** (validates against
+  the provider's known models; `default` clears back to per-project
+  behaviour).
+- New event type `provider.model-changed`.
+
+### Why this never interrupts an active mission
+
+A worker process loads its own config once, at construction, and never
+reloads it — the same pattern every other worker-side setting already
+follows. A `/model` change lands in the daemon's live config immediately,
+but an already-running worker's `defaultModelProvider` closure reads that
+SAME worker's own (unchanged) snapshot, so its in-flight launch is
+unaffected. A brand-new worker (the next mission) loads config fresh at
+its own construction and picks up the change automatically. No explicit
+"don't disrupt a running mission" logic was needed — the existing
+process-boundary architecture already guarantees it.
+
+1074 → 1100 backend tests (+26: `buildArgs`/`defaultModelProvider`
+coverage in `claudeDriver.test.js`, new `driverRegistry.test.js`
+(previously untested at the unit level) and `capabilities.test.js`, plus
+`/provider`/`/model` integration tests in `commandRouter.test.js`).
+Live-validated against the real 6 project configs: projects with no
+explicit model correctly inherit a simulated machine default; `phone-demo`/
+`validation-demo` (both explicitly set to `haiku`) correctly ignore it.
+
+---
+
 ## [3.4.0] — 2026-07-29 — Phase 13 M4: Live Configuration Layer
 
 The first mechanism for the daemon to accept a config change without a

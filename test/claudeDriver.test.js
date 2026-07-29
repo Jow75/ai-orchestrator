@@ -51,6 +51,47 @@ test('buildArgs: all optional settings are forwarded', () => {
   assert.ok(args.includes('--add-dir') && args.includes('C:/extra'));
 });
 
+// ── Phase 13 M5: machine-wide default model ─────────────────────────────
+
+test('buildArgs: with no defaultModelProvider, identical to before this milestone (regression)', () => {
+  const bare = new ClaudeDriver({ logger: silentLogger }); // no closure passed at all
+  const args = bare.buildArgs({ model: '' }, null);
+  assert.ok(!args.includes('--model'));
+});
+
+test('buildArgs: falls back to the default model only when the project sets none', () => {
+  const driverWithDefault = new ClaudeDriver({
+    logger: silentLogger,
+    defaultModelProvider: () => 'opus',
+  });
+
+  const withoutProjectModel = driverWithDefault.buildArgs({ model: '' }, null);
+  assert.equal(withoutProjectModel[withoutProjectModel.indexOf('--model') + 1], 'opus');
+
+  const withProjectModel = driverWithDefault.buildArgs({ model: 'haiku' }, null);
+  assert.equal(withProjectModel[withProjectModel.indexOf('--model') + 1], 'haiku',
+    'an explicit per-project model always wins over the machine-wide default');
+});
+
+test('buildArgs: the closure is read fresh on every call — a change applies to the NEXT launch only', () => {
+  let current = 'sonnet';
+  const driverWithDefault = new ClaudeDriver({
+    logger: silentLogger,
+    defaultModelProvider: () => current,
+  });
+
+  const first = driverWithDefault.buildArgs({ model: '' }, null);
+  assert.equal(first[first.indexOf('--model') + 1], 'sonnet');
+
+  current = 'opus'; // simulates /model opus landing between two launches
+  const second = driverWithDefault.buildArgs({ model: '' }, null);
+  assert.equal(second[second.indexOf('--model') + 1], 'opus');
+
+  // The FIRST args array is a plain, already-returned array — nothing
+  // retroactively changes it, matching "never interrupts an active mission."
+  assert.equal(first[first.indexOf('--model') + 1], 'sonnet');
+});
+
 test('extractLimitResetTime: epoch-seconds form', () => {
   const epochSeconds = Math.floor(Date.now() / 1000) + 3600;
   const parsed = driver.extractLimitResetTime(

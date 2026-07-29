@@ -325,6 +325,7 @@ export class Daemon extends EventEmitter {
       ledger: this.ledger,
       configManager: this.configManager,
       liveConfig: this.liveConfig,
+      driverRegistry: this.driverRegistry,
       config: this.config,
       // A remote shutdown must go through the SAME stop path as `daemon stop`
       // (see watchStopFile): on Windows a cross-process signal is a hard kill,

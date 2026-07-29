@@ -139,8 +139,18 @@ mutation of a merged config would have corrupted it for every other
 and arrays both) before it ever shipped. 1074/1074 backend tests. Full
 report: `docs/PHASE_13_M4_REPORT.md`.
 
-**NEXT: Phase 13 M5 — Provider Architecture Completion & Remote
-Model/Provider Management, `v3.5.0`** — see `docs/PHASE_13_PLAN.md`.
+**Phase 13 M5 — Provider Architecture Completion & Remote Model/Provider
+Management (`v3.5.0`) is DONE.** Most of "provider architecture" already
+existed (streaming, plugin drivers, execution/cancellation); what was
+missing was `DRIVER_CAPABILITIES` and a machine-wide default model
+(`/provider`, `/model [name|default]`). "Never interrupts an active
+mission" needed no new logic — it falls out of the existing worker
+process-boundary architecture (a worker loads config once, at construction,
+and never reloads it). 1100/1100 backend tests, live-validated against the
+real 6 project configs. Full report: `docs/PHASE_13_M5_REPORT.md`.
+
+**NEXT: Phase 13 M6 — Remote File System, `v3.6.0`** — see
+`docs/PHASE_13_PLAN.md`.
 
 ---
 
@@ -362,14 +372,14 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 13 M2 — Project Roots & Discovery | ✅ done | `v3.2.0` |
 | Phase 13 M3 — Project Lifecycle & Registry Operations | ✅ done | `v3.3.0` |
 | Phase 13 M4 — Live Configuration Layer | ✅ done | `v3.4.0` |
-| Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ⏳ next | `v3.5.0` |
-| Phase 13 M6 — Remote File System | ⏳ planned | `v3.6.0` |
+| Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ✅ done | `v3.5.0` |
+| Phase 13 M6 — Remote File System | ⏳ next | `v3.6.0` |
 | Phase 13 M7 — Mission Completion Messaging | ⏳ planned | `v3.7.0` |
 | Phase 13 M8 — Bot Experience & Discoverability | ⏳ planned | `v3.8.0` |
 | Phase 13 M9 — Public Release Prep | ⏳ planned | (audits `v3.8.0`) |
 
-**Test suite (current, 2026-07-29):** 1074/1074 backend (+20 Phase 13 M1,
-+31 M2, +34 M3, +17 M4) + 41 desktop — the 919/919 figure above was the Phase 12
+**Test suite (current, 2026-07-29):** 1100/1100 backend (+20 Phase 13 M1,
++31 M2, +34 M3, +17 M4, +26 M5) + 41 desktop — the 919/919 figure above was the Phase 12
 M2.1 snapshot; Phase 12 M2.2 and M3 each
 added more (see
 CHANGELOG for the exact per-release deltas).

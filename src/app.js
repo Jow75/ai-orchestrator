@@ -106,7 +106,15 @@ export class App {
       logger: childLogger(this.logger, 'sessions'),
     });
 
-    this.driverRegistry = new DriverRegistry({ logger: this.logger });
+    this.driverRegistry = new DriverRegistry({
+      logger: this.logger,
+      // Phase 13 M5: reads THIS process's own config snapshot (loaded once,
+      // above, at construction — a worker never reloads it) — so a change
+      // the daemon applies mid-mission is invisible to an already-running
+      // worker by construction, and a NEW worker (the next mission) picks
+      // it up automatically just by starting after the change landed.
+      defaultModelProvider: () => this.config.operator?.defaultModel || '',
+    });
 
     // Phase 10A/10C: the Approval Manager — store + remote providers.
     this.approvalStore = new ApprovalStore({

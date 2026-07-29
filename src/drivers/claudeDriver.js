@@ -26,10 +26,26 @@ const STOP_GRACE_MS = 10_000;
 const VERSION_PROBE_TIMEOUT_MS = 30_000;
 
 export class ClaudeDriver extends AIDriver {
-  constructor({ logger }) {
+  /**
+   * @param {object} options
+   * @param {object} options.logger
+   * @param {() => string} [options.defaultModelProvider] - Phase 13 M5: the
+   *   machine-wide default model (`operator.defaultModel`), consulted only
+   *   when a project's own `claude.model` is unset. Optional — every
+   *   existing caller/test that doesn't pass it gets identical behaviour to
+   *   before this milestone (the same optional-collaborator contract every
+   *   Phase 10 surface already uses). Deliberately a closure, not a value:
+   *   for a worker process this reads that process's OWN config snapshot
+   *   (loaded once at App construction, same as everything else a worker
+   *   reads), so an in-flight mission's args are already fixed by the time
+   *   any later `/model` change lands — no extra "don't disrupt a running
+   *   mission" logic is needed, because none is possible by construction.
+   */
+  constructor({ logger, defaultModelProvider }) {
     super({ logger });
     this.id = 'claude';
     this.name = 'Claude Code';
+    this.defaultModelProvider = defaultModelProvider ?? (() => '');
 
     // Engine-specific knowledge consumed by the core exit classifier.
     this.exitPatterns = {
@@ -91,7 +107,11 @@ export class ClaudeDriver extends AIDriver {
     const args = ['-p', '--output-format', 'stream-json', '--verbose'];
 
     if (engineSessionId) args.push('--resume', engineSessionId);
-    if (claudeConfig.model) args.push('--model', claudeConfig.model);
+    // Phase 13 M5: fall back to the machine-wide default only when this
+    // project has never set its own model — an explicit per-project choice
+    // always wins.
+    const model = claudeConfig.model || this.defaultModelProvider();
+    if (model) args.push('--model', model);
     if (claudeConfig.permissionMode) {
       args.push('--permission-mode', claudeConfig.permissionMode);
     }
