@@ -128,3 +128,28 @@ test('every command has a usage line and a description (this is what /help rende
     assert.ok(command.description?.length > 10, `${command.name} has a description`);
   }
 });
+
+test('every command declares a category, and it is never consulted by the parser (Phase 13 M8)', () => {
+  // A category typo can misfile a command in /help; it can never change what
+  // parseCommand() does with it — category is additive metadata, read only
+  // by renderHelp() and docs/OPERATOR_CONSOLE.md.
+  for (const command of COMMANDS) {
+    assert.equal(typeof command.category, 'string', `${command.name} has a category`);
+    assert.ok(command.category.length > 0, `${command.name}'s category is not empty`);
+  }
+  const parsed = parseCommand('/status');
+  assert.equal(parsed.command.category, 'Projects');
+  assert.equal(parseCommand('status').kind, parsed.kind, 'category plays no part in parsing');
+});
+
+test('every example actually parses as the command it illustrates (Phase 13 M8)', () => {
+  // examples exist to be copy-pasted; one that the parser itself would
+  // refuse would teach the owner a command that does not work.
+  for (const command of COMMANDS) {
+    for (const example of command.examples ?? []) {
+      const parsed = parseCommand(example);
+      assert.equal(parsed.kind, 'command', `"${example}" (${command.name}) parses as a command`);
+      assert.equal(parsed.name, command.name, `"${example}" resolves back to /${command.name}`);
+    }
+  }
+});

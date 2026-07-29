@@ -1,6 +1,9 @@
 # The Operator Console
 
-How to run your projects from your phone. (Phase 12 M2, `v2.9.0`.)
+How to run your projects from your phone. Introduced in Phase 12 M2
+(`v2.9.0`); this page is kept current with the full command surface, last
+audited end-to-end in Phase 13 M8 (`v3.8.0`), which also grouped `/help`
+itself into the same sections used below.
 
 This is the guide to *operating* AI-Orchestrator remotely. For deciding
 individual approvals, see [REMOTE_APPROVALS.md](REMOTE_APPROVALS.md); for
@@ -52,31 +55,108 @@ added later can accidentally become reachable.
 
 ## The commands
 
+29 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
+— both read from the one `COMMANDS` array in `src/operator/commandGrammar.js`,
+so this table and the bot's own `/help` cannot drift apart.
+
+### General
+
 | Command | What it does |
 | --- | --- |
-| `/help` | Everything, generated from the parser itself |
-| `/projects` | Every project: status, tasks, branch, health |
-| `/project <name>` | Select the active project. Remembered until you change it |
+| `/help` | Every command, grouped, generated from the parser itself |
 | `/whoami` | Which project this conversation is pointed at |
+
+### Projects
+
+Browsing and selecting what you already have.
+
+| Command | What it does |
+| --- | --- |
+| `/projects [all\|classify]` | Every project: status, tasks, branch, health. `all` includes hidden; `classify` proposes classifications |
+| `/project <name>` | Select the active project. Remembered until you change it |
 | `/status [project]` | Phase, tasks, worker, branch, commit, last activity, health |
-| `/tasks [project]` | The real task queue and where it is |
+
+### Missions
+
+Starting, watching, and stopping work.
+
+| Command | What it does |
+| --- | --- |
 | `/start [project]` | Start supervising |
 | `/stop [project]` ⚠️ | Stop a mission (the session stays resumable) |
+| `/tasks [project]` | The real task queue and where it is |
 | `/reset [project]` ⚠️ | Abandon an interrupted session so the next start is fresh |
+
+### Decisions
+
+What is waiting on you.
+
+| Command | What it does |
+| --- | --- |
 | `/approvals` | Every decision waiting on you, across all projects |
 | `/missions` | Mission requests you raised and have not answered |
-| `/events [n]` | What the system actually did |
-| `/service` | Running / Starting / Stopped — and whether it survives a reboot |
-| `/shutdown` ⚠️ | Stop the Core Service itself |
 | `/confirm <code>` · `/cancel [code]` | Answer a ⚠️ prompt |
+
+### System
+
+| Command | What it does |
+| --- | --- |
+| `/service` | Running / Starting / Stopped — and whether it survives a reboot |
+| `/events [n]` | What the system actually did |
+| `/shutdown` ⚠️ | Stop the Core Service itself |
+
+### Registry
+
+Which projects AI-Orchestrator knows about (`/scan`, `/import` — Phase 13
+M2; `/archive`, `/restore`, `/hide`, `/unhide`, `/forget` — M3; `/roots` —
+M4).
+
+| Command | What it does |
+| --- | --- |
+| `/scan` | Find real, unregistered projects under your configured roots |
+| `/import <path> [as <name>]` | Register a folder `/scan` found (registry only — never touches its files) |
+| `/archive [project]` | Demote a project's priority. Never deletes it |
+| `/restore [project]` | Return an archived or hidden project to "development" |
+| `/hide [project]` · `/unhide [project]` | Keep a project out of `/projects` without archiving or removing it |
+| `/forget [project]` ⚠️ | Remove a project from the registry. Files on disk are NEVER touched |
+| `/roots [add\|remove <path>]` | List, add, or remove a project root — where `/scan` looks |
+
+### Configuration
+
+The machine-wide default provider/model (Phase 13 M5).
+
+| Command | What it does |
+| --- | --- |
+| `/provider` | Current default provider/model, known drivers, and capabilities |
+| `/model [name\|default]` | Show or set the default model. Never interrupts an active mission |
+
+### Files
+
+Read-only remote inspection (Phase 13 M6).
+
+| Command | What it does |
+| --- | --- |
+| `/files [path]` | List a directory inside the active project (default: its root) |
+| `/file <path>` | Read one file — inline if small, as an attachment if not |
+| `/download-project [project]` | ZIP the active (or named) project — source only, never `node_modules`/`.git`/build output |
 
 Plus the decision grammar, unchanged since Phase 10:
 `APPROVE A7` · `REJECT A7 [why]` · `MODIFY A7 <changes>` · `DONE A7`.
 
 Aliases exist where they are natural — `/ls`, `/use`, `/cd`, `/queue`, `/log`,
-`/yes`, `/no`. The leading `/` is optional for a bare command (`projects`,
-`status calculator`), and prose that merely *starts* with a command word
-("status update: the importer is done…") is treated as prose, not a command.
+`/yes`, `/no`, `/rescan`, `/dir`, `/cat`, `/zip`. The leading `/` is optional
+for a bare command (`projects`, `status calculator`), and prose that merely
+*starts* with a command word ("status update: the importer is done…") is
+treated as prose, not a command.
+
+A few less-obvious ones in practice:
+
+```text
+/import C:\Users\Admin\Music\new-project as "New Project"
+/roots add D:\Development
+/model claude-sonnet-5           (or: /model default)
+/download-project Remote Work
+```
 
 ---
 
@@ -260,9 +340,13 @@ the full `operator` block):
 ## Not yet
 
 - **Creating a project from your phone** (`/new`) is Phase 12 M4. The safety
-  rule it depends on already exists: `operator.projectRoots` defaults to empty,
-  and empty means refuse. Creation will never write outside an approved root.
-- **Deleting, moving, or renaming a project** does not exist anywhere in the
-  product yet. When M4 adds it, it inherits the confirmation gate above.
+  rule it depends on already exists: `operator.projectRoots` is a real,
+  bounded allowlist (defaults to `C:\Users\Admin\Music`), and a path outside
+  it is refused. Creation will never write outside an approved root.
+- **Deleting, moving, or renaming a project's files on disk** does not exist
+  anywhere in the product yet. `/forget` (Phase 13 M3) removes a project from
+  the *registry* only — its files are never touched, so it is not the same
+  capability. When M4 adds real file operations, they inherit the
+  confirmation gate above.
 - **A "Packaging" phase** is not reported, because the mission lifecycle has no
   such state. Reporting one would be simulating work.

@@ -33,12 +33,21 @@ import { parseDecisionText } from '../approvals/providers/approvalProvider.js';
  * the grammar, rather than in the router, so "is this dangerous?" is answered
  * in the one place that enumerates the whole surface — a new command cannot be
  * added without confronting the question.
+ *
+ * `category` (Phase 13 M8) groups commands for `renderHelp()` and
+ * `docs/OPERATOR_CONSOLE.md` — additive metadata only, never consulted by the
+ * parser above or by `commandMenu.js`, so a typo here can misfile a command in
+ * `/help` but can never change what it does. `examples` (also M8) is a short
+ * list of realistic invocations for commands whose `usage` hint alone doesn't
+ * show a concrete value; omitted for zero-argument commands, where there is
+ * nothing to exemplify.
  */
 export const COMMANDS = Object.freeze([
   {
     name: 'help',
     aliases: ['h', '?', 'commands'],
     usage: '/help',
+    category: 'General',
     description: 'Show every command.',
   },
   {
@@ -46,6 +55,8 @@ export const COMMANDS = Object.freeze([
     aliases: ['ls', 'list'],
     usage: '/projects [all|classify]',
     takesRest: true,
+    category: 'Projects',
+    examples: ['/projects all', '/projects classify'],
     description: '"all" (with hidden), "classify" (propose classifications for unclassified projects).',
   },
   {
@@ -53,6 +64,8 @@ export const COMMANDS = Object.freeze([
     aliases: ['use', 'select', 'cd'],
     usage: '/project <name>',
     takesRest: true,
+    category: 'Projects',
+    examples: ['/project Remote Work'],
     description: 'Select the active project. Later commands apply to it.',
   },
   {
@@ -60,6 +73,8 @@ export const COMMANDS = Object.freeze([
     aliases: ['st'],
     usage: '/status [project]',
     takesRest: true,
+    category: 'Projects',
+    examples: ['/status Remote Work'],
     description: 'Full status of the active (or named) project.',
   },
   {
@@ -67,6 +82,8 @@ export const COMMANDS = Object.freeze([
     aliases: ['run'],
     usage: '/start [project]',
     takesRest: true,
+    category: 'Missions',
+    examples: ['/start Remote Work'],
     description: 'Start supervising the active (or named) project.',
   },
   {
@@ -75,6 +92,8 @@ export const COMMANDS = Object.freeze([
     usage: '/stop [project]',
     takesRest: true,
     destructive: true,
+    category: 'Missions',
+    examples: ['/stop Remote Work'],
     description: 'Stop a running mission (the session stays resumable).',
   },
   {
@@ -82,24 +101,29 @@ export const COMMANDS = Object.freeze([
     aliases: ['queue'],
     usage: '/tasks [project]',
     takesRest: true,
+    category: 'Missions',
+    examples: ['/tasks Remote Work'],
     description: "The active project's task queue and where it is.",
   },
   {
     name: 'approvals',
     aliases: ['pending'],
     usage: '/approvals',
+    category: 'Decisions',
     description: 'Every decision waiting on you, across all projects.',
   },
   {
     name: 'missions',
     aliases: ['requests'],
     usage: '/missions',
+    category: 'Decisions',
     description: 'Mission requests you have raised and not yet answered.',
   },
   {
     name: 'service',
     aliases: ['daemon', 'uptime'],
     usage: '/service',
+    category: 'System',
     description: 'Is the service running, and will it survive a reboot?',
   },
   {
@@ -107,6 +131,8 @@ export const COMMANDS = Object.freeze([
     aliases: ['log', 'activity'],
     usage: '/events [count]',
     takesRest: true,
+    category: 'System',
+    examples: ['/events 20'],
     description: 'The most recent things the system actually did.',
   },
   {
@@ -115,6 +141,8 @@ export const COMMANDS = Object.freeze([
     usage: '/reset [project]',
     takesRest: true,
     destructive: true,
+    category: 'Missions',
+    examples: ['/reset Remote Work'],
     description: 'Abandon an interrupted session so the next start begins fresh.',
   },
   {
@@ -122,6 +150,7 @@ export const COMMANDS = Object.freeze([
     aliases: [],
     usage: '/shutdown',
     destructive: true,
+    category: 'System',
     description: 'Stop the Core Service itself. Nothing remote works after this.',
   },
   {
@@ -129,6 +158,8 @@ export const COMMANDS = Object.freeze([
     aliases: ['yes'],
     usage: '/confirm <code>',
     takesRest: true,
+    category: 'Decisions',
+    examples: ['/confirm K7XM'],
     description: 'Confirm a destructive action you were just asked about.',
   },
   {
@@ -136,18 +167,22 @@ export const COMMANDS = Object.freeze([
     aliases: ['no'],
     usage: '/cancel [code]',
     takesRest: true,
+    category: 'Decisions',
+    examples: ['/cancel K7XM'],
     description: 'Cancel a pending confirmation or a mission request.',
   },
   {
     name: 'whoami',
     aliases: ['context'],
     usage: '/whoami',
+    category: 'General',
     description: 'Which project this conversation is currently pointed at.',
   },
   {
     name: 'scan',
     aliases: ['rescan', 'discover'],
     usage: '/scan',
+    category: 'Registry',
     description: 'Find real, unregistered projects under your configured roots.',
   },
   {
@@ -155,6 +190,8 @@ export const COMMANDS = Object.freeze([
     aliases: [],
     usage: '/import <path> [as <name>]',
     takesRest: true,
+    category: 'Registry',
+    examples: ['/import C:\\Users\\Admin\\Music\\new-project', '/import C:\\Users\\Admin\\Music\\new-project as "New Project"'],
     description: 'Register a folder /scan found as a project (registry only — never touches its files).',
   },
   {
@@ -162,6 +199,8 @@ export const COMMANDS = Object.freeze([
     aliases: [],
     usage: '/archive [project]',
     takesRest: true,
+    category: 'Registry',
+    examples: ['/archive Remote Work'],
     description: 'Mark a project archived — demoted in priority, never deleted.',
   },
   {
@@ -169,6 +208,8 @@ export const COMMANDS = Object.freeze([
     aliases: [],
     usage: '/restore [project]',
     takesRest: true,
+    category: 'Registry',
+    examples: ['/restore Remote Work'],
     description: 'Return an archived or hidden project to "development".',
   },
   {
@@ -176,6 +217,8 @@ export const COMMANDS = Object.freeze([
     aliases: [],
     usage: '/hide [project]',
     takesRest: true,
+    category: 'Registry',
+    examples: ['/hide Remote Work'],
     description: 'Hide a project from /projects (still shown by /projects all).',
   },
   {
@@ -183,6 +226,8 @@ export const COMMANDS = Object.freeze([
     aliases: [],
     usage: '/unhide [project]',
     takesRest: true,
+    category: 'Registry',
+    examples: ['/unhide Remote Work'],
     description: 'Return a hidden project to "development".',
   },
   {
@@ -191,6 +236,8 @@ export const COMMANDS = Object.freeze([
     usage: '/forget [project]',
     takesRest: true,
     destructive: true,
+    category: 'Registry',
+    examples: ['/forget Remote Work'],
     description: 'Remove a project from the registry. Files on disk are NEVER touched.',
   },
   {
@@ -198,12 +245,15 @@ export const COMMANDS = Object.freeze([
     aliases: [],
     usage: '/roots [add|remove <path>]',
     takesRest: true,
+    category: 'Registry',
+    examples: ['/roots add D:\\Development', '/roots remove D:\\Development'],
     description: 'List, add, or remove a project root (where /scan looks for projects).',
   },
   {
     name: 'provider',
     aliases: [],
     usage: '/provider',
+    category: 'Configuration',
     description: 'Current default provider/model, known drivers, and capabilities.',
   },
   {
@@ -211,6 +261,8 @@ export const COMMANDS = Object.freeze([
     aliases: [],
     usage: '/model [name|default]',
     takesRest: true,
+    category: 'Configuration',
+    examples: ['/model claude-sonnet-5', '/model default'],
     description: 'Show or set the default model. Never interrupts an active mission.',
   },
   {
@@ -218,6 +270,8 @@ export const COMMANDS = Object.freeze([
     aliases: ['ls-files', 'dir'],
     usage: '/files [path]',
     takesRest: true,
+    category: 'Files',
+    examples: ['/files src'],
     description: 'List a directory inside the active project (default: its root).',
   },
   {
@@ -225,6 +279,8 @@ export const COMMANDS = Object.freeze([
     aliases: ['cat', 'read'],
     usage: '/file <path>',
     takesRest: true,
+    category: 'Files',
+    examples: ['/file src/index.js'],
     description: 'Read one file from the active project — inline if small, as an attachment if not.',
   },
   {
@@ -237,6 +293,8 @@ export const COMMANDS = Object.freeze([
     aliases: ['download-project', 'download', 'zip'],
     usage: '/download-project [project]',
     takesRest: true,
+    category: 'Files',
+    examples: ['/download-project Remote Work'],
     description: 'ZIP the active (or named) project — source only, never node_modules/.git/build output.',
   },
 ]);

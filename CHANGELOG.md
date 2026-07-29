@@ -3,6 +3,47 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.8.0] — 2026-07-30 — Phase 13 M8: Bot Experience & Discoverability
+
+A discoverability milestone on top of M7: `/help` and `docs/OPERATOR_CONSOLE.md`
+now organize the full 29-command surface built across M2–M7 into the same
+eight sections, both reading from the one `COMMANDS` array so they cannot
+drift apart or from each other. No new command was added; `commandMenu.js`'s
+Telegram-menu payload is byte-for-byte unchanged. `docs/PHASE_13_M8_REPORT.md`.
+
+### Added
+
+- **`src/operator/commandGrammar.js`** — every `COMMANDS` entry gains a
+  `category` (`General`/`Projects`/`Missions`/`Decisions`/`System`/
+  `Registry`/`Configuration`/`Files`) and, for commands whose `usage` hint
+  alone doesn't show a concrete value, an `examples` array. Both are
+  additive metadata only — never consulted by `parseCommand()`, so a typo
+  can misfile a command in `/help` but can never change what it does.
+- **`src/operator/render.js`** — `renderHelp()` now sections its output by
+  each command's `category`, in the category's first-seen order within the
+  array it's given (`COMMANDS` by default, injectable for testing). If any
+  command is missing a `category` — including every command, the shape a
+  revert of the metadata commit would leave behind — it falls back to the
+  pre-M8 flat list rather than rendering a broken section.
+- **`docs/OPERATOR_CONSOLE.md`** — full pass: the command table now covers
+  all 29 commands (previously 16; `/scan`, `/import`, `/archive`,
+  `/restore`, `/hide`, `/unhide`, `/forget`, `/roots`, `/provider`,
+  `/model`, `/files`, `/file`, `/download-project` were undocumented since
+  their own milestones), grouped into the same sections `/help` now uses. A
+  stale `operator.projectRoots` default (documented as empty; has defaulted
+  to `C:\Users\Admin\Music` since M2) was corrected in the same pass.
+
+### Regression coverage
+
+- Every `COMMANDS` entry has a non-empty `category` (`commandGrammar.test.js`).
+- Every `examples` entry actually parses back to the command it illustrates.
+- The published Telegram menu carries only `{command, description}` —
+  `category`/`examples` never leak into it (`commandMenu.test.js`).
+- `/help` groups by category, and falls back to the flat list when category
+  data is absent (`operatorRender.test.js`).
+
+---
+
 ## [3.7.0] — 2026-07-29 — Phase 13 M7: Mission Completion Messaging
 
 A copy-and-honesty milestone on top of M6's Remote File System: the

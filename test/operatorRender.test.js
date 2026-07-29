@@ -276,6 +276,39 @@ test('/help is generated from the grammar, so it cannot drift from the parser', 
   assert.match(renderHelp({}), /No project selected/);
 });
 
+test('/help groups commands by category, in the category\'s first-seen order (Phase 13 M8)', () => {
+  const text = renderHelp({ active: 'alpha' });
+  const lines = text.split('\n');
+
+  const categories = [...new Set(COMMANDS.map((c) => c.category))];
+  assert.ok(categories.length > 1, 'sanity: more than one category exists to group by');
+  for (const category of categories) {
+    assert.ok(lines.includes(category), `"${category}" is a section heading on its own line`);
+  }
+
+  // help and whoami share the "General" category despite sitting far apart
+  // in COMMANDS — grouping is by category, not by array position.
+  const generalIndex = lines.indexOf('General');
+  const projectsIndex = lines.indexOf('Projects');
+  assert.ok(generalIndex >= 0 && projectsIndex > generalIndex);
+  const generalSection = lines.slice(generalIndex, projectsIndex).join('\n');
+  assert.match(generalSection, /\/help/);
+  assert.match(generalSection, /\/whoami/);
+});
+
+test('/help falls back to the pre-M8 flat list when categories are absent (revert-safety, Phase 13 M8)', () => {
+  // Simulates the shape a revert of the category-adding commit would leave:
+  // renderHelp() must keep working, not throw or render a broken section.
+  const bareCommands = COMMANDS.map(({ category, examples, ...rest }) => rest);
+  const text = renderHelp({ active: 'alpha', commands: bareCommands });
+
+  for (const command of bareCommands) {
+    assert.ok(text.includes(command.usage), `${command.usage} is still documented`);
+  }
+  assert.doesNotMatch(text, /^General$/m, 'no category headings without category data');
+  assert.match(text, /Active project: alpha/);
+});
+
 test('event and mission-request lists degrade to a plain sentence when empty', () => {
   assert.equal(renderEvents([]), 'No events recorded yet.');
   assert.equal(renderMissionRequests([]), 'No mission requests are waiting.');

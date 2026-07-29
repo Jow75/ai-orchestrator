@@ -95,6 +95,18 @@ test('a description carries the argument hint and the confirmation warning', () 
   assert.doesNotMatch(menuDescription(findCommand('status')), /confirm/);
 });
 
+test('the published menu never leaks category or examples metadata (Phase 13 M8)', () => {
+  // buildCommandMenu() is unchanged by M8 on purpose: the Telegram menu stays
+  // {command, description} exactly as before, even though COMMANDS entries
+  // now carry more fields for renderHelp() and the docs to use.
+  const menu = buildCommandMenu();
+  assert.ok(menu.length > 0);
+  for (const entry of menu) {
+    assert.deepEqual(Object.keys(entry).sort(), ['command', 'description'],
+      `${entry.command}'s menu entry must carry only {command, description}`);
+  }
+});
+
 test('an over-long description is clipped rather than rejected by Telegram', () => {
   const description = menuDescription({
     name: 'x', usage: '/x', description: 'y'.repeat(400),

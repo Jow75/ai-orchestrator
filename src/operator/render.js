@@ -394,16 +394,50 @@ export function renderServiceStatus(report) {
   return lines.join('\n');
 }
 
-/** `/help` — generated from the grammar, so it can never drift from it. */
-export function renderHelp({ active } = {}) {
+/** One command's `/help` lines: its usage (with a ⚠️ mark if destructive) and description. */
+function pushCommandLines(lines, command) {
+  const mark = command.destructive ? ' ⚠️' : '';
+  lines.push(`${command.usage}${mark}`);
+  lines.push(`   ${command.description}`);
+}
+
+/**
+ * `/help` — generated from the grammar, so it can never drift from it.
+ *
+ * Phase 13 M8: sectioned by each command's `category`, in the category's
+ * first-seen order within `commands` — reading the one COMMANDS array rather
+ * than a second, hand-kept list of section names that could drift from it.
+ * If any command is missing a `category` (including every command, the
+ * shape a revert of the M8 metadata commit would leave behind) this falls
+ * back to the pre-M8 flat list rather than rendering a broken section.
+ *
+ * @param {{active?: string|null, commands?: object[]}} [options] - `commands`
+ *   defaults to the real grammar; injectable so the fallback path can be
+ *   tested without waiting for a real revert.
+ */
+export function renderHelp({ active, commands = COMMANDS } = {}) {
   const lines = ['AI-Orchestrator — remote console', ''];
-  for (const command of COMMANDS) {
-    const mark = command.destructive ? ' ⚠️' : '';
-    lines.push(`${command.usage}${mark}`);
-    lines.push(`   ${command.description}`);
+
+  if (commands.some((command) => !command.category)) {
+    for (const command of commands) pushCommandLines(lines, command);
+  } else {
+    const sections = new Map();
+    for (const command of commands) {
+      if (!sections.has(command.category)) sections.set(command.category, []);
+      sections.get(command.category).push(command);
+    }
+    for (const [category, group] of sections) {
+      lines.push(category);
+      for (const command of group) pushCommandLines(lines, command);
+      lines.push('');
+    }
   }
-  lines.push('');
-  lines.push('Decisions: APPROVE A7 · REJECT A7 [why] · MODIFY A7 <changes> · DONE A7');
+
+  // Labelled "Decision grammar", not "Decisions", so it reads as distinct
+  // from the "Decisions" category heading above (Phase 13 M8) — that section
+  // groups /approvals, /missions, /confirm, /cancel; this line is the
+  // separate APPROVE/REJECT/MODIFY/DONE reply syntax, unchanged since Phase 10.
+  lines.push('Decision grammar: APPROVE A7 · REJECT A7 [why] · MODIFY A7 <changes> · DONE A7');
   lines.push('');
   lines.push('Anything else you type becomes a mission request for the active');
   lines.push('project — a proposal you must approve. Typing never starts work.');
