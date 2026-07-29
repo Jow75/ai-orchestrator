@@ -39,6 +39,10 @@ export const EVENT_TYPES = Object.freeze([
   // ── projects ─────────────────────────────────────────────────────────────
   /** The operator switched the active project context (`/project X`). */
   'project.selected',
+  /** A `/scan` ran. One event per scan (a count in the payload), never one per candidate. */
+  'project.discovered',
+  /** A real, discovered folder became a registered project (`/import`). */
+  'project.imported',
 
   // ── missions requested from an interface (M2 Priority 3) ─────────────────
   /** Free text became a mission request awaiting the owner's approval. */

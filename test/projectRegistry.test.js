@@ -277,7 +277,7 @@ test('health comes from the Phase 10E analyzer, and its absence is not faked', (
 test('every status the registry can produce is declared', () => {
   assert.deepEqual(
     [...PROJECT_STATUSES].sort(),
-    ['blocked', 'idle', 'misconfigured', 'queued', 'running', 'waiting-approval']
+    ['blocked', 'idle', 'misconfigured', 'missing', 'queued', 'running', 'waiting-approval']
   );
 });
 

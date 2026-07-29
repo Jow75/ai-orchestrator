@@ -210,3 +210,28 @@ test('listProjects returns defined project names sorted', () => {
   });
   assert.deepEqual(new ConfigManager({ rootDir: root }).listProjects(), ['alpha', 'zeta']);
 });
+
+// ── getRawProject (Phase 13 M2) ─────────────────────────────────────────────
+
+test('getRawProject returns the merged definition even when it would fail validation', () => {
+  const root = scaffold({
+    projects: { broken: { workingDirectory: '/does/not/exist' } }, // no promptFile, no tasks
+  });
+  const config = new ConfigManager({ rootDir: root });
+  assert.throws(() => config.getProject('broken'), /workingDirectory|promptFile/);
+
+  const raw = config.getRawProject('broken');
+  assert.equal(raw.workingDirectory, '/does/not/exist');
+  assert.equal(raw.driver, 'claude'); // PROJECT_DEFAULTS still applied
+});
+
+test('getRawProject returns null for an unknown project or invalid JSON, never throws', () => {
+  const root = scaffold({});
+  const config = new ConfigManager({ rootDir: root });
+  assert.equal(config.getRawProject('nope'), null);
+  assert.equal(config.getRawProject(''), null);
+
+  fs.mkdirSync(config.getPaths().projectsDir, { recursive: true });
+  fs.writeFileSync(path.join(config.getPaths().projectsDir, 'bad.json'), '{ not json');
+  assert.equal(config.getRawProject('bad'), null);
+});

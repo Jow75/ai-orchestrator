@@ -107,8 +107,16 @@ numbered continuations when it doesn't. 992/992 backend tests; live-validated
 against the real bot with a 7,091-char synthetic report. Full report:
 `docs/PHASE_13_M1_REPORT.md`.
 
-**NEXT: Phase 13 M2 — Project Roots & Discovery, `v3.2.0`** — see
-`docs/PHASE_13_PLAN.md`.
+**Phase 13 M2 — Project Roots & Discovery (`v3.2.0`) is DONE.** `operator.projectRoots`
+now defaults to `C:\Users\Admin\Music` (every current project's actual home)
+and `/scan`/`/import` replace hardcoded sample folders with real discovery.
+Live-validated against the real installation: correctly excluded all 6
+registered projects and AI-Orchestrator's own checkout, and found 17 real,
+genuinely unregistered project folders already sitting in that directory.
+1023/1023 backend tests. Full report: `docs/PHASE_13_M2_REPORT.md`.
+
+**NEXT: Phase 13 M3 — Project Lifecycle & Registry Operations, `v3.3.0`** —
+see `docs/PHASE_13_PLAN.md`.
 
 ---
 
@@ -327,8 +335,8 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 12 M3 — Operator Control Center (desktop as daemon client) | ✅ done | `v3.0.0` |
 | Phase 12 M4 — Launch experience & remote project creation | ⏸ **deferred** | was `v3.1.0` |
 | Phase 13 M1 — Long Message Reliability | ✅ done | `v3.1.0` |
-| Phase 13 M2 — Project Roots & Discovery | ⏳ next | `v3.2.0` |
-| Phase 13 M3 — Project Lifecycle & Registry Operations | ⏳ planned | `v3.3.0` |
+| Phase 13 M2 — Project Roots & Discovery | ✅ done | `v3.2.0` |
+| Phase 13 M3 — Project Lifecycle & Registry Operations | ⏳ next | `v3.3.0` |
 | Phase 13 M4 — Live Configuration Layer | ⏳ planned | `v3.4.0` |
 | Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ⏳ planned | `v3.5.0` |
 | Phase 13 M6 — Remote File System | ⏳ planned | `v3.6.0` |
@@ -336,7 +344,7 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 13 M8 — Bot Experience & Discoverability | ⏳ planned | `v3.8.0` |
 | Phase 13 M9 — Public Release Prep | ⏳ planned | (audits `v3.8.0`) |
 
-**Test suite (current, 2026-07-29):** 992/992 backend (+20, Phase 13 M1) + 41
+**Test suite (current, 2026-07-29):** 1023/1023 backend (+20 M1, +31 M2) + 41
 desktop — the 919/919 figure above was the M2.1 snapshot; M2.2 and M3 each
 added more (see
 CHANGELOG for the exact per-release deltas).

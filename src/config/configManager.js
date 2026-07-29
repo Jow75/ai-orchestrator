@@ -167,6 +167,32 @@ export class ConfigManager {
     return project;
   }
 
+  /**
+   * Load a project definition WITHOUT validating it — merged defaults +
+   * file contents only. `validateProject()` collapses every problem into one
+   * thrown error, which is right for "can this mission run?" but wrong for a
+   * caller (ProjectRegistry, Phase 13 M2) that needs to distinguish "the
+   * workingDirectory itself is gone" (a specific, more actionable situation)
+   * from "some other validation problem."
+   *
+   * @param {string} name
+   * @returns {object|null} The raw merged definition, or null if the file is
+   *   missing or isn't valid JSON — callers fall back to getProject()'s error
+   *   message for that case.
+   */
+  getRawProject(name) {
+    if (!name) return null;
+    const file = path.join(this.getPaths().projectsDir, `${name}.json`);
+    if (!fs.existsSync(file)) return null;
+    try {
+      const project = deepMerge(PROJECT_DEFAULTS, readJsonFile(file));
+      project.name = name;
+      return project;
+    } catch {
+      return null;
+    }
+  }
+
   /** Validate a merged project config. Throws ConfigError on problems. */
   validateProject(project, file) {
     const problems = [];

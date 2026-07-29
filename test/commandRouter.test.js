@@ -748,3 +748,160 @@ test('an empty message produces no reply at all', async () => {
   const { say } = harness();
   assert.equal((await say('   ')).reply, null);
 });
+
+// ────────────────────────────────────── Phase 13 M2: discovery & import ────
+
+/** A harness whose operator.projectRoots points at a real scratch folder. */
+function discoveryHarness(overrides = {}) {
+  const h = harness({
+    projects: ['alpha'],
+    operator: { projectRoots: [], discovery: {} },
+    ...overrides,
+  });
+  const rootsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-scanroot-'));
+  h.router.config.operator.projectRoots = [rootsDir];
+  h.rootsDir = rootsDir;
+  return h;
+}
+
+function mkCandidate(rootsDir, name, { marker = 'package.json' } = {}) {
+  const dir = path.join(rootsDir, name);
+  fs.mkdirSync(dir, { recursive: true });
+  if (marker) fs.writeFileSync(path.join(dir, marker), '{}');
+  return dir;
+}
+
+test('/scan finds a real, unregistered folder under the configured root', async () => {
+  const h = discoveryHarness();
+  mkCandidate(h.rootsDir, 'new-project');
+
+  const { reply } = await h.say('/scan');
+
+  assert.match(reply, /Found 1 new project/);
+  assert.match(reply, /new-project/);
+  assert.equal(h.events.read({ types: ['project.discovered'] }).length, 1);
+});
+
+test('/scan never re-offers an already-registered project', async () => {
+  const h = discoveryHarness();
+  // alpha's real workingDirectory (from harness()) is NOT under rootsDir, so
+  // register a second project whose folder IS under rootsDir this time.
+  const dir = mkCandidate(h.rootsDir, 'already-registered');
+  fs.writeFileSync(path.join(dir, 'prompt.md'), '# work\n');
+  fs.writeFileSync(
+    path.join(h.paths.projectsDir, 'already-registered.json'),
+    JSON.stringify({ workingDirectory: dir, promptFile: 'prompt.md', driver: 'claude' })
+  );
+
+  const { reply } = await h.say('/scan');
+
+  assert.match(reply, /No new projects found/);
+});
+
+test('/scan ignores folders with no recognizable marker', async () => {
+  const h = discoveryHarness();
+  fs.mkdirSync(path.join(h.rootsDir, 'random-empty-folder'), { recursive: true });
+
+  const { reply } = await h.say('/scan');
+
+  assert.match(reply, /No new projects found/);
+});
+
+test('/scan ignores node_modules and other configured ignore folders', async () => {
+  const h = discoveryHarness();
+  mkCandidate(h.rootsDir, 'node_modules');
+
+  const { reply } = await h.say('/scan');
+
+  assert.doesNotMatch(reply, /node_modules/);
+});
+
+test('/scan reports a configured root that does not exist on disk, without throwing', async () => {
+  const h = discoveryHarness();
+  h.router.config.operator.projectRoots.push('C:\\this\\does\\not\\exist\\at\\all');
+
+  const { reply } = await h.say('/scan');
+
+  assert.match(reply, /Not found on disk/);
+});
+
+test('/scan reports "no roots configured" honestly, without pretending to have scanned', async () => {
+  const h = harness({ operator: { projectRoots: [] } });
+  const { reply } = await h.say('/scan');
+  assert.match(reply, /No project roots are configured/);
+});
+
+test('/import registers a real folder as a new project, named after its basename', async () => {
+  const h = discoveryHarness();
+  const dir = mkCandidate(h.rootsDir, 'calc-app');
+
+  const { reply } = await h.say(`/import ${dir}`);
+
+  assert.match(reply, /Imported "calc-app"/);
+  assert.ok(h.registry.has('calc-app'));
+  assert.equal(h.events.read({ types: ['project.imported'] }).length, 1);
+  // Registry-only: nothing was written to the folder itself.
+  assert.deepEqual(fs.readdirSync(dir), ['package.json']);
+});
+
+test('/import as <name> registers under an explicit name, even with spaces in the path', async () => {
+  const h = discoveryHarness();
+  const dir = mkCandidate(h.rootsDir, 'raw folder name');
+
+  const { reply } = await h.say(`/import ${dir} as My Custom Project`);
+
+  assert.match(reply, /Imported "My Custom Project"/);
+  assert.ok(h.registry.has('My Custom Project'));
+});
+
+test('/import refuses a path that is not a real folder', async () => {
+  const h = discoveryHarness();
+  const { reply } = await h.say('/import C:\\nonexistent\\path\\xyz');
+  assert.match(reply, /is not a real folder/);
+  assert.equal(h.registry.names().length, 1); // still just 'alpha'
+});
+
+test('/import refuses a name collision rather than guessing', async () => {
+  const h = discoveryHarness(); // 'alpha' is already registered by harness()
+  const dir = mkCandidate(h.rootsDir, 'x');
+
+  const { reply } = await h.say(`/import ${dir} as alpha`);
+
+  assert.match(reply, /already exists/);
+  assert.equal(h.registry.names().length, 1, 'no second project was created');
+});
+
+test('an imported project with no mission shows as misconfigured, honestly', async () => {
+  const h = discoveryHarness();
+  const dir = mkCandidate(h.rootsDir, 'needs-a-mission');
+  await h.say(`/import ${dir}`);
+
+  const { reply } = await h.say('/status needs-a-mission');
+
+  assert.match(reply, /configuration problem/);
+  assert.match(reply, /promptFile/);
+});
+
+test('/scan and /import are refused when operator.discovery is disabled', async () => {
+  const h = discoveryHarness({ operator: { projectRoots: [], discovery: { enabled: false } } });
+  h.router.config.operator.discovery = { enabled: false };
+  mkCandidate(h.rootsDir, 'irrelevant');
+
+  const scanned = await h.say('/scan');
+  assert.match(scanned.reply, /disabled/);
+
+  const imported = await h.say(`/import ${h.rootsDir}`);
+  assert.match(imported.reply, /disabled/);
+});
+
+test("a project whose workingDirectory vanished reports 'missing', not 'misconfigured'", async () => {
+  const h = harness({ projects: ['gone'] });
+  const project = h.registry.configManager.getRawProject('gone');
+  fs.rmSync(project.workingDirectory, { recursive: true, force: true });
+
+  const record = h.registry.describe('gone');
+  assert.equal(record.status, 'missing');
+
+  const { reply } = await h.say('/status gone');
+  assert.match(reply, /folder not found/);
+});

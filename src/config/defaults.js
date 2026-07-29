@@ -357,12 +357,33 @@ export const ORCHESTRATOR_DEFAULTS = {
      */
     progressMinIntervalMs: 60_000,
     /**
-     * Roots under which a remotely-created project may live (Phase 12 M4).
-     * Empty ⇒ remote creation is refused outright. Declared here now because
-     * the security posture ("never permit arbitrary filesystem writes") is
-     * decided in M2, where the inbound grammar widened, not later.
+     * Roots the operator scans for real, unregistered projects (Phase 13 M2's
+     * `/scan`/`/import`), AND the same roots a remotely-created project must
+     * live under once Phase 12 M4 resumes (empty ⇒ that refuses outright).
+     * One list serves both purposes deliberately — see docs/PHASE_13_PLAN.md
+     * decision D1: the folders an owner trusts this system to discover
+     * existing work in and the folders they'd trust it to create new work in
+     * are the same trust boundary on a single-operator, single-machine
+     * system. Defaults to the one folder every current project already lives
+     * in; add more with `/roots add <path>` (Phase 13 M4).
      */
-    projectRoots: [],
+    projectRoots: ['C:\\Users\\Admin\\Music'],
+    /**
+     * Phase 13 M2: how `/scan` looks for real projects under `projectRoots`.
+     * Deliberately shallow (one configured root → its immediate
+     * subdirectories, marker-probed a few levels deep) and never cached —
+     * the same "always re-read, never stale" philosophy `ConfigManager`
+     * already applies to project files.
+     */
+    discovery: {
+      enabled: true,
+      /** Folder names never treated as project candidates OR descended into while marker-probing. */
+      ignore: ['node_modules', '.git', 'dist', 'build', '.next', '.venv', '__pycache__'],
+      /** A candidate qualifies if it (or a subfolder within maxDepth) contains any of these. */
+      markers: ['.git', 'package.json', 'requirements.txt', 'pyproject.toml', 'Cargo.toml', 'README.md'],
+      /** How many folder levels deep a marker may be found before giving up on a candidate. */
+      maxDepth: 2,
+    },
   },
 
   /** Project launched when `ai-orchestrator start` is run with no name. */

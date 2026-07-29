@@ -143,6 +143,19 @@ export const COMMANDS = Object.freeze([
     usage: '/whoami',
     description: 'Which project this conversation is currently pointed at.',
   },
+  {
+    name: 'scan',
+    aliases: ['rescan', 'discover'],
+    usage: '/scan',
+    description: 'Find real, unregistered projects under your configured roots.',
+  },
+  {
+    name: 'import',
+    aliases: [],
+    usage: '/import <path> [as <name>]',
+    takesRest: true,
+    description: 'Register a folder /scan found as a project (registry only — never touches its files).',
+  },
 ]);
 
 /** name/alias → command definition. */

@@ -83,6 +83,7 @@ export const PROJECT_STATUS = Object.freeze({
   queued: { icon: '🕘', label: 'Queued' },
   idle: { icon: '💤', label: 'Idle' },
   misconfigured: { icon: '⚠️', label: 'Misconfigured' },
+  missing: { icon: '❌', label: 'Folder missing' },
 });
 
 export function projectStatusIcon(status) {

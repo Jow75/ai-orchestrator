@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import {
   relativeTime, renderProjectList, renderProjectDetail, renderTasks, renderApprovals,
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
-  renderPhaseUpdate, renderHelp, truncate,
+  renderPhaseUpdate, renderHelp, renderScanResults, truncate,
 } from '../src/operator/render.js';
 import { COMMANDS } from '../src/operator/commandGrammar.js';
 
@@ -82,6 +82,48 @@ test('a misconfigured project renders the actual problem', () => {
 
   assert.match(text, /configuration problem/);
   assert.match(text, /C:\/gone/);
+});
+
+test('a missing project renders as a distinct, less alarming situation than misconfigured', () => {
+  const text = renderProjectDetail({ name: 'gone', status: 'missing', path: 'C:/old/place' });
+
+  assert.match(text, /folder not found/);
+  assert.match(text, /C:\/old\/place/);
+  assert.doesNotMatch(text, /configuration problem/);
+});
+
+// ── renderScanResults (Phase 13 M2) ─────────────────────────────────────────
+
+test('renderScanResults reports "no roots configured" without pretending to have scanned', () => {
+  const text = renderScanResults({ candidates: [], rootsScanned: [], rootsMissing: [] }, { roots: [] });
+  assert.match(text, /No project roots are configured/);
+});
+
+test('renderScanResults reports zero-candidate and found-candidate cases distinctly', () => {
+  const empty = renderScanResults(
+    { candidates: [], rootsScanned: ['C:/Users/Admin/Music'], rootsMissing: [] },
+    { roots: ['C:/Users/Admin/Music'] }
+  );
+  assert.match(empty, /No new projects found/);
+
+  const found = renderScanResults(
+    {
+      candidates: [{ name: 'calc', path: 'C:/Users/Admin/Music/calc' }],
+      rootsScanned: ['C:/Users/Admin/Music'], rootsMissing: [],
+    },
+    { roots: ['C:/Users/Admin/Music'] }
+  );
+  assert.match(found, /Found 1 new project/);
+  assert.match(found, /calc — C:\/Users\/Admin\/Music\/calc/);
+  assert.match(found, /\/import <path>/);
+});
+
+test('renderScanResults surfaces a configured root that does not exist on disk', () => {
+  const text = renderScanResults(
+    { candidates: [], rootsScanned: [], rootsMissing: ['D:/gone'] },
+    { roots: ['D:/gone'] }
+  );
+  assert.match(text, /Not found on disk: D:\/gone/);
 });
 
 test('pending approvals are surfaced with the exact reply to send', () => {

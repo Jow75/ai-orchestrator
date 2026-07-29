@@ -19,15 +19,18 @@
  * the desktop (M3) and any later client arrive, they call this same method.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { isLegacyMission, validateSingleTask } from '../mission/missionPlan.js';
 import { TaskState } from '../mission/taskState.js';
 import { approvalEventFor } from '../events/eventTypes.js';
 import { isEvidenceVerifier } from '../notifications/missionCard.js';
 import { parseCommand } from './commandGrammar.js';
+import { scanRoots } from './projectDiscovery.js';
 import {
   renderProjectList, renderProjectDetail, renderTasks, renderApprovals,
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
-  renderHelp, renderServiceStatus, truncate,
+  renderHelp, renderServiceStatus, renderScanResults, truncate,
 } from './render.js';
 
 /** How many events `/events` returns when no count is given. */
@@ -375,6 +378,8 @@ export class CommandRouter {
       case 'events': return this.commandEvents(rest, ctx);
       case 'confirm': return await this.commandConfirm(rest, ctx);
       case 'cancel': return this.commandCancel(rest, ctx);
+      case 'scan': return this.commandScan(ctx);
+      case 'import': return this.commandImport(rest, ctx);
       default:
         return { reply: `"/${name}" is recognized but not implemented. This is a bug — please report it.` };
     }
@@ -538,6 +543,92 @@ export class CommandRouter {
       reply: result.cancelled > 1
         ? `Cancelled ${result.cancelled} pending confirmations.`
         : `Cancelled: ${result.confirmation?.summary ?? 'the pending action'}.`,
+    };
+  }
+
+  /**
+   * `workingDirectory` of every currently-registered project, regardless of
+   * driver or whether it currently validates — a discovered candidate must
+   * never be re-offered just because its config happens to be broken right
+   * now (raw, not `getProject()`, precisely so a broken project doesn't
+   * throw here).
+   */
+  existingProjectDirs() {
+    const dirs = [];
+    for (const name of this.registry.names()) {
+      const raw = this.configManager.getRawProject?.(name);
+      if (raw?.workingDirectory) dirs.push(raw.workingDirectory);
+    }
+    return dirs;
+  }
+
+  /** `/scan` — Phase 13 M2. Read-only: reports candidates, registers nothing. */
+  commandScan(ctx) {
+    const discovery = this.operatorConfig.discovery ?? {};
+    if (discovery.enabled === false) {
+      return { reply: 'Discovery is disabled (operator.discovery.enabled: false).' };
+    }
+    const roots = this.operatorConfig.projectRoots ?? [];
+    const result = scanRoots(roots, {
+      markers: discovery.markers,
+      ignore: discovery.ignore,
+      maxDepth: discovery.maxDepth,
+      existingDirs: this.existingProjectDirs(),
+    });
+    this.events?.append({
+      type: 'project.discovered',
+      actor: ctx.actor,
+      payload: { count: result.candidates.length, roots: result.rootsScanned },
+    });
+    return { reply: renderScanResults(result, { roots }) };
+  }
+
+  /**
+   * `/import <path> [as <name>]` — Phase 13 M2. Purely additive: writes a new
+   * `config/projects/<name>.json` pointing at a real, existing folder. Never
+   * touches the folder itself, and refuses a colliding name outright
+   * (`ConfigManager.saveProject()`'s existing behaviour) rather than
+   * guessing which project the owner meant.
+   *
+   * `as <name>` exists because BOTH a filesystem path and a project name in
+   * this system may legitimately contain spaces ("THE FINISHER") — splitting
+   * `<path> [name]` on whitespace would be ambiguous. Without it, the
+   * imported project is named after the folder's own basename, matching how
+   * `/scan`'s output maps 1:1 onto `/import <path>`.
+   */
+  commandImport(rest, ctx) {
+    if (this.operatorConfig.discovery?.enabled === false) {
+      return { reply: 'Discovery is disabled (operator.discovery.enabled: false).' };
+    }
+    if (!rest) {
+      return { reply: 'Usage: /import <path> [as <name>]. Try /scan to see candidates.' };
+    }
+
+    const asMatch = rest.match(/^(.*?)\s+as\s+(\S.*)$/i);
+    const rawPath = (asMatch ? asMatch[1] : rest).trim();
+    const explicitName = asMatch ? asMatch[2].trim() : null;
+
+    const resolved = path.resolve(rawPath);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+      return { reply: `"${rawPath}" is not a real folder on this machine.` };
+    }
+    const name = explicitName || path.basename(resolved);
+    if (this.registry.has(name)) {
+      return { reply: `A project named "${name}" already exists. Retry: /import ${rawPath} as <different-name>.` };
+    }
+
+    try {
+      this.configManager.saveProject(name, { driver: 'claude', workingDirectory: resolved });
+    } catch (error) {
+      return { reply: `Could not import: ${error.message}` };
+    }
+    this.events?.append({
+      type: 'project.imported', project: name, actor: ctx.actor, payload: { path: resolved },
+    });
+    return {
+      reply: `Imported "${name}" → ${resolved}.\n\n`
+        + `It has no mission yet — add a "promptFile" or task plan to config/projects/${name}.json `
+        + `before starting it. Try /status ${name}.`,
     };
   }
 

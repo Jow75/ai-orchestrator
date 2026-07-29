@@ -81,6 +81,36 @@ export function renderProjectList(records, { active } = {}) {
   return lines.join('\n');
 }
 
+/** `/scan` — real, unregistered projects found under the configured roots. */
+export function renderScanResults({ candidates, rootsScanned, rootsMissing }, { roots } = {}) {
+  if (!roots?.length) {
+    return [
+      'No project roots are configured yet.',
+      '',
+      'Set "operator.projectRoots" in config/orchestrator.json or config/local.json, then /scan again.',
+    ].join('\n');
+  }
+
+  const lines = ['🔍 Scan results', ''];
+  lines.push(`Roots: ${rootsScanned.length ? rootsScanned.join(', ') : '(none exist on disk)'}`);
+  if (rootsMissing.length) lines.push(`⚠️ Not found on disk: ${rootsMissing.join(', ')}`);
+  lines.push('');
+
+  if (!candidates.length) {
+    lines.push('No new projects found — everything under your roots is already registered.');
+    return lines.join('\n');
+  }
+
+  lines.push(`Found ${candidates.length} new project(s):`);
+  for (const candidate of candidates.slice(0, MAX_LIST)) {
+    lines.push(`• ${candidate.name} — ${candidate.path}`);
+  }
+  if (candidates.length > MAX_LIST) lines.push(`… and ${candidates.length - MAX_LIST} more.`);
+  lines.push('');
+  lines.push('Register one: /import <path>');
+  return lines.join('\n');
+}
+
 /** `/status` — everything known about one project. */
 export function renderProjectDetail(record, { now = Date.now() } = {}) {
   if (record.status === 'misconfigured') {
@@ -88,6 +118,16 @@ export function renderProjectDetail(record, { now = Date.now() } = {}) {
       `⚠️ ${record.name} — configuration problem`,
       '',
       record.problem ?? 'Its project file could not be loaded.',
+    ].join('\n');
+  }
+  if (record.status === 'missing') {
+    return [
+      `❌ ${record.name} — folder not found`,
+      '',
+      `Configured at ${record.path ?? 'an unknown path'}, but it no longer exists on disk`
+      + ' (moved, renamed, or deleted outside AI-Orchestrator).',
+      '',
+      'Fix by hand-editing its "workingDirectory" in config/projects/, or re-import it once it exists again: /import <path>.',
     ].join('\n');
   }
 

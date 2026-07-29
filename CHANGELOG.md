@@ -3,6 +3,60 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.2.0] — 2026-07-29 — Phase 13 M2: Project Roots & Discovery
+
+The operator stops hardcoding sample folders. Configurable `operator.projectRoots`
+(default `C:\Users\Admin\Music`, where every current project already lives)
+are scanned for real, unregistered projects instead. `docs/PHASE_13_M2_REPORT.md`.
+
+### Added
+
+- **`src/operator/projectDiscovery.js`**, `scanRoots()` — one level deep per
+  configured root, marker-probed (`.git`, `package.json`, `requirements.txt`,
+  `pyproject.toml`, `Cargo.toml`, `README.md`) up to 2 levels further. Never
+  descends into `node_modules`/`.git`/`dist`/`build`/`.next`/`.venv`/
+  `__pycache__`, never re-offers an already-registered `workingDirectory`,
+  never offers AI-Orchestrator's own installation directory, and treats a
+  directory containing `.git` as a scan leaf so nested repos never produce
+  false candidates. Always recomputed live — no cache, no state file.
+- **`/scan`** (aliases `rescan`, `discover`; read-only) — reports every
+  candidate found, and any configured root that doesn't exist on disk.
+- **`/import <path> [as <name>]`** — registers a real folder as a new
+  project (registry-only; never touches the folder itself). Defaults the
+  name to the folder's own basename; `as <name>` sets an explicit one —
+  needed because both filesystem paths and project names in this system may
+  legitimately contain spaces, so `<path> [name]` can't be split on
+  whitespace alone. Refuses a name collision outright (reuses
+  `ConfigManager.saveProject()`'s existing behaviour) rather than guessing.
+  An imported project has no mission yet and correctly shows as
+  `misconfigured` until a `promptFile`/task plan is added — this milestone
+  registers folders, it does not invent missions for them.
+- **`ConfigManager.getRawProject()`** — the merged project definition
+  without validation, so a caller can distinguish "the workingDirectory
+  itself is gone" from "some other configuration problem" (`getProject()`
+  collapses both into one thrown error).
+- **New project status `missing`** (`ProjectRegistry`, `shared/vocabulary.js`)
+  — a project whose folder was moved/renamed/deleted outside AI-Orchestrator
+  now reports distinctly from `misconfigured`; the definition is fine, only
+  the folder is gone.
+- New event types `project.discovered` (one per `/scan`, a count in the
+  payload — never one per candidate) and `project.imported`.
+- `operator.projectRoots` default changes from `[]` to
+  `["C:\\Users\\Admin\\Music"]` — a disclosed, deliberate security-relevant
+  default change (it also activates Phase 12 M4's future write-safety use of
+  the same list once that milestone resumes). New `operator.discovery`
+  config block (`enabled`, `ignore`, `markers`, `maxDepth`).
+
+992 → 1023 backend tests (+31: `projectDiscovery.test.js`, plus coverage in
+`configManager.test.js`, `operatorRender.test.js`, `commandRouter.test.js`,
+and one existing `projectRegistry.test.js` assertion updated for the new
+status). Live-validated against the real installation: scanning the real,
+configured `C:\Users\Admin\Music` correctly excluded all 6 registered
+projects and AI-Orchestrator's own checkout, and found 17 real, genuinely
+unregistered project folders.
+
+---
+
 ## [3.1.0] — 2026-07-29 — Phase 13 M1: Long Message Reliability
 
 Root-causes and fixes the owner's repeatedly-observed defect: mission reports

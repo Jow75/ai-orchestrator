@@ -42,15 +42,23 @@ import { isSimulatedProject } from '../drivers/simulation.js';
  *   queued            work is waiting to start
  *   idle              nothing happening
  *   misconfigured     broken, but not urgent — it was never running
+ *   missing           its folder is gone — not urgent, and not "broken"
+ *                     the same way (see below)
  *
  * The directive names running / idle / blocked / queued. `waiting-approval` is
  * added because it is a genuinely different situation with a different remedy:
  * a mission parked on YOUR decision is not blocked (nothing is wrong) and is
  * not running (nothing is progressing). Collapsing it into either would hide
  * the single most actionable state a remote operator can be in.
+ *
+ * `missing` (Phase 13 M2) is split out from `misconfigured` for the same
+ * reason: the project DEFINITION is fine, only the folder it points at is
+ * gone (moved, renamed, or deleted outside this system) — a different fact
+ * than a broken driver id or an unparseable JSON file, with a different
+ * remedy (re-point `workingDirectory`, or `/forget` it once that exists).
  */
 export const PROJECT_STATUSES = Object.freeze([
-  'waiting-approval', 'blocked', 'running', 'queued', 'idle', 'misconfigured',
+  'waiting-approval', 'blocked', 'running', 'queued', 'idle', 'misconfigured', 'missing',
 ]);
 
 /** How long git facts are reused before re-shelling out (per project). */
@@ -182,7 +190,17 @@ export class ProjectRegistry {
     } catch (error) {
       // A project whose config is broken still EXISTS and must still be
       // listed — silently dropping it is how an operator ends up staring at a
-      // list wondering where their project went.
+      // list wondering where their project went. A vanished workingDirectory
+      // is common enough (a folder moved/renamed/deleted outside this
+      // system) to deserve its own, more specific and less alarming status
+      // than "misconfigured" — the definition itself is fine.
+      const raw = this.configManager.getRawProject?.(name);
+      if (raw?.workingDirectory && !fs.existsSync(raw.workingDirectory)) {
+        record.status = 'missing';
+        record.path = raw.workingDirectory;
+        record.problem = error.message;
+        return record;
+      }
       record.status = 'misconfigured';
       record.problem = error.message;
       return record;

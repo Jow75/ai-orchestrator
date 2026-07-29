@@ -82,9 +82,10 @@ Both get confirmed against real message/event history before the fix ships, and 
 
 ---
 
-### M2 — Project Roots & Discovery (`v3.2.0`)
+### M2 — Project Roots & Discovery (`v3.2.0`) — ✅ DONE
 
-*Owner's item 1. No dependencies.*
+*Owner's item 1. No dependencies.* Full write-up:
+[PHASE_13_M2_REPORT.md](PHASE_13_M2_REPORT.md).
 
 **Builds:** new `src/operator/projectDiscovery.js` exporting `scanRoots(roots, {ignore, markers, maxDepth})`. New commands `/scan` (aliases `rescan`, `discover`; read-only) and `/import <path> [name]` in `commandGrammar.js`'s `COMMANDS`, handled in `commandRouter.js`.
 
