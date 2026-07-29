@@ -37,6 +37,38 @@ test('deepMerge: nested objects merge, arrays and scalars replace', () => {
   assert.deepEqual(merged, { a: { x: 1, y: 99 }, list: [3], keep: 'yes' });
 });
 
+test('deepMerge: a branch the source never touches is a clone, never the SAME object as target\'s (Phase 13 M4)', () => {
+  // Regression test for a real bug found while building LiveConfigLayer: a
+  // shallow `{...target}` spread leaves an untouched nested object
+  // reference-equal to the one inside `target` — which, when `target` is
+  // the shared, module-level ORCHESTRATOR_DEFAULTS, means an in-place
+  // mutation of the merged result silently corrupts that singleton for
+  // every other ConfigManager in the process.
+  const target = { untouched: { deep: { value: 1 }, list: ['a', 'b'] } };
+  const merged = deepMerge(target, {});
+  assert.notEqual(merged.untouched, target.untouched, 'must be a fresh clone, not the same reference');
+  assert.notEqual(merged.untouched.deep, target.untouched.deep, 'independence must hold at every depth');
+  assert.notEqual(merged.untouched.list, target.untouched.list, 'arrays must be cloned too, not just objects');
+
+  merged.untouched.deep.value = 999;
+  merged.untouched.list.push('c');
+  assert.equal(target.untouched.deep.value, 1, 'mutating the merged result must never affect target');
+  assert.deepEqual(target.untouched.list, ['a', 'b'], 'nor may pushing onto a cloned array affect target\'s');
+});
+
+test('a live-config mutation on one ConfigManager never corrupts a second instance built from the same defaults', () => {
+  const configA = new ConfigManager({ rootDir: scaffold({}) });
+  const configB = new ConfigManager({ rootDir: scaffold({}) });
+  configA.load();
+  configB.load();
+
+  // Simulate what LiveConfigLayer does: mutate a nested object in place.
+  configA.getAll().operator.projectRoots.push('C:\\Only\\In\\A');
+
+  assert.ok(!configB.getAll().operator.projectRoots.includes('C:\\Only\\In\\A'),
+    'a second, independently-loaded ConfigManager must never see the first one\'s live mutation');
+});
+
 test('defaults apply when no orchestrator.json exists', () => {
   const config = new ConfigManager({ rootDir: scaffold() });
   assert.equal(config.get('api.port'), 4711);

@@ -144,9 +144,15 @@ Both mutating groups sit behind new `operator.lifecycle.enabled` (default `true`
 
 ---
 
-### M4 — Live Configuration Layer (`v3.4.0`)
+### M4 — Live Configuration Layer (`v3.4.0`) — ✅ DONE
 
 *The shared mechanism underlying owner's items 4 and 8. No dependency on M1–M3.*
+Full write-up: [PHASE_13_M4_REPORT.md](PHASE_13_M4_REPORT.md). Building this
+surfaced a real, previously-latent bug in `ConfigManager.deepMerge()` —
+nothing before this milestone ever mutated a merged config object in place,
+which let a shallow-copy bug hide: an untouched config branch could be the
+literal same object as the shared `ORCHESTRATOR_DEFAULTS` singleton. Fixed
+at the root (`deepMerge` now deep-clones), not patched around here.
 
 **Builds:** new `src/config/liveConfig.js`, `LiveConfigLayer`:
 - `LIVE_MUTABLE_PATHS` — an explicit **allowlist** of dotted config paths (`operator.projectRoots`, `operator.defaultModel`, `operator.defaultProvider`, `notifications.minSeverity`, `approvals.mode`), deliberately not "anything in config" — that would silently turn restart-only settings (`daemon.pollIntervalMs`, `api.port`) into ones that look live but aren't, an unaudited surface nobody asked for. Extensible over time as more of the owner's "remote configuration" wishlist gets prioritized.

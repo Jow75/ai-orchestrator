@@ -58,13 +58,14 @@ export class CommandRouter {
    * @param {import('../state/sessionManager.js').SessionManager} deps.sessionManager
    * @param {import('../progress/progressLedger.js').ProgressLedger} [deps.ledger]
    * @param {import('../config/configManager.js').ConfigManager} deps.configManager
+   * @param {import('../config/liveConfig.js').LiveConfigLayer} [deps.liveConfig]
    * @param {object} deps.config - The full merged global config.
    * @param {() => void} [deps.requestShutdown] - Stops the Core Service.
    * @param {object} deps.logger
    */
   constructor({
     registry, context, requests, confirmations, events, approvalStore, approvalManager,
-    supervisor, taskQueue, sessionManager, ledger, configManager, config,
+    supervisor, taskQueue, sessionManager, ledger, configManager, liveConfig, config,
     requestShutdown, serviceReport, logger,
   }) {
     this.registry = registry;
@@ -79,6 +80,7 @@ export class CommandRouter {
     this.sessionManager = sessionManager;
     this.ledger = ledger;
     this.configManager = configManager;
+    this.liveConfig = liveConfig;
     this.config = config ?? {};
     this.requestShutdown = requestShutdown;
     this.serviceReport = serviceReport;
@@ -388,6 +390,7 @@ export class CommandRouter {
       case 'restore': return this.commandRestore(rest, ctx);
       case 'hide': return this.commandHide(rest, ctx);
       case 'unhide': return this.commandUnhide(rest, ctx);
+      case 'roots': return this.commandRoots(rest, ctx);
       default:
         return { reply: `"/${name}" is recognized but not implemented. This is a bug — please report it.` };
     }
@@ -723,6 +726,85 @@ export class CommandRouter {
       type: eventType, project, actor: ctx.actor, payload: { classification: to },
     });
     return { reply: `${verb} ${project} → ${to}.` };
+  }
+
+  /**
+   * `/roots`, `/roots add <path>`, `/roots remove <path>` — Phase 13 M4.
+   * Not destructive: adding/removing a discovery root neither deletes
+   * anything nor stops any project from running (`ConfigManager.getProject()`
+   * never consults `operator.projectRoots` at all — the effect is purely
+   * "what /scan looks at").
+   */
+  commandRoots(rest, ctx) {
+    if (this.operatorConfig.liveConfig?.enabled === false) {
+      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
+    }
+    if (!this.liveConfig) {
+      return { reply: 'This interface cannot change configuration from here.' };
+    }
+    const trimmed = (rest ?? '').trim();
+    if (!trimmed) return { reply: this.renderRoots() };
+
+    const addMatch = trimmed.match(/^add\s+(.+)$/i);
+    if (addMatch) return this.commandRootsAdd(addMatch[1].trim(), ctx);
+    const removeMatch = trimmed.match(/^remove\s+(.+)$/i);
+    if (removeMatch) return this.commandRootsRemove(removeMatch[1].trim(), ctx);
+
+    return { reply: 'Usage: /roots, /roots add <path>, or /roots remove <path>.' };
+  }
+
+  renderRoots() {
+    const roots = this.operatorConfig.projectRoots ?? [];
+    if (!roots.length) {
+      return 'No project roots configured yet. /roots add <path> to add one.';
+    }
+    return [`Project roots (${roots.length}):`, ...roots.map((root) => `• ${root}`)].join('\n');
+  }
+
+  commandRootsAdd(rawPath, ctx) {
+    const resolved = path.resolve(rawPath);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+      return { reply: `"${rawPath}" is not a real folder on this machine.` };
+    }
+    const current = this.operatorConfig.projectRoots ?? [];
+    if (current.some((root) => path.resolve(root).toLowerCase() === resolved.toLowerCase())) {
+      return { reply: `${resolved} is already a project root.` };
+    }
+    this.liveConfig.applyPatch({ 'operator.projectRoots': [...current, resolved] });
+    this.events?.append({
+      type: 'config.changed', actor: ctx.actor, payload: { key: 'operator.projectRoots' },
+    });
+    return { reply: `Added ${resolved}. /scan will include it immediately — no restart needed.` };
+  }
+
+  commandRootsRemove(rawPath, ctx) {
+    const resolved = path.resolve(rawPath);
+    const current = this.operatorConfig.projectRoots ?? [];
+    const next = current.filter((root) => path.resolve(root).toLowerCase() !== resolved.toLowerCase());
+    if (next.length === current.length) {
+      return { reply: `${resolved} is not a configured root.` };
+    }
+    this.liveConfig.applyPatch({ 'operator.projectRoots': next });
+    this.events?.append({
+      type: 'config.changed', actor: ctx.actor, payload: { key: 'operator.projectRoots' },
+    });
+
+    // Non-blocking: removing a root only ever affects discovery. A project
+    // already registered under it keeps running exactly as before —
+    // ConfigManager.getProject() never consults projectRoots at all — but
+    // that's easy to assume otherwise, so it's said plainly here.
+    const affected = this.registry.names().filter((name) => {
+      const raw = this.configManager.getRawProject?.(name);
+      if (!raw?.workingDirectory) return false;
+      const real = path.resolve(raw.workingDirectory).toLowerCase();
+      const base = resolved.toLowerCase();
+      return real === base || real.startsWith(`${base}${path.sep}`);
+    });
+    const note = affected.length
+      ? `\n\nNote: ${affected.join(', ')} still work exactly as before — removing a root only affects ` +
+        '/scan discovery, never a registered project\'s ability to run.'
+      : '';
+    return { reply: `Removed ${resolved}.${note}` };
   }
 
   // ------------------------------------------------------------ destructive --

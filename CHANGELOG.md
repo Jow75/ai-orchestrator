@@ -3,6 +3,61 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.4.0] — 2026-07-29 — Phase 13 M4: Live Configuration Layer
+
+The first mechanism for the daemon to accept a config change without a
+restart. `docs/PHASE_13_M4_REPORT.md`.
+
+### Added
+
+- **`src/config/liveConfig.js`**, `LiveConfigLayer` — an explicit
+  **allowlist** (`LIVE_MUTABLE_PATHS`: `operator.projectRoots`,
+  `operator.defaultModel`, `operator.defaultProvider`,
+  `notifications.minSeverity`, `approvals.mode`), deliberately not "anything
+  in config" — that would silently turn restart-only settings
+  (`daemon.pollIntervalMs`, `api.port`) into ones that look live but aren't.
+  `applyPatch()` is all-or-nothing (one disallowed key blocks the whole
+  patch) and writes to disk FIRST via the existing
+  `ConfigManager.writeLocalConfig()`, then mirrors the change into the same
+  in-memory config object every subsystem already holds by reference — no
+  subsystem needs telling to "reload."
+- **`/roots`**, **`/roots add <path>`**, **`/roots remove <path>`** — list,
+  add, or remove a project root. Not destructive (`ConfigManager.getProject()`
+  never consults `operator.projectRoots` at all, so this only ever affects
+  `/scan`'s discovery, never a registered project's ability to run — stated
+  plainly in `/roots remove`'s own reply when a registered project happens
+  to live under the root being removed). New `operator.liveConfig.enabled`
+  kill switch.
+- New event type `config.changed` (`{key}` only — the key changed, never
+  the raw value, hygiene against a future allowlisted key that turns out to
+  be secret-adjacent).
+
+### Fixed
+
+- **A real, previously-latent bug in `ConfigManager.deepMerge()`**, found
+  while building this milestone (nothing before it ever mutated a merged
+  config object in place): a shallow `{...target}` spread left any branch
+  the `source` override never touched as the EXACT SAME OBJECT as the one
+  inside `target` — and since `load()` calls `deepMerge(ORCHESTRATOR_DEFAULTS,
+  overrides)`, an untouched section of a live config (e.g. `operator` on a
+  machine with no `local.json` override for it) was literally the shared,
+  module-level `ORCHESTRATOR_DEFAULTS` object. `LiveConfigLayer` is the
+  first code ever to mutate that object graph in place, and doing so would
+  have silently corrupted the shared default for every other `ConfigManager`
+  instance in the same process — caught by a new test before it ever ran
+  against a live system. `deepMerge()` now deep-clones every nested object
+  AND array from `target`, guaranteeing full independence.
+
+1057 → 1074 backend tests (+17: new `liveConfig.test.js`, two new
+`deepMerge`/cross-instance regression tests in `configManager.test.js`, and
+`/roots` integration coverage in `commandRouter.test.js`). No live daemon
+restart was performed against the real installation (consistent with M2/M3:
+the mechanism is validated end-to-end through the real `ConfigManager`/
+`LiveConfigLayer`/`CommandRouter` classes, never against the owner's actual
+`config/local.json` without their request).
+
+---
+
 ## [3.3.0] — 2026-07-29 — Phase 13 M3: Project Lifecycle & Registry Operations
 
 The registry stops treating every project as equally live. Owner-set

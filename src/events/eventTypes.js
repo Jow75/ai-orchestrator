@@ -56,6 +56,10 @@ export const EVENT_TYPES = Object.freeze([
   /** `/projects classify` applied a proposed classification. */
   'project.classified',
 
+  // ── live configuration (Phase 13 M4) ────────────────────────────────────
+  /** A remotely-mutable config key changed. Payload logs the KEY only, never the value. */
+  'config.changed',
+
   // ── missions requested from an interface (M2 Priority 3) ─────────────────
   /** Free text became a mission request awaiting the owner's approval. */
   'mission.created',

@@ -80,6 +80,7 @@ import ProjectRegistry from '../operator/projectRegistry.js';
 import OperatorContext from '../operator/operatorContext.js';
 import MissionRequestStore from '../operator/missionRequests.js';
 import ConfirmationStore from '../operator/confirmations.js';
+import LiveConfigLayer from '../config/liveConfig.js';
 import CommandRouter from '../operator/commandRouter.js';
 import OperatorGateway from '../operator/operatorGateway.js';
 import MissionMonitor from '../operator/missionMonitor.js';
@@ -308,6 +309,7 @@ export class Daemon extends EventEmitter {
       logger,
     });
     this.confirmations = new ConfirmationStore({ ttlMs: operatorConfig.confirmationTtlMs });
+    this.liveConfig = new LiveConfigLayer({ configManager: this.configManager });
 
     this.commandRouter = new CommandRouter({
       registry: this.projectRegistry,
@@ -322,6 +324,7 @@ export class Daemon extends EventEmitter {
       sessionManager: this.sessionManager,
       ledger: this.ledger,
       configManager: this.configManager,
+      liveConfig: this.liveConfig,
       config: this.config,
       // A remote shutdown must go through the SAME stop path as `daemon stop`
       // (see watchStopFile): on Windows a cross-process signal is a hard kill,

@@ -193,6 +193,13 @@ export const COMMANDS = Object.freeze([
     destructive: true,
     description: 'Remove a project from the registry. Files on disk are NEVER touched.',
   },
+  {
+    name: 'roots',
+    aliases: [],
+    usage: '/roots [add|remove <path>]',
+    takesRest: true,
+    description: 'List, add, or remove a project root (where /scan looks for projects).',
+  },
 ]);
 
 /** name/alias → command definition. */

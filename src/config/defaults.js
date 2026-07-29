@@ -394,6 +394,15 @@ export const ORCHESTRATOR_DEFAULTS = {
     lifecycle: {
       enabled: true,
     },
+    /**
+     * Phase 13 M4: `/roots`, `/roots add`, `/roots remove` — the first use
+     * of `src/config/liveConfig.js`'s allowlisted, no-restart config
+     * mutation. Its own switch, separate from `lifecycle`'s: this changes
+     * GLOBAL configuration, not one project's registry entry.
+     */
+    liveConfig: {
+      enabled: true,
+    },
   },
 
   /** Project launched when `ai-orchestrator start` is run with no name. */

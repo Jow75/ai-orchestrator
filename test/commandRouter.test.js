@@ -34,6 +34,7 @@ import MissionLifecycle from '../src/mission/missionLifecycle.js';
 import ApprovalStore from '../src/approvals/approvalStore.js';
 import ApprovalManager from '../src/approvals/approvalManager.js';
 import SessionManager from '../src/state/sessionManager.js';
+import LiveConfigLayer from '../src/config/liveConfig.js';
 import { ORCHESTRATOR_DEFAULTS } from '../src/config/defaults.js';
 import { ensureRuntimeDirs } from '../src/infra/paths.js';
 import { silentLogger } from '../src/infra/logger.js';
@@ -73,6 +74,12 @@ function harness({ projects = ['alpha', 'beta'], operator = {}, driver = 'claude
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-router-'));
   const configManager = new ConfigManager({ rootDir: root });
   configManager.load();
+  // Applied to the SAME object configManager.getAll() returns (never a
+  // separate copy) — matching real daemon.js wiring exactly, where
+  // CommandRouter's `config` and LiveConfigLayer's mutation target are the
+  // identical reference. A copy here would make /roots tests pass against
+  // an object nothing else in the router actually reads.
+  Object.assign(configManager.getAll().operator, operator);
   const paths = configManager.getPaths();
   ensureRuntimeDirs(paths);
   fs.mkdirSync(paths.projectsDir, { recursive: true });
@@ -123,7 +130,8 @@ function harness({ projects = ['alpha', 'beta'], operator = {}, driver = 'claude
     taskQueue,
     sessionManager,
     configManager,
-    config: { ...ORCHESTRATOR_DEFAULTS, operator: { ...ORCHESTRATOR_DEFAULTS.operator, ...operator } },
+    liveConfig: new LiveConfigLayer({ configManager }),
+    config: configManager.getAll(),
     requestShutdown: () => shutdowns.push(Date.now()),
     logger: silentLogger,
   });
@@ -1019,4 +1027,71 @@ test('/projects classify says there is nothing to do once every project is class
   registry.configManager.updateProject('alpha', { classification: 'production' });
   const { reply } = await say('/projects classify');
   assert.match(reply, /already has a classification/);
+});
+
+// ──────────────────────────────── Phase 13 M4: live configuration ──────────
+
+test('/roots lists the currently configured roots', async () => {
+  const h = discoveryHarness();
+  const { reply } = await h.say('/roots');
+  assert.match(reply, new RegExp(h.rootsDir.replace(/\\/g, '\\\\')));
+});
+
+test('/roots add registers a real, existing folder immediately — /scan sees it with no restart', async () => {
+  // Starts with NO roots configured (never the real default C:\Users\Admin\Music
+  // — /scan must stay isolated from whatever actually happens to be on this
+  // machine, or this test would be flaky against the tester's own filesystem).
+  const h = harness({ projects: ['alpha'], operator: { projectRoots: [] } });
+  const newRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-newroot-'));
+  mkCandidate(newRoot, 'fresh-project');
+
+  const added = await h.say(`/roots add ${newRoot}`);
+  assert.match(added.reply, /Added/);
+  assert.equal(h.events.read({ types: ['config.changed'] }).length, 1);
+
+  const scanned = await h.say('/scan');
+  assert.match(scanned.reply, /fresh-project/, '/scan sees the new root on the very next command');
+});
+
+test('/roots add refuses a path that is not a real folder', async () => {
+  const h = harness();
+  const { reply } = await h.say('/roots add C:\\definitely\\not\\real\\xyz');
+  assert.match(reply, /is not a real folder/);
+});
+
+test('/roots add refuses a root that is already configured', async () => {
+  const h = discoveryHarness();
+  const { reply } = await h.say(`/roots add ${h.rootsDir}`);
+  assert.match(reply, /already a project root/);
+});
+
+test('/roots remove takes a root out of discovery, with a non-blocking note if a project lives under it', async () => {
+  const h = discoveryHarness();
+  const dir = mkCandidate(h.rootsDir, 'lives-here');
+  fs.writeFileSync(path.join(dir, 'prompt.md'), '# work\n');
+  fs.writeFileSync(
+    path.join(h.paths.projectsDir, 'lives-here.json'),
+    JSON.stringify({ workingDirectory: dir, promptFile: 'prompt.md', driver: 'claude' })
+  );
+
+  const { reply } = await h.say(`/roots remove ${h.rootsDir}`);
+  assert.match(reply, /Removed/);
+  assert.match(reply, /lives-here/);
+  assert.match(reply, /never a registered project's ability to run/);
+
+  // The registered project is completely unaffected — still resolvable and describable.
+  assert.ok(h.registry.has('lives-here'));
+  assert.equal(h.registry.describe('lives-here', { git: false, health: false }).status, 'idle');
+});
+
+test('/roots remove says plainly when the path was never a configured root', async () => {
+  const h = harness();
+  const { reply } = await h.say('/roots remove C:\\never\\was\\a\\root');
+  assert.match(reply, /is not a configured root/);
+});
+
+test('/roots is refused when operator.liveConfig is disabled', async () => {
+  const h = harness({ operator: { liveConfig: { enabled: false } } });
+  const { reply } = await h.say('/roots');
+  assert.match(reply, /disabled/);
 });

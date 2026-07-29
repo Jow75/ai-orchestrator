@@ -126,8 +126,21 @@ heuristic was live-validated against the real 6 project files and exactly
 reproduced the plan's expected table. 1057/1057 backend tests. Full report:
 `docs/PHASE_13_M3_REPORT.md`.
 
-**NEXT: Phase 13 M4 — Live Configuration Layer, `v3.4.0`** — see
-`docs/PHASE_13_PLAN.md`.
+**Phase 13 M4 — Live Configuration Layer (`v3.4.0`) is DONE.** The first
+mechanism for the daemon to accept a config change without a restart —
+`/roots add`/`/roots remove`, allowlisted (`LIVE_MUTABLE_PATHS`), disk
+first then in-memory. Building it surfaced a real, previously-latent bug in
+`ConfigManager.deepMerge()`: a shallow-copy meant an untouched config
+branch (e.g. `operator`, on any machine with no local override for it —
+every machine today) was literally the same object as the shared,
+module-level `ORCHESTRATOR_DEFAULTS` singleton — so the first-ever in-place
+mutation of a merged config would have corrupted it for every other
+`ConfigManager` in the process. Fixed at the root (deep-clones now, objects
+and arrays both) before it ever shipped. 1074/1074 backend tests. Full
+report: `docs/PHASE_13_M4_REPORT.md`.
+
+**NEXT: Phase 13 M5 — Provider Architecture Completion & Remote
+Model/Provider Management, `v3.5.0`** — see `docs/PHASE_13_PLAN.md`.
 
 ---
 
@@ -348,15 +361,15 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 13 M1 — Long Message Reliability | ✅ done | `v3.1.0` |
 | Phase 13 M2 — Project Roots & Discovery | ✅ done | `v3.2.0` |
 | Phase 13 M3 — Project Lifecycle & Registry Operations | ✅ done | `v3.3.0` |
-| Phase 13 M4 — Live Configuration Layer | ⏳ next | `v3.4.0` |
-| Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ⏳ planned | `v3.5.0` |
+| Phase 13 M4 — Live Configuration Layer | ✅ done | `v3.4.0` |
+| Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ⏳ next | `v3.5.0` |
 | Phase 13 M6 — Remote File System | ⏳ planned | `v3.6.0` |
 | Phase 13 M7 — Mission Completion Messaging | ⏳ planned | `v3.7.0` |
 | Phase 13 M8 — Bot Experience & Discoverability | ⏳ planned | `v3.8.0` |
 | Phase 13 M9 — Public Release Prep | ⏳ planned | (audits `v3.8.0`) |
 
-**Test suite (current, 2026-07-29):** 1057/1057 backend (+20 Phase 13 M1,
-+31 M2, +34 M3) + 41 desktop — the 919/919 figure above was the Phase 12
+**Test suite (current, 2026-07-29):** 1074/1074 backend (+20 Phase 13 M1,
++31 M2, +34 M3, +17 M4) + 41 desktop — the 919/919 figure above was the Phase 12
 M2.1 snapshot; Phase 12 M2.2 and M3 each
 added more (see
 CHANGELOG for the exact per-release deltas).

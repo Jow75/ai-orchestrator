@@ -28,9 +28,44 @@ export class ConfigError extends Error {
   }
 }
 
-/** Recursively merge `source` over `target` without mutating either. */
+/**
+ * Deep-clone plain objects AND arrays (scalars/functions/etc. pass through
+ * by reference — nothing to alias-protect there). Arrays need cloning too,
+ * not just objects: `deepMerge`'s MERGE semantics already treat an array as
+ * atomic (replaced wholesale, never element-merged), but an untouched array
+ * — e.g. `operator.projectRoots` when nothing overrides it — would otherwise
+ * stay the exact same array instance as the one inside the shared,
+ * module-level defaults, and an in-place array mutation (`.push()`, not
+ * just a whole-array reassignment) would corrupt it same as an object would.
+ */
+function cloneDeep(value) {
+  if (Array.isArray(value)) return value.map(cloneDeep);
+  if (value === null || typeof value !== 'object') return value;
+  const clone = {};
+  for (const [key, nested] of Object.entries(value)) clone[key] = cloneDeep(nested);
+  return clone;
+}
+
+/**
+ * Recursively merge `source` over `target` without mutating either.
+ *
+ * Every nested plain object in the result is a fresh clone — including
+ * branches `source` never touches — NOT merely a shallow `{...target}`
+ * spread. That guarantee matters beyond "don't mutate the inputs": `load()`
+ * calls this as `deepMerge(ORCHESTRATOR_DEFAULTS, overrides)`, and a branch
+ * `overrides` doesn't touch would otherwise be the EXACT SAME object as the
+ * one living inside the shared, module-level `ORCHESTRATOR_DEFAULTS` — so a
+ * later in-place mutation of the live config (Phase 13 M4's
+ * `LiveConfigLayer`, the first caller to ever do this) would silently
+ * corrupt that singleton for every other `ConfigManager` in the same
+ * process. Cloning here, once, is cheaper and far safer than requiring
+ * every future mutator to know that landmine exists.
+ */
 export function deepMerge(target, source) {
-  const result = { ...target };
+  const result = {};
+  for (const [key, value] of Object.entries(target ?? {})) {
+    result[key] = cloneDeep(value);
+  }
   for (const [key, value] of Object.entries(source ?? {})) {
     const existing = result[key];
     if (
