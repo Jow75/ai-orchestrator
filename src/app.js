@@ -180,6 +180,16 @@ export class App {
       // already delivering them — otherwise one approval sends two
       // near-identical messages to the same chat/mailbox.
       approvalsConfig: this.config.approvals,
+      // Phase 13 M7: the mission-complete footer points at /files/download
+      // commands ONLY a live Core Service can actually answer — this process
+      // has no CommandRouter of its own (see module header: "ai-orchestrator
+      // start never consults [the operator] block"). `workerMode` is exactly
+      // "was this process forked by the daemon that owns one," so it stands
+      // in for "is the operator interface actually there to answer this" —
+      // reusing existing plumbing (`--worker`/`this.workerMode`), not new
+      // architecture. A bare interactive `start` (no daemon) suppresses the
+      // footer rather than pointing the owner at a command nothing answers.
+      operatorConfig: this.workerMode ? this.config.operator : { enabled: false },
     });
     this.notifications.attach(this.orchestrator);
     this.notifications.attach(this.approvalManager); // Phase 10A events

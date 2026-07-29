@@ -46,11 +46,11 @@ function fakeChannel(name, behavior = {}) {
   return c;
 }
 
-function engineWith(channels, { config = {}, withState = false } = {}) {
+function engineWith(channels, { config = {}, withState = false, operatorConfig = null } = {}) {
   const notificationsDir = withState ? fs.mkdtempSync(path.join(os.tmpdir(), 'aio-engstate-')) : undefined;
   const notificationState = withState ? new NotificationState({ notificationsDir, logger: silentLogger }) : null;
   const engine = new NotificationEngine({
-    config: { events: [], ...config }, logger: silentLogger, notificationState,
+    config: { events: [], ...config }, logger: silentLogger, notificationState, operatorConfig,
   });
   engine.channels = channels; // bypass config-driven construction (see file header)
   return { engine, notificationState };
@@ -78,6 +78,116 @@ test('mission:complete no longer truncates a long agent summary to 300/400 chars
   await engine.notify('mission:complete', { project: 'p', summary: longSummary });
   assert.ok(c.sent[0].message.includes(longSummary));
   assert.ok(!c.sent[0].message.endsWith('…'));
+});
+
+// ── Phase 13 M7: file-aware, complete mission-completion messaging ────────
+//
+// Real-world validation found completion messages ending mid-table ("File |
+// Purpose …") and giving no way to inspect what a mission actually did from
+// the phone that just received "Mission complete." These tests cover: the
+// message is never silently cut short, the created/modified/deleted
+// breakdown lists every real path (not just the compact card's capped
+// preview), and the footer points at the real M6 commands with a real path
+// substituted in, gated on operator.files actually being reachable.
+
+test('mission:complete appends a footer pointing at the real M6 commands, with the real project name', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c]);
+  const card = { project: 'calculator-proof', status: 'complete', filesCreated: ['src/App.jsx'] };
+  await engine.notify('mission:complete', { project: 'calculator-proof', summary: 'done', card });
+  const { message } = c.sent[0];
+  assert.match(message, /\/project calculator-proof/);
+  assert.match(message, /\/files/);
+  assert.match(message, /\/file src\/App\.jsx/); // a REAL path from this mission, not a placeholder
+  assert.match(message, /\/download_project calculator-proof/);
+});
+
+test('mission:complete footer falls back to a generic example when no file was created/modified', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c]);
+  await engine.notify('mission:complete', { project: 'p', summary: 'done', card: { project: 'p', status: 'complete' } });
+  assert.match(c.sent[0].message, /\/file README\.md/);
+});
+
+test('mission:complete footer is omitted when operator.files.enabled is false', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c], { operatorConfig: { files: { enabled: false } } });
+  await engine.notify('mission:complete', { project: 'p', summary: 'done', card: { project: 'p', status: 'complete' } });
+  assert.doesNotMatch(c.sent[0].message, /\/download_project/);
+});
+
+test('mission:complete footer is omitted when the operator interface itself is off (e.g. a bare standalone run)', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c], { operatorConfig: { enabled: false } });
+  await engine.notify('mission:complete', { project: 'p', summary: 'done', card: { project: 'p', status: 'complete' } });
+  assert.doesNotMatch(c.sent[0].message, /Inspect the results/);
+});
+
+test('mission:complete footer shows by default when no operatorConfig is passed at all (CLI notify test/resend)', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c]); // operatorConfig omitted entirely
+  await engine.notify('mission:complete', { project: 'p', summary: 'done', card: { project: 'p', status: 'complete' } });
+  assert.match(c.sent[0].message, /\/download_project p/);
+});
+
+test('mission:complete lists EVERY created/modified/deleted path, uncapped — never just the card\'s 8-file preview', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c]);
+  const created = Array.from({ length: 15 }, (_, i) => `src/file${i}.js`);
+  const card = {
+    project: 'p', status: 'complete',
+    filesChanged: [...created, 'old.js (deleted)'], // the capped compact view
+    filesCreated: created, filesDeleted: ['old.js'],
+  };
+  await engine.notify('mission:complete', { project: 'p', summary: 'done', card });
+  const { message } = c.sent[0];
+  for (const f of created) assert.ok(message.includes(f), `missing ${f} from the full breakdown`);
+  assert.ok(message.includes('old.js'));
+  assert.ok(!message.includes('…'), 'no important information should be silently dropped');
+});
+
+test('mission:complete on a legacy checkpoint (no created/modified split) lists real paths under "Changed", never guessing', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c]);
+  const card = { project: 'p', status: 'complete', filesChanged: ['a.js', 'b.js'] };
+  await engine.notify('mission:complete', { project: 'p', summary: 'done', card });
+  assert.match(c.sent[0].message, /Changed:\n• a\.js\n• b\.js/);
+  assert.doesNotMatch(c.sent[0].message, /Created:|Modified:/);
+});
+
+test('mission:complete for a simulated mission still discloses the simulation notice above the fold, with the new content below it', async () => {
+  const c = fakeChannel('fake');
+  const { engine } = engineWith([c]);
+  const card = { project: 'p', status: 'complete', simulated: true, filesCreated: ['a.js'] };
+  await engine.notify('mission:complete', { project: 'p', summary: 'done', card });
+  const { message } = c.sent[0];
+  assert.ok(message.indexOf('Simulated project') < message.indexOf('Created:'));
+  assert.match(message, /\/download_project p/);
+});
+
+test('a large real completion message still splits cleanly across multiple Telegram parts with nothing lost', async () => {
+  // Exercises the actual channel (not a fake), so this is a real integration
+  // of notificationEngine -> TelegramChannel -> telegramSplit.js, the exact
+  // chain M1 built to guarantee no content is ever silently dropped.
+  const { default: TelegramChannel } = await import('../src/notifications/channels/telegram.js');
+  const sentBodies = [];
+  const fetchFn = async (url, options) => {
+    sentBodies.push(JSON.parse(options.body).text);
+    return { ok: true, json: async () => ({ result: { message_id: sentBodies.length } }) };
+  };
+  const channel = new TelegramChannel({ config: { botToken: 't', chatId: '1' }, logger: silentLogger, fetchFn });
+
+  const created = Array.from({ length: 250 }, (_, i) => `src/components/generated/module-${i}.jsx`);
+  const card = { project: 'p', status: 'complete', filesCreated: created };
+  const { engine } = engineWith([channel]);
+  await engine.notify('mission:complete', { project: 'p', summary: 'A long completion report.', card });
+
+  assert.ok(sentBodies.length > 1, 'a message this size must split into more than one part');
+  const combined = sentBodies.join('');
+  for (const f of created) assert.ok(combined.includes(f), `${f} lost across the split`);
+  assert.ok(combined.includes('/download_project p'));
+  // Every part independently well-formed: no dangling '(' from a mid-tag cut.
+  for (const part of sentBodies) assert.equal((part.match(/</g) ?? []).length, (part.match(/>/g) ?? []).length);
 });
 
 test('approval:required and human-action:required no longer truncate a long message to 1200 chars', async () => {

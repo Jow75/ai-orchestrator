@@ -28,8 +28,23 @@ test('captures files touched (created + modified) and deleted separately', () =>
   assert.deepEqual(cp.filesDeleted, ['c.txt']);
 });
 
+// Phase 13 M7: created/modified must survive as their OWN fields, not just
+// merged into filesTouched — a mission summary needs to say which a file
+// was, and that distinction is only available here, at the source.
+test('created and modified are also kept separate, not just merged', () => {
+  const cp = buildCheckpoint({
+    task: TASK, attempts: 1, outcome: 'done',
+    changes: { created: ['a.txt', 'b.txt'], modified: ['c.txt'], deleted: [] },
+  });
+  assert.deepEqual(cp.filesCreated, ['a.txt', 'b.txt']);
+  assert.deepEqual(cp.filesModified, ['c.txt']);
+  assert.deepEqual(cp.filesTouched, ['a.txt', 'b.txt', 'c.txt']);
+});
+
 test('with no changes available, file lists are empty (not null/undefined)', () => {
   const cp = buildCheckpoint({ task: TASK, attempts: 1, outcome: 'blocked' });
+  assert.deepEqual(cp.filesCreated, []);
+  assert.deepEqual(cp.filesModified, []);
   assert.deepEqual(cp.filesTouched, []);
   assert.deepEqual(cp.filesDeleted, []);
 });

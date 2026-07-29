@@ -3,6 +3,65 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.7.0] — 2026-07-29 — Phase 13 M7: Mission Completion Messaging
+
+A copy-and-honesty milestone on top of M6's Remote File System: the
+mission-complete message now says exactly what happened — every created,
+modified, and deleted path, never capped or silently dropped — and points
+the owner at the real commands (`/files`, `/file`, `/download_project`)
+that can inspect it, with a real path substituted in. `docs/PHASE_13_M7_REPORT.md`.
+
+### Added
+
+- **`src/mission/checkpoint.js`** — `buildCheckpoint()` now records
+  `filesCreated`/`filesModified` as their own fields (previously merged,
+  irreversibly, into `filesTouched`). `filesTouched` is unchanged for every
+  existing reader.
+- **`src/notifications/missionCard.js`** — `buildMissionCard()` aggregates
+  `filesCreated`/`filesModified`/`filesDeleted` across tasks, deduped, in
+  addition to the existing capped `filesChanged` compact view. New
+  `renderArtifactSummary(card)` — the FULL, uncapped Created/Modified/
+  Deleted breakdown with real relative paths; falls back to a neutral
+  "Changed:" heading (never a guessed split) for a checkpoint written
+  before this milestone existed.
+- **`mission:complete`'s notification** (`notificationEngine.js`) now
+  composes: the compact Mission Card, the full artifact breakdown, the
+  agent's own summary, and — new — a footer with the real project name and
+  a real changed path substituted in:
+  `/project <name>` · `/files` · `/file <real-path>` · `/download_project <name>`.
+  Gated on `operator.enabled`/`operator.files.enabled` actually being
+  reachable; a bare standalone `ai-orchestrator start` (no daemon,
+  no CommandRouter to answer these) never shows it.
+- `NotificationEngine` gains an optional `operatorConfig` constructor
+  option (mirrors the existing `approvalsConfig` pattern) used only to
+  gate the new footer; omitted everywhere the answer would otherwise be
+  "unreachable" (see Fixed).
+
+### Fixed
+
+- **A real, previously-latent self-contradiction, found by this
+  milestone's own live validation**: `SIMULATION_NOTICE_PAST` ("no code
+  was written") is accurate for a mock project scripted to write nothing
+  (`validation-sandbox`, its origin story) but not in general — the mock
+  driver has always supported scripted `writeFile`/`appendFile`. Live-
+  validating M7 against exactly such a fixture produced a message
+  claiming "no code was written" directly above a real "Created:
+  src/calculator.js" line. Fixed in `renderMissionCardText()`: a
+  simulated mission that DID write real (scripted) files gets an
+  accurate notice instead ("...any files listed below were part of that
+  script, not independent judgment"); a simulated mission that wrote
+  nothing keeps the original, still-correct wording.
+- **`app.js`'s standalone `NotificationEngine` would have advertised
+  `/files` commands nothing could answer.** `ai-orchestrator start` (no
+  daemon) has no `CommandRouter` at all — a real architectural rule this
+  module's own header already states ("`ai-orchestrator start` never
+  consults \[the operator\] block"). Fixed by keying the new footer's
+  visibility off the EXISTING `workerMode`/`--worker` flag: daemon-forked
+  workers (where a live `CommandRouter` really is one Telegram message
+  away) pass the real `operator` config through; a bare interactive
+  `start` passes `{enabled: false}` and the footer is suppressed rather
+  than pointing at a command nothing would answer.
+
 ## [3.6.0] — 2026-07-29 — Phase 13 M6: Remote File System
 
 The first new runtime dependency since baseline (`archiver`) and the first

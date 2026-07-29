@@ -400,6 +400,13 @@ export class Daemon extends EventEmitter {
     const notifications = new NotificationEngine({
       config: this.config.notifications,
       logger: childLogger(this.logger, 'notifications'),
+      // Phase 13 M7: this process genuinely does own a live CommandRouter
+      // (see buildOperatorInterface()), so — unlike a worker or a bare
+      // standalone `start` — its operator config is accurate to pass through
+      // as-is. Has no effect today (this engine only ever sees
+      // summary:daily/weekly, never mission:complete — missions run inside
+      // forked workers, not the daemon itself), but is the honest value.
+      operatorConfig: this.config.operator,
     });
     const ledger = this.ledger;
     const scheduler = new MissionScheduler({

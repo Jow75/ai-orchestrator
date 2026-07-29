@@ -421,7 +421,7 @@ all become clients of one daemon. Plan: `docs/PHASE_12_PLAN.md`.
   available `v3.x` version once Phase 13 completes. See
   `docs/PHASE_12_PLAN.md` §4.
 
-## Phase 13 — Architecture Evolution: Discovery, Lifecycle, Live Configuration, Provider/Model Control, Remote Filesystem & Reliability 🔄 (M7 next)
+## Phase 13 — Architecture Evolution: Discovery, Lifecycle, Live Configuration, Provider/Model Control, Remote Filesystem & Reliability 🔄 (M8 next)
 
 Framed by the owner as an architecture milestone, not a feature milestone:
 every decision justified up front so the system "still makes sense after
@@ -458,7 +458,9 @@ built, rather than duplicating them. Full plan: `docs/PHASE_13_PLAN.md`.
   remotely; a real ZIP, never node_modules/.git/build output. Report:
   `docs/PHASE_13_M6_REPORT.md`.
 - **M7 — Mission Completion Messaging** (`v3.7.0`): completion messages lead
-  naturally into `/files`/`/file`/`/download-project`.
+  naturally into `/files`/`/file`/`/download-project` — every created,
+  modified, and deleted path, real and uncapped, plus a footer with a real
+  changed path substituted in. Report: `docs/PHASE_13_M7_REPORT.md`.
 - **M8 — Bot Experience & Discoverability** (`v3.8.0`): richer, categorized
   command metadata, still generated from the one `COMMANDS` table.
 - **M9 — Public Release Prep**: repeats the audit-then-present-for-approval

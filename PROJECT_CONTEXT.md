@@ -46,7 +46,30 @@ sibling project's gitignored credentials file), a real ZIP verified by
 actually extracting it with Windows' own `Expand-Archive`, and archived-
 project access confirmed unaffected. Full report: `docs/PHASE_13_M6_REPORT.md`.
 
-**NEXT: Phase 13 M7 — Mission Completion Messaging, `v3.7.0`** — see
+**Phase 13 M7 — Mission Completion Messaging (`v3.7.0`) is DONE.** Real-
+world validation surfaced a message ending mid-table ("File | Purpose …")
+and no way to inspect what a mission actually did from the phone that just
+received "Mission complete." `checkpoint.js` now keeps created/modified
+separate instead of merging them irreversibly into `filesTouched`;
+`missionCard.js`'s new `renderArtifactSummary()` lists every real path
+under Created/Modified/Deleted, uncapped (the compact, 8-file-capped
+`filesChanged` view is untouched, still used for the card body); the
+`mission:complete` notification appends a footer with the real project
+name and a real changed path — `/project`, `/files`, `/file <real-path>`,
+`/download_project` — gated on the operator interface actually being
+reachable (a bare standalone `start`, with no `CommandRouter` at all,
+never shows it). Live-validating it found a real, disclosed self-
+contradiction — a simulated mission that DID write scripted files still
+claimed "no code was written" — fixed at the root, not patched around.
+1155 → 1173 backend tests. Live-validated against the real Core Service
+and the real Telegram bot: a genuine two-task mock mission produced real
+`filesCreated`/`filesModified` in the persisted checkpoint, a real
+Telegram message (confirmed message ids 166/167, the second after the
+simulation-notice fix), and all three footer commands tapped through the
+real live API against the real result. Full report:
+`docs/PHASE_13_M7_REPORT.md`.
+
+**NEXT: Phase 13 M8 — Bot Experience & Discoverability, `v3.8.0`** — see
 `docs/PHASE_13_PLAN.md`.
 
 ---
@@ -401,12 +424,12 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 13 M4 — Live Configuration Layer | ✅ done | `v3.4.0` |
 | Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ✅ done | `v3.5.0` |
 | Phase 13 M6 — Remote File System | ✅ done | `v3.6.0` |
-| Phase 13 M7 — Mission Completion Messaging | ⏳ next | `v3.7.0` |
-| Phase 13 M8 — Bot Experience & Discoverability | ⏳ planned | `v3.8.0` |
+| Phase 13 M7 — Mission Completion Messaging | ✅ done | `v3.7.0` |
+| Phase 13 M8 — Bot Experience & Discoverability | ⏳ next | `v3.8.0` |
 | Phase 13 M9 — Public Release Prep | ⏳ planned | (audits `v3.8.0`) |
 
-**Test suite (current, 2026-07-29):** 1155/1155 backend (+20 Phase 13 M1,
-+31 M2, +34 M3, +17 M4, +26 M5, +55 M6) + 41 desktop — the 919/919 figure above was the Phase 12
+**Test suite (current, 2026-07-29):** 1173/1173 backend (+20 Phase 13 M1,
++31 M2, +34 M3, +17 M4, +26 M5, +55 M6, +18 M7) + 41 desktop — the 919/919 figure above was the Phase 12
 M2.1 snapshot; Phase 12 M2.2 and M3 each
 added more (see
 CHANGELOG for the exact per-release deltas).

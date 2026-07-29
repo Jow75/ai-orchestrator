@@ -18,7 +18,7 @@
 
 import fs from 'node:fs';
 import { formatDuration } from '../infra/time.js';
-import { renderMissionCardText } from './missionCard.js';
+import { renderMissionCardText, renderArtifactSummary } from './missionCard.js';
 import { outcomeIcon, decisionLabel } from '../shared/vocabulary.js';
 import DesktopChannel from './channels/desktop.js';
 import WebhookChannel from './channels/webhook.js';
@@ -146,7 +146,7 @@ const EVENT_MESSAGES = {
     title: `Recovered — ${project}`,
     message: `Interrupted session found (${after}); resuming automatically.`,
   }),
-  'mission:complete': ({ project, summary, card }) => ({
+  'mission:complete': ({ project, summary, card }, ctx = {}) => ({
     // Phase 11 M4: was 🎉 — a terminology audit found this was the third
     // different "success" icon across surfaces (CLI used ✔, Mission Cards
     // used ✅); now all three agree via outcomeIcon('complete').
@@ -157,9 +157,14 @@ const EVENT_MESSAGES = {
     // docs/PHASE_13_PLAN.md M1; it was never Telegram's actual 4096-char
     // limit). The full summary now goes out; sendLongText (telegramSplit.js)
     // is what makes that safe to send.
-    message: card
-      ? `${renderMissionCardText(card)}\n\n${summary ?? ''}`.trim()
-      : (summary ?? 'The mission is complete.'),
+    //
+    // Phase 13 M7: the compact card, the FULL (uncapped) created/modified/
+    // deleted breakdown, and the agent's own summary each go out as their
+    // own paragraph — never merged in a way that could hide one behind
+    // another — followed by a footer pointing at the M6 file commands that
+    // can actually inspect what just happened, with a real path from this
+    // mission substituted in when one is available.
+    message: buildCompletionMessage({ project, summary, card, operatorConfig: ctx.operatorConfig }),
   }),
   'orchestrator:recovered-after-reboot': ({ project }) => ({
     title: 'AI-Orchestrator recovered',
@@ -225,11 +230,20 @@ export class NotificationEngine {
    *   APPROVAL_PROVIDER_EVENTS). Omit (as every ad-hoc CLI-constructed
    *   engine — `notify test`/`notify resend` — deliberately does) to skip
    *   auto-exclusion entirely.
+   * @param {object} [options.operatorConfig] - The global `operator` config
+   *   block. Phase 13 M7: used ONLY so `mission:complete`'s file-command
+   *   footer never advertises `/files`/`/file`/`/download_project` when
+   *   `operator.enabled`/`operator.files.enabled` says they're turned off.
+   *   Omit (every ad-hoc CLI-constructed engine, as with `approvalsConfig`)
+   *   to default to "available", matching those flags' own default of true.
    */
-  constructor({ config, logger, notificationState = null, approvalsConfig = null }) {
+  constructor({
+    config, logger, notificationState = null, approvalsConfig = null, operatorConfig = null,
+  }) {
     this.config = config;
     this.logger = logger;
     this.notificationState = notificationState;
+    this.operatorConfig = operatorConfig;
     this.reminderMs = config.reminderMs ?? 0;
     this.subscribedEvents = new Set(config.events ?? []);
 
@@ -310,7 +324,10 @@ export class NotificationEngine {
       return;
     }
 
-    const { title, message } = render(payload);
+    // Phase 13 M7: a second, optional arg every renderer may ignore — only
+    // 'mission:complete' reads it, to gate its file-command footer on
+    // whether operator.files is actually enabled.
+    const { title, message } = render(payload, { operatorConfig: this.operatorConfig });
 
     // Phase 11 M2: a REAL, attachable file for this event (a structured
     // reportPath/notesPath, never freeform agent prose — see EVENT_ATTACHMENT).
@@ -360,6 +377,58 @@ export class NotificationEngine {
 
 function truncate(text, maxChars) {
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}
+
+/**
+ * Phase 13 M7: the full `mission:complete` message body — Mission Card,
+ * uncapped artifact breakdown, the agent's own summary, then the file-command
+ * footer. Extracted from EVENT_MESSAGES so it stays testable on its own and
+ * the render entry above stays a one-line dispatcher, matching the rest of
+ * this table.
+ */
+function buildCompletionMessage({ project, summary, card, operatorConfig }) {
+  const paragraphs = [];
+  if (card) paragraphs.push(renderMissionCardText(card));
+  const artifacts = card ? renderArtifactSummary(card) : '';
+  if (artifacts) paragraphs.push(artifacts);
+  if (summary) paragraphs.push(summary);
+  const body = paragraphs.join('\n\n').trim() || 'The mission is complete.';
+
+  const footer = filesCommandsAvailable(operatorConfig) ? completionFooter(project, card) : '';
+  return footer ? `${body}\n\n${footer}` : body;
+}
+
+/**
+ * Whether the M6 file commands this footer advertises are actually reachable
+ * — never nudge an owner toward a command the daemon would just refuse.
+ * Absent config (every call site that doesn't pass one, e.g. `notify test`)
+ * defaults to "available", matching `operator.files.enabled`'s own default.
+ */
+function filesCommandsAvailable(operatorConfig) {
+  return operatorConfig?.enabled !== false && operatorConfig?.files?.enabled !== false;
+}
+
+/**
+ * `/files`/`/file`/`/download_project` don't take a project argument for the
+ * first two (Phase 13 M6 — they read the ACTIVE project only), so `/project
+ * <name>` is included first: idempotent if it's already selected, and the
+ * one command that makes every line below it correct regardless of which
+ * channel or project context the owner last left active.
+ */
+function completionFooter(project, card) {
+  const example = exampleFile(card);
+  return [
+    '📂 Inspect the results:',
+    `/project ${project}`,
+    '/files',
+    `/file ${example}`,
+    `/download_project ${project}`,
+  ].join('\n');
+}
+
+/** A REAL path from this mission when one exists; a generic hint otherwise. */
+function exampleFile(card) {
+  return card?.filesCreated?.[0] ?? card?.filesModified?.[0] ?? 'README.md';
 }
 
 /**

@@ -34,6 +34,12 @@ export function buildCheckpoint({ task, attempts, changes, verifyResult, resultT
     objective: task.objective,
     outcome, // 'done' | 'failed' | 'blocked'
     attempts,
+    // Phase 13 M7: created/modified kept separate (not just the merged
+    // filesTouched) so a mission summary can honestly say WHICH a file was,
+    // not just that it changed. filesTouched is kept alongside as the same
+    // union it has always been — nothing that read it before needs to change.
+    filesCreated: changes ? [...changes.created] : [],
+    filesModified: changes ? [...changes.modified] : [],
     filesTouched: changes ? [...changes.created, ...changes.modified] : [],
     filesDeleted: changes ? changes.deleted : [],
     verify: verifyResult

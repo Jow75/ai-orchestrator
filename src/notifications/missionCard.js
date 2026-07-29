@@ -96,6 +96,13 @@ export function buildMissionCard({
 
     const filesTouched = new Set();
     const filesDeleted = new Set();
+    const filesCreated = new Set();
+    const filesModified = new Set();
+    // Phase 13 M7: a checkpoint written before this milestone has only the
+    // merged `filesTouched` — never guess which bucket those belong in (see
+    // renderArtifactSummary's "Changed:" fallback). `sawSplit` is only true
+    // once at least one checkpoint actually supplies the new fields.
+    let sawSplit = false;
     let verifiersTotal = 0;
     let verifiersPassed = 0;
     for (const t of tasks) {
@@ -103,6 +110,11 @@ export function buildMissionCard({
       if (!cp) continue;
       for (const f of cp.filesTouched ?? []) filesTouched.add(f);
       for (const f of cp.filesDeleted ?? []) filesDeleted.add(f);
+      if (cp.filesCreated || cp.filesModified) {
+        sawSplit = true;
+        for (const f of cp.filesCreated ?? []) filesCreated.add(f);
+        for (const f of cp.filesModified ?? []) filesModified.add(f);
+      }
       // Only real checks count. A completion marker is the agent's own claim
       // about itself, not a check of it (see NON_EVIDENCE_VERIFIERS).
       const evidence = (cp.verify?.results ?? []).filter(
@@ -114,6 +126,11 @@ export function buildMissionCard({
     if (filesTouched.size || filesDeleted.size) {
       card.filesChanged = [...filesTouched, ...[...filesDeleted].map((f) => `${f} (deleted)`)];
     }
+    if (sawSplit) {
+      if (filesCreated.size) card.filesCreated = [...filesCreated];
+      if (filesModified.size) card.filesModified = [...filesModified];
+    }
+    if (filesDeleted.size) card.filesDeleted = [...filesDeleted];
     if (verifiersTotal > 0) {
       card.tests = { passed: verifiersPassed, total: verifiersTotal };
       card.confidence = verifiersPassed === verifiersTotal ? 'verified' : 'partial';
@@ -159,7 +176,7 @@ export function renderMissionCardText(card) {
   // The simulation notice goes ABOVE the status line, not below the fold. A
   // phone notification preview shows the first line or two, and "Mission
   // complete" is precisely the line that must not travel alone.
-  const lines = card.simulated ? [`🧪 ${SIMULATION_NOTICE_PAST}`, ''] : [];
+  const lines = card.simulated ? [`🧪 ${simulationNoticeFor(card)}`, ''] : [];
   lines.push(`Mission: ${card.project}`, `Status: ${statusLabel}`);
 
   if (card.duration) lines.push(`Duration: ${card.duration}`);
@@ -185,4 +202,61 @@ export function renderMissionCardText(card) {
   return lines.join('\n');
 }
 
-export default { buildMissionCard, renderMissionCardText, isEvidenceVerifier };
+/**
+ * Phase 13 M7: a real bug found via this milestone's own live validation.
+ * `SIMULATION_NOTICE_PAST` blanket-claims "no code was written" — true for
+ * `validation-sandbox` (its origin story) but NOT true in general: the mock
+ * driver has always supported scripted `writeFile`/`appendFile` so the
+ * progress engine can be exercised end-to-end (see mockDriver.js), and a
+ * project can legitimately be `simulated: true` while still writing real
+ * files by design. Live-validating M7 against exactly such a fixture
+ * produced a message that said "no code was written" directly above a real
+ * "Created: src/calculator.js" line — the opposite failure mode from the
+ * M2.2 incident this module's own history is built on (there, a mission
+ * hid real emptiness behind "Verified"; here, a notice would have hidden
+ * real content behind "nothing happened"). Only the completed-mission
+ * rendering can check this (a card carries real filesChanged data); the
+ * pre-run `SIMULATION_NOTICE` stays untouched — before anything has run,
+ * "no code is written yet" is still an accurate forward-looking statement.
+ */
+function simulationNoticeFor(card) {
+  const wroteFiles = card.filesChanged?.length || card.filesCreated?.length
+    || card.filesModified?.length || card.filesDeleted?.length;
+  if (!wroteFiles) return SIMULATION_NOTICE_PAST;
+  return 'Simulated project — this mission was a rehearsal. The engine was a ' +
+    'scripted fixture, not real reasoning; any files listed below were part ' +
+    'of that script, not independent judgment.';
+}
+
+/**
+ * Render the FULL, real-path breakdown of what a mission actually did to the
+ * filesystem — Phase 13 M7. Deliberately separate from
+ * {@link renderMissionCardText}, which stays capped at 8 entries for the
+ * compact card body: this is the uncapped, "no important information
+ * silently dropped" view, meant for the one-time mission-complete
+ * notification, not a repeating status check.
+ *
+ * When no checkpoint in this mission ever recorded the created/modified
+ * split (a checkpoint written before this milestone existed), the files are
+ * listed under a neutral "Changed" heading instead — never asserting a file
+ * was "created" or "modified" when that was never actually recorded.
+ *
+ * @param {object} card - From {@link buildMissionCard}.
+ * @returns {string} Empty string when there is nothing to report.
+ */
+export function renderArtifactSummary(card) {
+  const sections = [];
+  if (card.filesCreated?.length) sections.push(bulletBlock('Created', card.filesCreated));
+  if (card.filesModified?.length) sections.push(bulletBlock('Modified', card.filesModified));
+  if (card.filesDeleted?.length) sections.push(bulletBlock('Deleted', card.filesDeleted));
+  if (!sections.length && card.filesChanged?.length) {
+    sections.push(bulletBlock('Changed', card.filesChanged));
+  }
+  return sections.join('\n\n');
+}
+
+function bulletBlock(label, files) {
+  return [`${label}:`, ...files.map((f) => `• ${f}`)].join('\n');
+}
+
+export default { buildMissionCard, renderMissionCardText, renderArtifactSummary, isEvidenceVerifier };

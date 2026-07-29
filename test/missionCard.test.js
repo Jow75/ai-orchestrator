@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { buildMissionCard, renderMissionCardText } from '../src/notifications/missionCard.js';
+import { buildMissionCard, renderMissionCardText, renderArtifactSummary } from '../src/notifications/missionCard.js';
 
 test('a bare card (no session/queue) still has project + status', () => {
   const card = buildMissionCard({ project: 'p', status: 'complete' });
@@ -162,6 +162,24 @@ test('a simulated mission is disclosed above its status line', () => {
   );
 });
 
+// Phase 13 M7: found via this milestone's own live validation — a simulated
+// mission whose mock driver actually wrote real (scripted) files must never
+// say "no code was written" one line above a real "Created:" list.
+test('a simulated mission that DID write real (scripted) files never claims "no code was written"', () => {
+  const card = buildMissionCard({
+    project: 'p', status: 'complete', simulated: true,
+    queue: { tasks: [{ state: 'done', checkpoint: { filesCreated: ['a.js'], filesModified: [], filesDeleted: [] } }] },
+  });
+  const text = renderMissionCardText(card);
+  assert.doesNotMatch(text, /no code was written/);
+  assert.match(text, /Simulated project — this mission was a rehearsal/);
+});
+
+test('a simulated mission that wrote nothing keeps the original, accurate notice', () => {
+  const card = buildMissionCard({ project: 'p', status: 'complete', simulated: true });
+  assert.match(renderMissionCardText(card), /no code was written/);
+});
+
 test('a task with no checkpoint yet (still pending) is counted but contributes nothing else', () => {
   const card = buildMissionCard({
     project: 'p',
@@ -245,4 +263,61 @@ test('a long file list is truncated with a "+N more" summary', () => {
   const filesChanged = Array.from({ length: 12 }, (_, i) => `file${i}.js`);
   const text = renderMissionCardText({ project: 'p', status: 'complete', filesChanged });
   assert.match(text, /Files changed \(12\):.*\+4 more/);
+});
+
+// ── created/modified/deleted aggregation (Phase 13 M7) ────────────────────
+
+test('buildMissionCard separates created from modified when checkpoints supply the split', () => {
+  const queue = {
+    tasks: [
+      { state: 'done', checkpoint: { filesCreated: ['a.js'], filesModified: ['b.js'], filesDeleted: [] } },
+      { state: 'done', checkpoint: { filesCreated: ['c.js'], filesModified: ['b.js'], filesDeleted: ['old.js'] } },
+    ],
+  };
+  const card = buildMissionCard({ project: 'p', queue });
+  assert.deepEqual(new Set(card.filesCreated), new Set(['a.js', 'c.js']));
+  assert.deepEqual(card.filesModified, ['b.js']); // deduped across tasks
+  assert.deepEqual(card.filesDeleted, ['old.js']);
+});
+
+test('a legacy checkpoint (filesTouched only, no split) produces no filesCreated/filesModified', () => {
+  const queue = {
+    tasks: [{ state: 'done', checkpoint: { filesTouched: ['a.js', 'b.js'], filesDeleted: [] } }],
+  };
+  const card = buildMissionCard({ project: 'p', queue });
+  assert.equal(card.filesCreated, undefined);
+  assert.equal(card.filesModified, undefined);
+  assert.deepEqual(card.filesChanged, ['a.js', 'b.js']); // still available, just unsplit
+});
+
+// ── renderArtifactSummary (Phase 13 M7) ────────────────────────────────────
+
+test('renderArtifactSummary lists real paths under Created/Modified/Deleted, uncapped', () => {
+  const files = Array.from({ length: 20 }, (_, i) => `src/file${i}.js`);
+  const card = { filesCreated: files, filesModified: ['package.json'], filesDeleted: ['old.js'] };
+  const text = renderArtifactSummary(card);
+  assert.match(text, /^Created:/);
+  for (const f of files) assert.ok(text.includes(`• ${f}`), `missing ${f}`);
+  assert.match(text, /Modified:\n• package\.json/);
+  assert.match(text, /Deleted:\n• old\.js/);
+});
+
+test('renderArtifactSummary omits a bucket entirely when it is empty', () => {
+  const text = renderArtifactSummary({ filesCreated: ['a.js'] });
+  assert.match(text, /Created:/);
+  assert.doesNotMatch(text, /Modified:/);
+  assert.doesNotMatch(text, /Deleted:/);
+});
+
+test('renderArtifactSummary falls back to a neutral "Changed" heading for legacy data (never invents a split)', () => {
+  const text = renderArtifactSummary({ filesChanged: ['a.js', 'b.js (deleted)'] });
+  assert.match(text, /^Changed:/);
+  assert.ok(text.includes('• a.js'));
+  assert.ok(text.includes('• b.js (deleted)'));
+  assert.doesNotMatch(text, /Created:|Modified:|Deleted:/);
+});
+
+test('renderArtifactSummary is empty when the card has nothing to report', () => {
+  assert.equal(renderArtifactSummary({}), '');
+  assert.equal(renderArtifactSummary({ noFilesChanged: true }), '');
 });
