@@ -187,9 +187,9 @@ at the root (`deepMerge` now deep-clones), not patched around here.
 
 ---
 
-### M6 — Remote File System (`v3.6.0`)
+### M6 — Remote File System (`v3.6.0`) — ✅ DONE
 
-*Owner's item 5. Depends on M1 (message splitting + the `sendDocument` HTTP pattern). Independent of M2–M5.*
+*Owner's item 5. Depends on M1 (message splitting + the `sendDocument` HTTP pattern). Independent of M2–M5.* Full write-up: [PHASE_13_M6_REPORT.md](PHASE_13_M6_REPORT.md). One real naming deviation from this plan, forced by evidence rather than chosen: Telegram's `setMyCommands` rejects any command name outside `[a-z0-9_]{1,32}$` — a hyphen is illegal there. `/download-project` (the owner's own literal spelling) could not become the *published* command name without breaking the M2.2 menu-publishing invariant every command has honored since; the canonical name is `download_project`, with `/download-project` kept as a fully working alias so the exact spelling the owner wrote never stops working.
 
 **Builds:** new `src/operator/fileAccess.js`:
 - **`resolveWithinProject(project, relativePath)`** — the path-traversal guard that exists **nowhere** in the codebase today (the one precedent, `validateSingleTask()` in `src/mission/missionPlan.js:69-81`, resolves a path but never checks it stays inside the project — must not be copied as-is). `path.resolve()`, then `fs.realpathSync()` on **both** the project root and the resolved path (catches a symlink escaping the project, which textual `../` checks miss), then verifies `path.relative(realRoot, realResolved)` doesn't start with `..` and isn't itself absolute (catches a Windows drive-letter escape). UNC paths and mixed-separator traversal are caught by the same real-path check, not pattern blacklisting.

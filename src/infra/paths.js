@@ -125,6 +125,13 @@ export function resolvePaths(overrides = {}) {
   resolved.missionRequestsFile = path.join(resolved.operatorDir, 'missions.json');
   resolved.missionPromptsDir = path.join(resolved.operatorDir, 'prompts');
 
+  // Phase 13 M6: generated project ZIPs (see src/operator/fileAccess.js).
+  // Machine-owned and disposable — under state/, never config/ — and
+  // deliberately its own subdirectory of operatorDir rather than reusing
+  // missionPromptsDir, since a stale download is pruned by AGE while a
+  // stale prompt file is not.
+  resolved.downloadsDir = path.join(resolved.operatorDir, 'downloads');
+
   return resolved;
 }
 
@@ -157,6 +164,7 @@ export function ensureRuntimeDirs(paths) {
     paths.eventsDir,
     paths.operatorDir,
     paths.missionPromptsDir,
+    paths.downloadsDir,
   ]) {
     fs.mkdirSync(dir, { recursive: true });
   }

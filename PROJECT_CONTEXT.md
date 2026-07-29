@@ -21,6 +21,34 @@ first. **Phase 13 (Architecture Evolution) is approved and underway**,
 `v3.1.0`→`v3.8.0`; see `docs/PHASE_13_PLAN.md`. M4 resumes under the next
 available `v3.x` once Phase 13 completes.
 
+**Phase 13 M6 — Remote File System (`v3.6.0`) is DONE.** The first new
+runtime dependency since baseline (`archiver`) and the first filesystem
+surface exposed remotely — treated as security-sensitive, not just a
+feature. New `src/operator/fileAccess.js` centralizes the one path-
+traversal guard in the codebase (textual `path.resolve`/`path.relative`
+containment, then a real-path/symlink check) behind `/files`, `/file`, and
+`/download-project`. Small files show inline; large or binary files (or a
+complete file past the inline threshold) send as a real Telegram document —
+never truncated. Building it surfaced 4 real, disclosed issues, all fixed
+at the root: `archiver`'s `latest` (v8) turned out to be a pure-ESM rewrite
+with a different API than the plan assumed; `/download-project` is not a
+legal Telegram bot command name (hyphens are illegal in `setMyCommands` —
+fixed by making `download_project` canonical with `/download-project` kept
+as a working alias); a vanished project's folder silently produced a valid,
+EMPTY zip instead of an error (`readdir-glob` treats a missing `cwd` as
+"zero matches," not a failure); and `POST /api/operator/command` was
+silently dropping the new `attachment` field. 1100 → 1155 backend tests.
+Live-validated against the real Core Service and the real `calculator-proof`
+project: real directory listings, a real complete source file sent through
+the actual Telegram Bot API (confirmed by a genuine returned message id),
+three distinct outside-the-project attempts refused (including a real
+sibling project's gitignored credentials file), a real ZIP verified by
+actually extracting it with Windows' own `Expand-Archive`, and archived-
+project access confirmed unaffected. Full report: `docs/PHASE_13_M6_REPORT.md`.
+
+**NEXT: Phase 13 M7 — Mission Completion Messaging, `v3.7.0`** — see
+`docs/PHASE_13_PLAN.md`.
+
 ---
 
 ## Where things stand right now (2026-07-28)
@@ -149,8 +177,7 @@ process-boundary architecture (a worker loads config once, at construction,
 and never reloads it). 1100/1100 backend tests, live-validated against the
 real 6 project configs. Full report: `docs/PHASE_13_M5_REPORT.md`.
 
-**NEXT: Phase 13 M6 — Remote File System, `v3.6.0`** — see
-`docs/PHASE_13_PLAN.md`.
+M6 has since shipped — see the top of this file for the current "NEXT" pointer.
 
 ---
 
@@ -373,13 +400,13 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 13 M3 — Project Lifecycle & Registry Operations | ✅ done | `v3.3.0` |
 | Phase 13 M4 — Live Configuration Layer | ✅ done | `v3.4.0` |
 | Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ✅ done | `v3.5.0` |
-| Phase 13 M6 — Remote File System | ⏳ next | `v3.6.0` |
-| Phase 13 M7 — Mission Completion Messaging | ⏳ planned | `v3.7.0` |
+| Phase 13 M6 — Remote File System | ✅ done | `v3.6.0` |
+| Phase 13 M7 — Mission Completion Messaging | ⏳ next | `v3.7.0` |
 | Phase 13 M8 — Bot Experience & Discoverability | ⏳ planned | `v3.8.0` |
 | Phase 13 M9 — Public Release Prep | ⏳ planned | (audits `v3.8.0`) |
 
-**Test suite (current, 2026-07-29):** 1100/1100 backend (+20 Phase 13 M1,
-+31 M2, +34 M3, +17 M4, +26 M5) + 41 desktop — the 919/919 figure above was the Phase 12
+**Test suite (current, 2026-07-29):** 1155/1155 backend (+20 Phase 13 M1,
++31 M2, +34 M3, +17 M4, +26 M5, +55 M6) + 41 desktop — the 919/919 figure above was the Phase 12
 M2.1 snapshot; Phase 12 M2.2 and M3 each
 added more (see
 CHANGELOG for the exact per-release deltas).

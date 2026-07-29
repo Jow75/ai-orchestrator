@@ -12,10 +12,13 @@
  * messaging the bot cannot approve anything.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { ApprovalProvider, parseDecisionText } from './approvalProvider.js';
 import { writeJsonAtomic, readJsonSafe } from '../../state/statePersistence.js';
 import { escapeHtml, formatTelegramText } from '../../notifications/telegramFormat.js';
 import { sendLongText } from '../../notifications/telegramSplit.js';
+import { MAX_DOCUMENT_BYTES } from '../../notifications/channels/telegram.js';
 
 /** Abort a hung Telegram call after this long. */
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -268,6 +271,49 @@ export class TelegramApprovalProvider extends ApprovalProvider {
       text: formatTelegramText(text),
       send: (part, opts) => this.postMessage(part, opts),
     });
+  }
+
+  /**
+   * Phase 13 M6: attach a real file directly, in reply to a `/file` or
+   * `/download-project` command. Mirrors `channels/telegram.js`'s
+   * `sendDocument()` exactly (same size ceiling, same multipart shape) —
+   * per docs/PHASE_13_PLAN.md decision D4, this provider is where it
+   * belongs rather than the one-way notification channel, because
+   * `POST /api/operator/command` must see the identical `{reply, attachment}`
+   * contract a phone gets, and only THIS provider serves that router.
+   *
+   * @param {{filePath: string, caption?: string}} attachment
+   * @returns {Promise<{messageId?: string}>}
+   * @throws If the file is missing, too large, or the API call fails.
+   */
+  async sendDocument({ filePath, caption }) {
+    this.requireConfig();
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Cannot attach "${filePath}" — file not found.`);
+    }
+    const stat = fs.statSync(filePath);
+    if (stat.size > MAX_DOCUMENT_BYTES) {
+      throw new Error(
+        `Cannot attach "${filePath}" — ${stat.size} bytes exceeds Telegram's ${MAX_DOCUMENT_BYTES}-byte document limit.`
+      );
+    }
+
+    const form = new FormData();
+    form.set('chat_id', this.config.chatId);
+    if (caption) form.set('caption', formatTelegramText(caption));
+    if (caption) form.set('parse_mode', 'HTML');
+    const buffer = fs.readFileSync(filePath);
+    form.set('document', new Blob([buffer]), path.basename(filePath));
+
+    const response = await this.fetchFn(this.api('sendDocument'), {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`Telegram API responded ${response.status}`);
+    const body = await response.json().catch(() => ({}));
+    const id = body?.result?.message_id;
+    return { messageId: id != null ? String(id) : undefined };
   }
 }
 

@@ -64,6 +64,12 @@ export const EVENT_TYPES = Object.freeze([
   /** `/model` changed the machine-wide default model. */
   'provider.model-changed',
 
+  // ── remote file system (Phase 13 M6) ────────────────────────────────────
+  /** `/files` or `/file` read something from a project's real filesystem. */
+  'file.served',
+  /** `/download-project` produced a ZIP of a project. */
+  'project.downloaded',
+
   // ── missions requested from an interface (M2 Priority 3) ─────────────────
   /** Free text became a mission request awaiting the owner's approval. */
   'mission.created',

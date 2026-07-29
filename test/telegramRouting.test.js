@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import TelegramApprovalProvider from '../src/approvals/providers/telegramProvider.js';
+import { MAX_DOCUMENT_BYTES } from '../src/notifications/channels/telegram.js';
 import { silentLogger } from '../src/infra/logger.js';
 
 const CHAT_ID = '1234567890';
@@ -185,4 +186,71 @@ test('missing configuration is refused before any network call', async () => {
 
   await assert.rejects(() => p.fetchMessages(), /botToken/);
   await assert.rejects(() => p.sendText('x'), /botToken/);
+});
+
+// ─────────────────────────────────────── Phase 13 M6: sendDocument() ──────
+
+function tmpFile(content = 'hello world') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-tgprovider-doc-'));
+  const file = path.join(dir, 'README.md');
+  fs.writeFileSync(file, content);
+  return file;
+}
+
+test('sendDocument() posts multipart form data with the file and chat id', async () => {
+  const posts = [];
+  const p = new TelegramApprovalProvider({
+    config: { botToken: 'T', chatId: CHAT_ID },
+    logger: silentLogger,
+    fetchFn: async (url, options) => {
+      posts.push({ url, options });
+      return { ok: true, async json() { return { ok: true, result: { message_id: 42 } }; } };
+    },
+  });
+
+  const result = await p.sendDocument({ filePath: tmpFile(), caption: 'calculator-proof — README.md' });
+
+  assert.equal(posts.length, 1);
+  assert.ok(posts[0].url.includes('/sendDocument'));
+  const form = posts[0].options.body;
+  assert.ok(form instanceof FormData);
+  assert.equal(form.get('chat_id'), CHAT_ID);
+  assert.equal(form.get('parse_mode'), 'HTML');
+  const doc = form.get('document');
+  assert.ok(doc instanceof Blob);
+  assert.equal(doc.name, 'README.md');
+  assert.equal(result.messageId, '42');
+});
+
+test('sendDocument() refuses a missing file with no network call', async () => {
+  const p = new TelegramApprovalProvider({
+    config: { botToken: 'T', chatId: CHAT_ID },
+    logger: silentLogger,
+    fetchFn: async () => { throw new Error('should never be called'); },
+  });
+
+  await assert.rejects(() => p.sendDocument({ filePath: '/no/such/file.md' }), /file not found/);
+});
+
+test('sendDocument() refuses a file over Telegram\'s document size limit, no network call', async () => {
+  const p = new TelegramApprovalProvider({
+    config: { botToken: 'T', chatId: CHAT_ID },
+    logger: silentLogger,
+    fetchFn: async () => { throw new Error('should never be called'); },
+  });
+  const file = tmpFile();
+  const originalStat = fs.statSync;
+  fs.statSync = (target) => (target === file ? { size: MAX_DOCUMENT_BYTES + 1 } : originalStat(target));
+  try {
+    await assert.rejects(() => p.sendDocument({ filePath: file }), /exceeds Telegram's/);
+  } finally {
+    fs.statSync = originalStat;
+  }
+});
+
+test('sendDocument() requires configuration too', async () => {
+  const p = new TelegramApprovalProvider({ config: {}, logger: silentLogger, fetchFn: async () => {
+    throw new Error('should never be called');
+  } });
+  await assert.rejects(() => p.sendDocument({ filePath: tmpFile() }), /botToken/);
 });

@@ -433,7 +433,18 @@ export class DashboardServer {
         chatId: chatId ?? null,
         from: from || 'api',
       });
-      res.json({ ok: true, reply: result.reply });
+      // Phase 13 M6: a reply may also carry an `attachment` (`/file`,
+      // `/download-project`) — the daemon and this API share one machine, so
+      // exposing the LOCAL PATH is safe and actionable for a caller here
+      // (unlike Telegram, this endpoint has no transport for the bytes
+      // themselves; dropping the field entirely would silently strand an
+      // API/CLI caller with a reply that says "sending as a file" and no way
+      // to find it).
+      res.json({
+        ok: true,
+        reply: result.reply,
+        ...(result.attachment ? { attachment: result.attachment } : {}),
+      });
     });
 
     app.post('/api/control/stop', auth, async (req, res) => {

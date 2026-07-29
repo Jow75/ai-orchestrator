@@ -3,6 +3,84 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.6.0] — 2026-07-29 — Phase 13 M6: Remote File System
+
+The first new runtime dependency since baseline (`archiver`) and the first
+filesystem surface exposed remotely — treated as a security-sensitive
+milestone. `docs/PHASE_13_M6_REPORT.md`.
+
+### Added
+
+- **`src/operator/fileAccess.js`** — `resolveWithinProject()`, the one
+  path-traversal guard in the codebase: textual containment
+  (`path.resolve()` + `path.relative()`, catching `../`, absolute paths, a
+  Windows drive letter, the obscure Windows drive-*relative* form, UNC
+  paths, and mixed separators with no pattern blacklist) plus real-path
+  containment (`fs.realpathSync()` on both root and target, catching a
+  symlink/junction escape the textual layer cannot see). Also
+  `listFiles()` (paginated, Explorer-style, never recursive),
+  `looksBinary()` (NUL-byte sniff), `estimateArchiveSize()` /
+  `createProjectArchive()` (same exclusion list for both, so "how big"
+  and "what gets zipped" can never disagree), `pruneOldDownloads()`.
+- **`/files [path]`**, **`/file <path>`**, **`/download-project
+  [project]`** (canonical command name `download_project` — Telegram's
+  `setMyCommands` rejects hyphens; `/download-project` is a working alias).
+  Small text files show inline, in full; binary or large files (or the
+  complete file, past the inline threshold) send as a real Telegram
+  document — never truncated either way. New `operator.files.enabled`
+  kill switch and `operator.download.{maxProjectBytes,exclude,retentionMs}`.
+- **`TelegramApprovalProvider.sendDocument()`** — mirrors the existing
+  notification-channel method (same size ceiling, same multipart shape).
+  `OperatorGateway.deliver()` sends text then attachment, duck-typed so a
+  provider without one is simply skipped.
+- `CommandRouter.handle()`'s reply contract grows one optional field —
+  `{reply, attachment?}` — additive, every existing `.reply`-only caller
+  unaffected. `POST /api/operator/command` and the CLI's `operator`
+  command now surface `attachment` (a local file path) instead of
+  silently dropping it.
+- A refusal (not a plain not-found) is now recorded in the event log —
+  `file.served` with `mode: 'refused'` — an audit trail this security-
+  sensitive surface had no version of before.
+- New event types `file.served`, `project.downloaded`.
+
+### Fixed
+
+- **A vanished project's folder silently produced a valid, empty ZIP**
+  instead of an error — `readdir-glob` treats an `ENOENT` `cwd` as "zero
+  matches," not a failure. Found by the adversarial test suite (which was
+  run against the unfixed code and confirmed to fail first); fixed with an
+  explicit existence check in both `createProjectArchive()` and
+  `estimateArchiveSize()`.
+- `archiver`'s own `readdir-glob` dependency's `ignore` glob option only
+  filters files *after* walking them — it does not stop the walk from
+  descending into an excluded directory. For a real `node_modules`, that
+  is the whole performance story; fixed by using the `skip` option
+  instead, which prevents the walk from entering an excluded directory at
+  all.
+- `POST /api/operator/command` silently dropped a reply's `attachment`
+  field (the route predates this milestone). An API/CLI caller running
+  `/file bigfile.bin` would have gotten "sending as a file" with no way to
+  find it.
+
+### Dependency
+
+`archiver` (^8.0.0) — justified per `docs/PHASE_13_PLAN.md` decision D3.
+Note for anyone extending this code: v8 is a pure-ESM rewrite with a
+different API than older tutorials describe — named exports
+(`ZipArchive`/`TarArchive`/`JsonArchive`), no default export, no
+`archiver(format, options)` factory function.
+
+1100 → **1155 backend tests** (+55). Live-validated against the real
+Core Service and the real `calculator-proof` project: real directory
+listings, real inline reads, a real complete source file sent through the
+actual Telegram Bot API (`sendDocument`, confirmed by a real returned
+message id), three distinct outside-the-project attempts refused (relative
+traversal, absolute Windows path, and a real sibling project's gitignored
+credentials file), a real ZIP produced and verified by actually extracting
+it with Windows' own `Expand-Archive`, and archived-project access
+confirmed unaffected (archiving is a registry demotion, never an access
+restriction).
+
 ## [3.5.0] — 2026-07-29 — Phase 13 M5: Provider Architecture Completion & Remote Model/Provider Management
 
 Completes the provider/model layer and exposes it remotely.

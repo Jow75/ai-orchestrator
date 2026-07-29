@@ -195,6 +195,32 @@ test('POST /api/operator/command runs the SAME router a phone message goes throu
   }
 });
 
+test('an attachment (Phase 13 M6: /file, /download-project) is surfaced, not silently dropped', async () => {
+  const daemon = stubDaemon();
+  daemon.commandRouter.handle = async (message) => {
+    daemon.routed.push(message);
+    return { reply: '📄 README.md', attachment: { filePath: 'C:\\proj\\README.md', caption: 'alpha — README.md' } };
+  };
+  const { dashboard, post } = await harness({ daemon });
+  try {
+    const { body } = await post('/api/operator/command', { text: '/file README.md' }, TOKEN);
+    assert.deepEqual(body.attachment, { filePath: 'C:\\proj\\README.md', caption: 'alpha — README.md' });
+  } finally {
+    await dashboard.stop();
+  }
+});
+
+test('a plain reply with no attachment carries no attachment field at all', async () => {
+  const daemon = stubDaemon();
+  const { dashboard, post } = await harness({ daemon });
+  try {
+    const { body } = await post('/api/operator/command', { text: '/projects' }, TOKEN);
+    assert.equal('attachment' in body, false);
+  } finally {
+    await dashboard.stop();
+  }
+});
+
 test('a command channel defaults to "api", so phone confirmations are not redeemable here', async () => {
   const daemon = stubDaemon();
   const { dashboard, post } = await harness({ daemon });

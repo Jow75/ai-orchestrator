@@ -416,6 +416,40 @@ export const ORCHESTRATOR_DEFAULTS = {
     liveConfig: {
       enabled: true,
     },
+    /**
+     * Phase 13 M6: `/files`, `/file`, `/download-project` — the first
+     * filesystem surface exposed remotely. Its own kill switch, separate
+     * from `lifecycle`/`liveConfig`: this is a READ surface over real
+     * project source, the highest-blast-radius new capability this phase
+     * adds (see src/operator/fileAccess.js for the path-traversal guard
+     * every one of these commands is built on).
+     */
+    files: {
+      enabled: true,
+    },
+    /** Phase 13 M6: `/download-project` sizing and exclusions. */
+    download: {
+      /**
+       * Checked against the size of what would ACTUALLY be zipped (after
+       * `exclude`), before attempting to zip — so a large `node_modules`
+       * never refuses a project whose real source is small. 200MB comfortably
+       * covers a real source tree while still catching a genuinely oversized
+       * project fast, before spending time streaming it.
+       */
+      maxProjectBytes: 200 * 1024 * 1024,
+      /**
+       * Never included in a download unless the owner overrides this list by
+       * hand. Matches `operator.discovery.ignore` plus the folders this
+       * milestone's own directive named explicitly (temporary folders,
+       * cache, logs) that discovery had no reason to also exclude.
+       */
+      exclude: [
+        'node_modules', '.git', 'dist', 'build', '.next', '.venv', '__pycache__',
+        'logs', 'tmp', 'temp', '.cache', 'coverage',
+      ],
+      /** How long a generated .zip sits in state/operator/downloads/ before being pruned. */
+      retentionMs: 86_400_000, // 24 hours
+    },
   },
 
   /** Project launched when `ai-orchestrator start` is run with no name. */

@@ -421,7 +421,7 @@ all become clients of one daemon. Plan: `docs/PHASE_12_PLAN.md`.
   available `v3.x` version once Phase 13 completes. See
   `docs/PHASE_12_PLAN.md` §4.
 
-## Phase 13 — Architecture Evolution: Discovery, Lifecycle, Live Configuration, Provider/Model Control, Remote Filesystem & Reliability 🔄 (M1 next)
+## Phase 13 — Architecture Evolution: Discovery, Lifecycle, Live Configuration, Provider/Model Control, Remote Filesystem & Reliability 🔄 (M7 next)
 
 Framed by the owner as an architecture milestone, not a feature milestone:
 every decision justified up front so the system "still makes sense after
@@ -453,7 +453,10 @@ built, rather than duplicating them. Full plan: `docs/PHASE_13_PLAN.md`.
   machine-wide default model remotely without disrupting an active mission.
 - **M6 — Remote File System** (`v3.6.0`): `/files`, `/file`,
   `/download-project` — safe, paginated, path-traversal-guarded file
-  retrieval and project export over Telegram.
+  retrieval and project export over Telegram. First new runtime dependency
+  since baseline (`archiver`) and the first filesystem surface exposed
+  remotely; a real ZIP, never node_modules/.git/build output. Report:
+  `docs/PHASE_13_M6_REPORT.md`.
 - **M7 — Mission Completion Messaging** (`v3.7.0`): completion messages lead
   naturally into `/files`/`/file`/`/download-project`.
 - **M8 — Bot Experience & Discoverability** (`v3.8.0`): richer, categorized

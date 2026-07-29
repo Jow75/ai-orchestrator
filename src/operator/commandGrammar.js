@@ -213,6 +213,32 @@ export const COMMANDS = Object.freeze([
     takesRest: true,
     description: 'Show or set the default model. Never interrupts an active mission.',
   },
+  {
+    name: 'files',
+    aliases: ['ls-files', 'dir'],
+    usage: '/files [path]',
+    takesRest: true,
+    description: 'List a directory inside the active project (default: its root).',
+  },
+  {
+    name: 'file',
+    aliases: ['cat', 'read'],
+    usage: '/file <path>',
+    takesRest: true,
+    description: 'Read one file from the active project — inline if small, as an attachment if not.',
+  },
+  {
+    // Telegram's setMyCommands rejects any name outside [a-z0-9_]{1,32} — a
+    // hyphen is not legal there, unlike every other place a command name
+    // appears in this codebase. The owner's own directive wrote
+    // "/download-project"; that exact spelling still works (as an alias),
+    // it just is not the one Telegram's tappable menu can register.
+    name: 'download_project',
+    aliases: ['download-project', 'download', 'zip'],
+    usage: '/download-project [project]',
+    takesRest: true,
+    description: 'ZIP the active (or named) project — source only, never node_modules/.git/build output.',
+  },
 ]);
 
 /** name/alias → command definition. */

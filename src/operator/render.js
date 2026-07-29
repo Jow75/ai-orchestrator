@@ -419,9 +419,58 @@ export function truncate(text, maxChars) {
   return value.length > maxChars ? `${value.slice(0, maxChars - 1)}…` : value;
 }
 
+/** "1.4 KB" / "23.0 MB" — human sizes for file listings, /file, /download-project. */
+export function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return 'unknown size';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unit = units[0];
+  for (const candidate of units) {
+    unit = candidate;
+    if (value < 1024) break;
+    value /= 1024;
+  }
+  return `${value.toFixed(1)} ${unit}`;
+}
+
+/**
+ * `/files` — one directory level, Explorer-style. Directories are listed
+ * with a trailing `/` and no size (their size is not measured — a full
+ * recursive walk for a number nobody asked for is exactly the unbounded
+ * scan this command deliberately avoids).
+ */
+export function renderFileListing(project, listing) {
+  const lines = [`📁 ${project}${listing.path === '.' ? '' : `/${listing.path}`}`, ''];
+  if (!listing.entries.length) {
+    lines.push(listing.total ? '(nothing on this page)' : '(empty)');
+  }
+  for (const entry of listing.entries) {
+    lines.push(entry.type === 'dir'
+      ? `📁 ${entry.name}/`
+      : `📄 ${entry.name}  (${formatBytes(entry.size ?? 0)})`);
+  }
+  lines.push('');
+  if (listing.pageCount > 1) {
+    lines.push(`Page ${listing.page}/${listing.pageCount} · ${listing.total} entries total`);
+  } else {
+    lines.push(`${listing.total} entries`);
+  }
+  lines.push(listing.path === '.'
+    ? 'Read one: /file <name>'
+    : `Read one: /file ${listing.path}/<name>`);
+  return lines.join('\n');
+}
+
+/** `/file` — a small text file, shown in full. See fileAccess.js for the size/binary cutoffs. */
+export function renderFileInline(relativePath, content) {
+  const body = content.endsWith('\n') ? content.slice(0, -1) : content;
+  return [`📄 ${relativePath}`, '', body].join('\n');
+}
+
 export default {
   relativeTime, renderProjectLine, renderProjectList, renderProjectDetail,
   renderTasks, renderApprovals, renderMissionProposal, renderMissionRequests,
   renderEvents, renderConfirmation, renderPhaseUpdate, renderServiceStatus,
-  renderHelp, truncate,
+  renderHelp, truncate, formatBytes, renderFileListing, renderFileInline,
 };

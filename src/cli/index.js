@@ -739,6 +739,12 @@ export function buildProgram() {
           return;
         }
         console.log(result.reply ?? chalk.dim('(no reply)'));
+        // Phase 13 M6: /file and /download-project may attach a real file.
+        // This channel has no transport for the bytes themselves, so the
+        // local path is printed instead of silently dropped.
+        if (result.attachment) {
+          console.log(chalk.dim(`  attachment: ${result.attachment.filePath}`));
+        }
       } catch (error) {
         fail(error);
       }

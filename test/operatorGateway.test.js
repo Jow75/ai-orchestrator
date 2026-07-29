@@ -34,7 +34,9 @@ function routingProvider() {
     decisionReads: 0,
     inbox: [],
     sent: [],
+    documents: [],
     sendFails: false,
+    documentFails: false,
     async publish() {},
     async fetchMessages() {
       this.messageReads += 1;
@@ -48,6 +50,11 @@ function routingProvider() {
       if (this.sendFails) throw new Error('telegram is down');
       this.sent.push(text);
       return { messageId: '1' };
+    },
+    async sendDocument(attachment) {
+      if (this.documentFails) throw new Error('attach failed');
+      this.documents.push(attachment);
+      return { messageId: '2' };
     },
   };
 }
@@ -68,13 +75,19 @@ function decisionOnlyProvider() {
   };
 }
 
-/** A router stand-in that records what it was asked and answers predictably. */
+/**
+ * A router stand-in that records what it was asked and answers predictably.
+ * `reply` may be a string (the common case), a function of the message, or —
+ * Phase 13 M6 — a full `{reply, attachment}` object (or a function returning
+ * one), so attachment-delivery tests can drive the same stand-in.
+ */
 function recordingRouter(reply = 'ok') {
   return {
     seen: [],
     async handle(message) {
       this.seen.push(message);
-      return { reply: typeof reply === 'function' ? reply(message) : reply };
+      const value = typeof reply === 'function' ? reply(message) : reply;
+      return typeof value === 'string' || value === null ? { reply: value } : value;
     },
   };
 }
@@ -261,6 +274,64 @@ test('starting is idempotent and stopping disarms', async () => {
 
   gateway.stop();
   assert.equal(gateway.timer, null);
+});
+
+// ────────────────────────────────── Phase 13 M6: attachment delivery ──────
+
+test('a reply carrying an attachment sends the text, then the document', async () => {
+  const provider = routingProvider();
+  provider.inbox.push({ text: '/file README.md', from: 'moses', chatId: '42' });
+  const router = recordingRouter({ reply: '📄 README.md', attachment: { filePath: '/tmp/README.md' } });
+  const store = events();
+  const gateway = new OperatorGateway({
+    router, approvalManager: managerWith([provider]), events: store, logger: silentLogger,
+  });
+
+  await gateway.tick();
+
+  assert.deepEqual(provider.sent, ['📄 README.md']);
+  assert.deepEqual(provider.documents, [{ filePath: '/tmp/README.md' }]);
+  assert.equal(store.read({ types: ['notification.sent'] }).length, 2, 'one event for the text, one for the attachment');
+});
+
+test('an attachment-only reply (no text) still gets delivered', async () => {
+  const provider = routingProvider();
+  provider.inbox.push({ text: '/download_project', from: 'moses', chatId: '42' });
+  const router = recordingRouter({ reply: null, attachment: { filePath: '/tmp/proj.zip' } });
+  const gateway = new OperatorGateway({
+    router, approvalManager: managerWith([provider]), logger: silentLogger,
+  });
+
+  await gateway.tick();
+
+  assert.deepEqual(provider.sent, []);
+  assert.deepEqual(provider.documents, [{ filePath: '/tmp/proj.zip' }]);
+});
+
+test('a provider with no sendDocument (duck-typed) silently never gets asked for one', async () => {
+  const provider = routingProvider();
+  delete provider.sendDocument;
+  provider.inbox.push({ text: '/file README.md', from: 'moses', chatId: '42' });
+  const router = recordingRouter({ reply: 'text only', attachment: { filePath: '/tmp/README.md' } });
+  const gateway = new OperatorGateway({
+    router, approvalManager: managerWith([provider]), logger: silentLogger,
+  });
+
+  await assert.doesNotReject(() => gateway.tick());
+  assert.deepEqual(provider.sent, ['text only']);
+});
+
+test('a failed attachment send is logged but never disturbs the text reply already sent', async () => {
+  const provider = routingProvider();
+  provider.documentFails = true;
+  provider.inbox.push({ text: '/file huge.bin', from: 'moses', chatId: '42' });
+  const router = recordingRouter({ reply: 'sending…', attachment: { filePath: '/tmp/huge.bin' } });
+  const gateway = new OperatorGateway({
+    router, approvalManager: managerWith([provider]), logger: silentLogger,
+  });
+
+  await assert.doesNotReject(() => gateway.tick());
+  assert.deepEqual(provider.sent, ['sending…'], 'the text still went out despite the attachment failing');
 });
 
 test('broadcast pushes to every routing channel and survives a dead one', async () => {

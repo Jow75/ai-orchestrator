@@ -35,8 +35,25 @@ import { capabilitiesOf } from '../drivers/capabilities.js';
 import {
   renderProjectList, renderProjectDetail, renderTasks, renderApprovals,
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
-  renderHelp, renderServiceStatus, renderScanResults, truncate,
+  renderHelp, renderServiceStatus, renderScanResults, renderFileListing,
+  renderFileInline, formatBytes, truncate,
 } from './render.js';
+import {
+  FileAccessError, listFiles, resolveWithinProject, looksBinary,
+  estimateArchiveSize, createProjectArchive, pruneOldDownloads,
+} from './fileAccess.js';
+import { MAX_DOCUMENT_BYTES } from '../notifications/channels/telegram.js';
+
+/**
+ * Phase 13 M6: the largest a text file may be to show inline rather than as
+ * an attachment. Deliberately well under Telegram's real 4096-char message
+ * limit (not just close to it): inline content is sent through the SAME
+ * `sendLongText()` every other reply uses, and a code file that needed
+ * splitting across several messages would arrive with no visual indication
+ * of where one file ended and the next numbered part began — worse than
+ * simply attaching it. Below this size, one message is always enough.
+ */
+export const INLINE_MAX_BYTES = 3_500;
 
 /** How many events `/events` returns when no count is given. */
 export const DEFAULT_EVENT_COUNT = 12;
@@ -62,13 +79,16 @@ export class CommandRouter {
    * @param {import('../config/liveConfig.js').LiveConfigLayer} [deps.liveConfig]
    * @param {import('../drivers/driverRegistry.js').DriverRegistry} [deps.driverRegistry]
    * @param {object} deps.config - The full merged global config.
+   * @param {{downloadsDir: string}} [deps.paths] - Phase 13 M6: where
+   *   `/download-project` writes generated ZIPs. Absent ⇒ `/download-project`
+   *   refuses cleanly rather than guessing a location.
    * @param {() => void} [deps.requestShutdown] - Stops the Core Service.
    * @param {object} deps.logger
    */
   constructor({
     registry, context, requests, confirmations, events, approvalStore, approvalManager,
     supervisor, taskQueue, sessionManager, ledger, configManager, liveConfig, driverRegistry, config,
-    requestShutdown, serviceReport, logger,
+    paths, requestShutdown, serviceReport, logger,
   }) {
     this.registry = registry;
     this.context = context;
@@ -85,6 +105,7 @@ export class CommandRouter {
     this.liveConfig = liveConfig;
     this.driverRegistry = driverRegistry;
     this.config = config ?? {};
+    this.paths = paths;
     this.requestShutdown = requestShutdown;
     this.serviceReport = serviceReport;
     this.logger = logger;
@@ -106,7 +127,9 @@ export class CommandRouter {
    * @param {string} message.channel - 'telegram', 'desktop', …
    * @param {string|number} [message.chatId]
    * @param {string} [message.from]
-   * @returns {Promise<{reply: string|null}>}
+   * @returns {Promise<{reply: string|null, attachment?: {filePath: string, caption?: string}}>}
+   *   `attachment` (Phase 13 M6) is additive — every caller that only ever
+   *   read `.reply` keeps working unchanged; see OperatorGateway.deliver().
    */
   async handle({ text, channel, chatId, from }) {
     const actor = `${channel}:${from ?? 'owner'}`;
@@ -396,6 +419,9 @@ export class CommandRouter {
       case 'roots': return this.commandRoots(rest, ctx);
       case 'provider': return this.commandProvider(ctx);
       case 'model': return this.commandModel(rest, ctx);
+      case 'files': return this.commandFiles(rest, ctx);
+      case 'file': return this.commandFile(rest, ctx);
+      case 'download_project': return await this.commandDownloadProject(rest, ctx);
       default:
         return { reply: `"/${name}" is recognized but not implemented. This is a bug — please report it.` };
     }
@@ -895,6 +921,236 @@ export class CommandRouter {
       type: 'provider.model-changed', actor: ctx.actor, payload: { model, previousModel: previous },
     });
     return { reply: `Default model set to "${model}". Applies to the next mission that starts — never one already running.` };
+  }
+
+  // --------------------------------------------------------------- files ----
+
+  /**
+   * The active project's real, on-disk root, or a `{reply}` explaining why
+   * there isn't one. Shared by all three file commands — unlike `/status`/
+   * `/tasks`, `/files` and `/file` deliberately do NOT accept a project name
+   * as part of their own argument (their `rest` is a filesystem path, and a
+   * path and a project name are both free-form strings with no way to tell
+   * them apart) — see docs/PHASE_13_M6_REPORT.md for why this differs from
+   * `resolveTarget()`. `/download-project` is the exception: it names a
+   * project instead of a path, so it uses `resolveTarget()` directly.
+   *
+   * @returns {{project?: string, root?: string, reply?: string}}
+   */
+  activeProjectRoot(ctx) {
+    const active = this.activeProject(ctx);
+    if (!active) {
+      return { reply: 'No project selected. /projects then /project <name>.' };
+    }
+    let project;
+    try {
+      project = this.configManager.getProject(active);
+    } catch (error) {
+      return { reply: `Cannot access ${active}: ${error.message}` };
+    }
+    return { project: active, root: project.workingDirectory };
+  }
+
+  /**
+   * Every `FileAccessError` becomes its own message; anything else is
+   * unexpected and re-thrown. A REFUSAL (traversal, escape, missing project
+   * root — `error.code !== 'not-found'`) is recorded in the durable event
+   * log, not just answered — "every real outcome becomes an event" applies
+   * to a security refusal on this surface at least as much as to a success;
+   * a genuinely hostile probe must leave a trail an operator can review
+   * later, not just a reply nobody but the sender ever saw. A plain
+   * not-found (a typo, a file that was never there) is not attack evidence
+   * and is left out of the log for the same reason `/scan`'s own "no
+   * candidates" result isn't logged per candidate — noise, not signal.
+   */
+  fileErrorReply(error, { project, path: attemptedPath, actor } = {}) {
+    if (!(error instanceof FileAccessError)) throw error;
+    if (error.code !== 'not-found') {
+      this.events?.append({
+        type: 'file.served',
+        project,
+        actor,
+        payload: { path: attemptedPath, mode: 'refused', reason: error.message },
+      });
+    }
+    return { reply: error.message };
+  }
+
+  /**
+   * `/files [path]` — one directory level of the active project.
+   *
+   * A trailing bare number is read as a page ("/files src 2"); a single bare
+   * word is always a path ("/files 2024" means the folder "2024", not page
+   * 2) — pagination only kicks in once a path already precedes it, which
+   * matches how the command is actually going to be typed in practice.
+   */
+  commandFiles(rest, ctx) {
+    if (this.operatorConfig.files?.enabled === false) {
+      return { reply: 'File access is disabled (operator.files.enabled: false).' };
+    }
+    const located = this.activeProjectRoot(ctx);
+    if (located.reply) return { reply: located.reply };
+
+    const words = (rest ?? '').trim().split(/\s+/).filter(Boolean);
+    let page = 1;
+    if (words.length > 1 && /^\d+$/.test(words.at(-1))) page = Number(words.pop());
+    const subPath = words.join(' ');
+
+    let listing;
+    try {
+      listing = listFiles(located.root, subPath, { page });
+    } catch (error) {
+      return this.fileErrorReply(error, { project: located.project, path: subPath, actor: ctx.actor });
+    }
+    this.events?.append({
+      type: 'file.served',
+      project: located.project,
+      actor: ctx.actor,
+      payload: { path: listing.path, mode: 'list', count: listing.entries.length },
+    });
+    return { reply: renderFileListing(located.project, listing) };
+  }
+
+  /**
+   * `/file <path>` — read one file from the active project. Small text files
+   * are shown inline, in full; anything binary or larger than
+   * `INLINE_MAX_BYTES` is sent as a real Telegram document instead — never
+   * truncated either way (see fileAccess.js and docs/PHASE_13_M6_REPORT.md).
+   */
+  commandFile(rest, ctx) {
+    if (this.operatorConfig.files?.enabled === false) {
+      return { reply: 'File access is disabled (operator.files.enabled: false).' };
+    }
+    if (!rest) return { reply: 'Usage: /file <path>. Try /files to see what is there.' };
+    const located = this.activeProjectRoot(ctx);
+    if (located.reply) return { reply: located.reply };
+
+    let target;
+    try {
+      target = resolveWithinProject(located.root, rest);
+    } catch (error) {
+      return this.fileErrorReply(error, { project: located.project, path: rest, actor: ctx.actor });
+    }
+
+    let stat;
+    try {
+      stat = fs.statSync(target);
+    } catch (error) {
+      return { reply: `Could not read "${rest}": ${error.message}` };
+    }
+    if (stat.isDirectory()) {
+      return { reply: `"${rest}" is a directory. Try /files ${rest}` };
+    }
+
+    if (stat.size > MAX_DOCUMENT_BYTES) {
+      return {
+        reply: `"${rest}" is ${formatBytes(stat.size)} — too large even to send as a file ` +
+          `(Telegram's ${formatBytes(MAX_DOCUMENT_BYTES)} document limit). ` +
+          'Read it directly on the machine, or /download-project for the rest of the project.',
+      };
+    }
+
+    const binary = stat.size > 0 && looksBinary(target);
+    if (binary || stat.size > INLINE_MAX_BYTES) {
+      this.events?.append({
+        type: 'file.served',
+        project: located.project,
+        actor: ctx.actor,
+        payload: { path: rest, bytes: stat.size, mode: 'attachment' },
+      });
+      return {
+        reply: `📄 ${rest} (${formatBytes(stat.size)}) — sending as a file.`,
+        attachment: { filePath: target, caption: `${located.project} — ${rest}` },
+      };
+    }
+
+    let content;
+    try {
+      content = fs.readFileSync(target, 'utf8');
+    } catch (error) {
+      return { reply: `Could not read "${rest}": ${error.message}` };
+    }
+    this.events?.append({
+      type: 'file.served',
+      project: located.project,
+      actor: ctx.actor,
+      payload: { path: rest, bytes: stat.size, mode: 'inline' },
+    });
+    return { reply: renderFileInline(rest, content) };
+  }
+
+  /**
+   * `/download-project [project]` — ZIP the active (or named) project's
+   * source, excluding `operator.download.exclude` (node_modules/.git/build
+   * output/…), size-guarded BEFORE zipping so an oversized project fails
+   * fast rather than after minutes of streaming.
+   */
+  async commandDownloadProject(rest, ctx) {
+    if (this.operatorConfig.files?.enabled === false) {
+      return { reply: 'File access is disabled (operator.files.enabled: false).' };
+    }
+    if (!this.paths?.downloadsDir) {
+      return { reply: 'This interface cannot generate downloads from here.' };
+    }
+    const resolved = this.resolveTarget(rest, ctx);
+    if (resolved.reply) return { reply: resolved.reply };
+    const projectName = resolved.project;
+
+    let project;
+    try {
+      project = this.configManager.getProject(projectName);
+    } catch (error) {
+      return { reply: `Cannot download ${projectName}: ${error.message}` };
+    }
+
+    const downloadConfig = this.operatorConfig.download ?? {};
+    const maxBytes = downloadConfig.maxProjectBytes ?? (200 * 1024 * 1024);
+    const ignore = downloadConfig.exclude;
+
+    let size;
+    try {
+      size = estimateArchiveSize(project.workingDirectory, { ignore });
+    } catch (error) {
+      return { reply: `Could not measure ${projectName}: ${error.message}` };
+    }
+    if (size.bytes > maxBytes) {
+      return {
+        reply: `${projectName} is ${formatBytes(size.bytes)} (excluding node_modules/.git/build output) ` +
+          `— over the ${formatBytes(maxBytes)} download limit. Zip it by hand on the machine instead.`,
+      };
+    }
+    if (size.bytes > MAX_DOCUMENT_BYTES) {
+      return {
+        reply: `${projectName} is ${formatBytes(size.bytes)} — the ZIP would exceed Telegram's ` +
+          `${formatBytes(MAX_DOCUMENT_BYTES)} document limit even though it's under the ` +
+          'download limit. Read individual files with /file instead, or fetch it on the machine.',
+      };
+    }
+
+    let archivePath;
+    try {
+      archivePath = await createProjectArchive(project.workingDirectory, projectName, {
+        downloadsDir: this.paths.downloadsDir, ignore,
+      });
+    } catch (error) {
+      return { reply: `Could not create the archive: ${error.message}` };
+    }
+    try {
+      pruneOldDownloads(this.paths.downloadsDir, downloadConfig.retentionMs ?? 86_400_000);
+    } catch (error) {
+      this.logger?.warn('Could not prune old downloads', { error: error.message });
+    }
+
+    this.events?.append({
+      type: 'project.downloaded',
+      project: projectName,
+      actor: ctx.actor,
+      payload: { bytes: size.bytes, files: size.files },
+    });
+    return {
+      reply: `📦 ${projectName} — ${formatBytes(size.bytes)}, ${size.files} file(s) zipped.`,
+      attachment: { filePath: archivePath, caption: `${projectName}.zip` },
+    };
   }
 
   // ------------------------------------------------------------ destructive --

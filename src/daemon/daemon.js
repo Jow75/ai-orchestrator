@@ -84,6 +84,7 @@ import LiveConfigLayer from '../config/liveConfig.js';
 import CommandRouter from '../operator/commandRouter.js';
 import OperatorGateway from '../operator/operatorGateway.js';
 import MissionMonitor from '../operator/missionMonitor.js';
+import { pruneOldDownloads } from '../operator/fileAccess.js';
 
 import DaemonRecord from './daemonRecord.js';
 import { autostartState } from './serviceControl.js';
@@ -327,6 +328,7 @@ export class Daemon extends EventEmitter {
       liveConfig: this.liveConfig,
       driverRegistry: this.driverRegistry,
       config: this.config,
+      paths: this.paths,
       // A remote shutdown must go through the SAME stop path as `daemon stop`
       // (see watchStopFile): on Windows a cross-process signal is a hard kill,
       // and a service that dies without releasing its record makes the next
@@ -371,6 +373,17 @@ export class Daemon extends EventEmitter {
       config: operatorConfig,
       logger,
     });
+
+    // Phase 13 M6: a stale `/download-project` ZIP left over from a prior
+    // service lifetime (crash, restart, or simply never fetched) is cleaned
+    // up here rather than waiting for the next successful download to
+    // trigger it — a machine that never runs another download would
+    // otherwise accumulate them forever.
+    try {
+      pruneOldDownloads(this.paths.downloadsDir, operatorConfig.download?.retentionMs ?? 86_400_000);
+    } catch (error) {
+      logger.warn('Could not prune old downloads at startup', { error: error.message });
+    }
   }
 
   /**

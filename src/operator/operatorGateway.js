@@ -167,27 +167,51 @@ export class OperatorGateway {
    * ran (or already refused), and re-running it to get the reply out would be
    * strictly worse than the owner missing one message — "/stop was applied
    * twice because the confirmation failed to send" is not a trade worth making.
+   *
+   * Phase 13 M6: the reply may also carry an `attachment` — `/file` and
+   * `/download-project` produce a real file, not just text. The text (if any)
+   * is sent first, then the attachment, via `provider.sendDocument()` — a
+   * duck-typed check, the same convention `registerCommands()` already uses
+   * for a capability only some providers implement, so a provider that never
+   * gained one (email, a future one-way channel) simply never gets asked.
    */
   async deliver(provider, message) {
-    const { reply } = await this.router.handle({
+    const { reply, attachment } = await this.router.handle({
       text: message.text,
       channel: provider.name,
       chatId: message.chatId,
       from: message.from,
     });
-    if (!reply) return null;
+    if (!reply && !attachment) return null;
 
-    try {
-      await provider.sendText(reply);
-      this.events?.append({
-        type: 'notification.sent',
-        actor: `daemon:${provider.name}`,
-        payload: { kind: 'operator-reply', chars: reply.length },
-      });
-    } catch (error) {
-      this.logger?.warn('Could not send operator reply', {
-        provider: provider.name, error: error.message,
-      });
+    if (reply) {
+      try {
+        await provider.sendText(reply);
+        this.events?.append({
+          type: 'notification.sent',
+          actor: `daemon:${provider.name}`,
+          payload: { kind: 'operator-reply', chars: reply.length },
+        });
+      } catch (error) {
+        this.logger?.warn('Could not send operator reply', {
+          provider: provider.name, error: error.message,
+        });
+      }
+    }
+
+    if (attachment && typeof provider.sendDocument === 'function') {
+      try {
+        await provider.sendDocument(attachment);
+        this.events?.append({
+          type: 'notification.sent',
+          actor: `daemon:${provider.name}`,
+          payload: { kind: 'operator-attachment' },
+        });
+      } catch (error) {
+        this.logger?.warn('Could not send operator attachment', {
+          provider: provider.name, error: error.message,
+        });
+      }
     }
     return reply;
   }

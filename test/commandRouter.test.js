@@ -134,6 +134,7 @@ function harness({ projects = ['alpha', 'beta'], operator = {}, driver = 'claude
     liveConfig: new LiveConfigLayer({ configManager }),
     driverRegistry: new DriverRegistry({ logger: silentLogger }),
     config: configManager.getAll(),
+    paths,
     requestShutdown: () => shutdowns.push(Date.now()),
     logger: silentLogger,
   });
@@ -1170,4 +1171,216 @@ test('/model is refused when operator.liveConfig is disabled', async () => {
   const { say } = harness({ operator: { liveConfig: { enabled: false } } });
   const { reply } = await say('/model opus');
   assert.match(reply, /disabled/);
+});
+
+// ────────────────────────────────── Phase 13 M6: remote file system ────────
+
+/** A project's real working directory, for tests that need to plant files. */
+function workDirOf(h, project) {
+  return h.registry.configManager.getProject(project).workingDirectory;
+}
+
+test('/files lists the active project\'s root, including the real prompt file', async () => {
+  const h = harness();
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/files');
+
+  assert.match(reply, /alpha/);
+  assert.match(reply, /prompt\.md/);
+});
+
+test('/files <path> lists a subdirectory', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.mkdirSync(path.join(dir, 'src'));
+  fs.writeFileSync(path.join(dir, 'src', 'index.js'), 'console.log(1);\n');
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/files src');
+
+  assert.match(reply, /index\.js/);
+});
+
+test('/files refuses without a project selected', async () => {
+  const { say } = harness();
+  const { reply } = await say('/files');
+  assert.match(reply, /No project selected/);
+});
+
+test('/file <path> shows a small text file inline, in full', async () => {
+  const h = harness();
+  await h.say('/project alpha');
+
+  const { reply, attachment } = await h.say('/file prompt.md');
+
+  assert.match(reply, /prompt\.md/);
+  assert.match(reply, /# work/);
+  assert.equal(attachment, undefined, 'a small text file is shown inline, not attached');
+});
+
+test('/file sends a large text file as an attachment instead of dumping it inline', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(path.join(dir, 'big.txt'), 'x'.repeat(10_000));
+  await h.say('/project alpha');
+
+  const { reply, attachment } = await h.say('/file big.txt');
+
+  assert.match(reply, /sending as a file/);
+  assert.ok(attachment);
+  assert.equal(path.basename(attachment.filePath), 'big.txt');
+});
+
+test('/file sends a binary file as an attachment regardless of its size', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(path.join(dir, 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]));
+  await h.say('/project alpha');
+
+  const { attachment } = await h.say('/file image.png');
+
+  assert.ok(attachment, 'a NUL byte marks this as binary, even though it is tiny');
+});
+
+test('/file never dumps truncated content — the large-file path always attaches the complete file', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  const full = 'line\n'.repeat(2000); // well past the inline threshold
+  fs.writeFileSync(path.join(dir, 'log.txt'), full);
+  await h.say('/project alpha');
+
+  const { attachment } = await h.say('/file log.txt');
+
+  assert.equal(fs.readFileSync(attachment.filePath, 'utf8'), full, 'the attachment IS the real, complete file');
+});
+
+test('/file on a path that escapes the project is refused, not "fixed"', async () => {
+  const h = harness();
+  await h.say('/project alpha');
+
+  const { reply, attachment } = await h.say('/file ../../../windows/system32/config');
+
+  assert.match(reply, /outside the project/);
+  assert.equal(attachment, undefined);
+});
+
+test('a traversal refusal leaves an audit trail in the event log; a plain not-found does not', async () => {
+  const h = harness();
+  await h.say('/project alpha');
+
+  await h.say('/file ../../../outside.txt');
+  await h.say('/file genuinely-never-existed.txt');
+
+  const served = h.events.read({ types: ['file.served'] });
+  const refused = served.filter((e) => e.payload.mode === 'refused');
+  assert.equal(refused.length, 1, 'the traversal attempt is the one recorded');
+  assert.equal(refused[0].project, 'alpha');
+  assert.match(refused[0].payload.path, /outside\.txt/);
+  assert.match(refused[0].payload.reason, /outside the project/);
+});
+
+test('/file on a directory says so and points at /files', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.mkdirSync(path.join(dir, 'src'));
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/file src');
+
+  assert.match(reply, /is a directory/);
+  assert.match(reply, /\/files src/);
+});
+
+test('/file on a nonexistent path is a clear "not found"', async () => {
+  const h = harness();
+  await h.say('/project alpha');
+  const { reply } = await h.say('/file does-not-exist.txt');
+  assert.match(reply, /does not exist/);
+});
+
+test('/files and /file are refused when operator.files is disabled', async () => {
+  const h = harness({ operator: { files: { enabled: false } } });
+  await h.say('/project alpha');
+
+  const files = await h.say('/files');
+  const file = await h.say('/file prompt.md');
+
+  assert.match(files.reply, /disabled/);
+  assert.match(file.reply, /disabled/);
+});
+
+test('/download_project zips the active project and sends it as a real attachment', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.mkdirSync(path.join(dir, 'src'));
+  fs.writeFileSync(path.join(dir, 'src', 'index.js'), 'console.log(1);\n');
+  await h.say('/project alpha');
+
+  const { reply, attachment } = await h.say('/download_project');
+
+  assert.match(reply, /zipped/);
+  assert.ok(attachment);
+  assert.ok(fs.existsSync(attachment.filePath), 'a real zip file was written to disk');
+  assert.equal(path.dirname(attachment.filePath), h.paths.downloadsDir);
+  assert.deepEqual(
+    fs.readFileSync(attachment.filePath).subarray(0, 4),
+    Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+    'a genuine ZIP local-file-header signature'
+  );
+});
+
+test('the exact hyphenated form the owner\'s directive specified still works, as an alias', async () => {
+  const h = harness();
+  await h.say('/project alpha');
+  const { attachment } = await h.say('/download-project');
+  assert.ok(attachment, '/download-project resolves to the same command as /download_project');
+});
+
+test('/download_project [project] can target a project other than the active one', async () => {
+  const h = harness();
+  const { attachment } = await h.say('/download_project beta');
+  assert.ok(attachment);
+  assert.equal(path.basename(attachment.filePath).startsWith('beta-'), true);
+});
+
+test('/download_project refuses a project whose measured (post-exclusion) size exceeds the configured limit', async () => {
+  const h = harness({ operator: { download: { maxProjectBytes: 5 } } });
+  await h.say('/project alpha'); // prompt.md alone is already > 5 bytes
+  const { reply, attachment } = await h.say('/download_project');
+  assert.match(reply, /over the/);
+  assert.equal(attachment, undefined);
+});
+
+test('/download_project is refused when operator.files is disabled', async () => {
+  const h = harness({ operator: { files: { enabled: false } } });
+  const { reply } = await h.say('/download_project alpha');
+  assert.match(reply, /disabled/);
+});
+
+test('an archived project is still fully reachable through every file command — archiving is a registry demotion, not an access restriction', async () => {
+  const h = harness();
+  await h.say('/archive alpha'); // registry-only, immediate — never touches the project's files
+  await h.say('/project alpha');
+
+  const files = await h.say('/files');
+  const file = await h.say('/file prompt.md');
+  const zip = await h.say('/download_project');
+
+  assert.match(files.reply, /prompt\.md/);
+  assert.match(file.reply, /# work/);
+  assert.ok(zip.attachment);
+});
+
+test('every /files, /file, and /download_project access is recorded in the event log', async () => {
+  const h = harness();
+  await h.say('/project alpha');
+  await h.say('/files');
+  await h.say('/file prompt.md');
+  await h.say('/download_project');
+
+  const served = h.events.read({ types: ['file.served'] });
+  const downloaded = h.events.read({ types: ['project.downloaded'] });
+  assert.equal(served.length, 2, 'one /files list + one /file read');
+  assert.equal(downloaded.length, 1);
 });
