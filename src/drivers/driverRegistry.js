@@ -32,10 +32,16 @@ export class DriverRegistry {
    *   forwarded to every driver instance this registry creates. Only
    *   `ClaudeDriver` currently reads it; passing it to drivers that don't
    *   (`mock`, `cli`) is harmless — their constructors simply ignore it.
+   * @param {() => boolean} [options.safeModeProvider] - Reconciliation pass,
+   *   2026-07-30: same forwarding rule as `defaultModelProvider` above. Only
+   *   `ClaudeDriver` reads it today — the generic `cli` driver has no
+   *   standardized permission concept to override, so Safe Mode has nothing
+   *   to enforce there yet; harmless no-op for `mock`/`cli`.
    */
-  constructor({ logger, defaultModelProvider }) {
+  constructor({ logger, defaultModelProvider, safeModeProvider }) {
     this.logger = logger;
     this.defaultModelProvider = defaultModelProvider;
+    this.safeModeProvider = safeModeProvider;
     this.constructors = new Map(Object.entries(BUILTIN_DRIVERS));
     this.instances = new Map();
   }
@@ -78,6 +84,7 @@ export class DriverRegistry {
     const instance = new DriverClass({
       logger: childLogger(this.logger, `${id}-driver`),
       defaultModelProvider: this.defaultModelProvider,
+      safeModeProvider: this.safeModeProvider,
     });
     this.instances.set(id, instance);
     return instance;

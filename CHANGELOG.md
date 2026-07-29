@@ -3,6 +3,50 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.9.0] — 2026-07-30 — Reconciliation pass: classification migration, `/import all`, Safe Mode
+
+Not a numbered Phase 13 milestone — a directed reconciliation ahead of M9.
+Full report: `docs/PHASE_13_RECONCILIATION_2026-07-30.md`.
+
+### Added
+
+- **`/import all`** (`src/operator/commandRouter.js`) — registers every
+  current `/scan` candidate in one batch, behind a single
+  `ConfirmationStore` confirmation, mirroring `/projects classify`'s
+  existing "propose once, confirm once, write N records" pattern. Closes
+  an operational gap, not a defect: `/scan` already found every real
+  project correctly, but `/import` only ever took one path, so registering
+  N real folders meant N manual commands. Live-run against the real
+  registry: 17 real, previously-unregistered folders under
+  `C:\Users\Admin\Music` registered in one confirmed action (6 → 23
+  projects).
+- **Safe Mode** (`operator.safeMode`, `/safemode on|off`) — a new global,
+  live-mutable override. While on, `ClaudeDriver` omits
+  `--permission-mode`/`--dangerously-skip-permissions` for every project
+  regardless of that project's own `claude.permissionMode`, forcing the
+  same headless auto-deny-writes behaviour a project with no
+  `permissionMode` set already gets today — machine-wide, for looking at
+  an unfamiliar project before trusting it with write access. Wired
+  through `DriverRegistry`/`src/app.js` with the same closure shape and
+  per-launch-isolation guarantee Phase 13 M5's `defaultModelProvider`
+  already established. Scoped to `ClaudeDriver` only — the generic `cli`
+  driver has no standardized permission concept to override.
+- New event types: `operator.safemode-changed`.
+
+### Fixed
+
+- **The Phase 13 M3 classification migration was executed.** The
+  heuristic had been correct and live-validated since `v3.3.0`; only the
+  owner's confirmation had never happened. Re-verified live against the
+  real registry (identical to the `v3.3.0` table) and applied via
+  `/projects classify` + `/confirm`.
+
+### Regression coverage
+
+- `claudeDriver.test.js` (+4), `driverRegistry.test.js` (+3),
+  `commandRouter.test.js` (+9). 1178 → 1194 backend tests, zero
+  regressions.
+
 ## [3.8.0] — 2026-07-30 — Phase 13 M8: Bot Experience & Discoverability
 
 A discoverability milestone on top of M7: `/help` and `docs/OPERATOR_CONSOLE.md`

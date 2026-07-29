@@ -3,7 +3,8 @@
 How to run your projects from your phone. Introduced in Phase 12 M2
 (`v2.9.0`); this page is kept current with the full command surface, last
 audited end-to-end in Phase 13 M8 (`v3.8.0`), which also grouped `/help`
-itself into the same sections used below.
+itself into the same sections used below. `/import all` and `/safemode`
+were added in the 2026-07-30 reconciliation pass (`v3.9.0`).
 
 This is the guide to *operating* AI-Orchestrator remotely. For deciding
 individual approvals, see [REMOTE_APPROVALS.md](REMOTE_APPROVALS.md); for
@@ -55,7 +56,7 @@ added later can accidentally become reachable.
 
 ## The commands
 
-29 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
+30 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
 — both read from the one `COMMANDS` array in `src/operator/commandGrammar.js`,
 so this table and the bot's own `/help` cannot drift apart.
 
@@ -109,12 +110,13 @@ What is waiting on you.
 
 Which projects AI-Orchestrator knows about (`/scan`, `/import` — Phase 13
 M2; `/archive`, `/restore`, `/hide`, `/unhide`, `/forget` — M3; `/roots` —
-M4).
+M4; `/import all` — reconciliation pass, 2026-07-30).
 
 | Command | What it does |
 | --- | --- |
 | `/scan` | Find real, unregistered projects under your configured roots |
 | `/import <path> [as <name>]` | Register a folder `/scan` found (registry only — never touches its files) |
+| `/import all` | Register every current `/scan` candidate in one batch, after one confirmation |
 | `/archive [project]` | Demote a project's priority. Never deletes it |
 | `/restore [project]` | Return an archived or hidden project to "development" |
 | `/hide [project]` · `/unhide [project]` | Keep a project out of `/projects` without archiving or removing it |
@@ -123,12 +125,14 @@ M4).
 
 ### Configuration
 
-The machine-wide default provider/model (Phase 13 M5).
+The machine-wide default provider/model (Phase 13 M5), plus the global
+Safe Mode override (reconciliation pass, 2026-07-30).
 
 | Command | What it does |
 | --- | --- |
 | `/provider` | Current default provider/model, known drivers, and capabilities |
 | `/model [name\|default]` | Show or set the default model. Never interrupts an active mission |
+| `/safemode [on\|off]` | Global override: while on, every project runs headless-read-only regardless of its own `permissionMode`. Never interrupts an active mission |
 
 ### Files
 
@@ -153,8 +157,10 @@ A few less-obvious ones in practice:
 
 ```text
 /import C:\Users\Admin\Music\new-project as "New Project"
+/import all
 /roots add D:\Development
 /model claude-sonnet-5           (or: /model default)
+/safemode on                     (or: /safemode off)
 /download-project Remote Work
 ```
 

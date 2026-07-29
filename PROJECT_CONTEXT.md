@@ -17,12 +17,21 @@ milestones) and Phase 13 M1→M7 are DONE and PUSHED to GitHub** — `main` and
 all 12 tags `v2.8.0`→`v3.7.0` are on `origin` (`github.com/Jow75/ai-
 orchestrator`) as of the 2026-07-29 consolidation review
 (`docs/PHASE_13_CONSOLIDATION_REVIEW.md`). **Phase 13 M8 (Bot Experience &
-Discoverability, `v3.8.0`) is now DONE, tagged locally, NOT yet pushed** —
-awaiting the owner's go-ahead, same as every prior push. **Phase 12 M4
-(Launch Experience & Remote Project Creation, was `v3.1.0`) remains
-DEFERRED**, not cancelled — resumes under the next available `v3.x` once
-Phase 13 completes. **Phase 13 M9 (Public Release Prep, process checkpoint,
-no code) is NEXT** — see `docs/PHASE_13_PLAN.md`.
+Discoverability, `v3.8.0`) is DONE.** A 2026-07-30 reconciliation pass
+(`v3.9.0`, no PHASE_13_PLAN milestone number — see
+`docs/PHASE_13_RECONCILIATION_2026-07-30.md`) then executed the pending
+project-classification migration (all 6 real projects, owner-confirmed),
+shipped and ran `/import all` (registering all 17 real, previously-
+unregistered folders under `C:\Users\Admin\Music` in one confirmed batch —
+the registry now has 23 projects, and a follow-up `/scan` confirms
+everything under the configured root is registered), and shipped a new
+global `/safemode on|off` override. **`v3.8.0` and `v3.9.0` are both tagged
+locally, NOT yet pushed** — awaiting the owner's go-ahead, same as every
+prior push. **Phase 12 M4 (Launch Experience & Remote Project Creation, was
+`v3.1.0`) remains DEFERRED**, not cancelled — its formal re-evaluation now
+folds into Phase 14 planning, per the owner's own direction. **Phase 13 M9
+(Public Release Prep, process checkpoint, no code) is NEXT, now auditing
+`v3.9.0`** — see `docs/PHASE_13_PLAN.md`.
 
 **Phase 13 M6 — Remote File System (`v3.6.0`) is DONE.** The first new
 runtime dependency since baseline (`archiver`) and the first filesystem
@@ -92,10 +101,28 @@ rewritten into a path" gotcha, silently creating a real mission request
 approval, nothing written, both events left in the log. Full report:
 `docs/PHASE_13_M8_REPORT.md`.
 
+**Reconciliation pass (`v3.9.0`, 2026-07-30) is DONE.** Not a numbered
+Phase 13 milestone — a directed reconciliation ahead of M9. Three findings,
+all resolved with the owner's explicit sign-off before any write: (1) the
+Phase 13 M3 classification migration had been correctly computed but never
+confirmed — re-verified live against the real registry (identical to the
+`v3.3.0` table) and executed; (2) "Safe Mode" did not exist anywhere in the
+codebase — proposed as a global `operator.safeMode` override, approved, and
+built: `/safemode on|off` makes `ClaudeDriver` omit `permissionMode`/
+`dangerouslySkipPermissions` for every project regardless of its own
+config, live-mutable via the Phase 13 M4 config layer, isolated from
+in-flight missions the same way `/model` already is; (3) Telegram exposing
+only 6 of 23 real project folders traced to an operational gap, not a
+defect — `/scan` (M2) already found all 17 unregistered folders correctly,
+but `/import` only ever took one path at a time. Shipped `/import all`
+(same one-batch-confirmation pattern `/projects classify` established) and
+ran it live, taking the registry from 6 to 23 real projects. 1178 → 1194
+backend tests. Full report: `docs/PHASE_13_RECONCILIATION_2026-07-30.md`.
+
 **NEXT: Phase 13 M9 — Public Release Prep (process checkpoint, no code)** —
 repeats the `v3.0.0` process (full regression, docs staleness audit,
-README/QUICKSTART spot-check, tag verification), then presented for
-approval. See `docs/PHASE_13_PLAN.md`.
+README/QUICKSTART spot-check, tag verification), now auditing `v3.9.0`,
+then presented for approval. See `docs/PHASE_13_PLAN.md`.
 
 ---
 
@@ -451,10 +478,12 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 13 M6 — Remote File System | ✅ done | `v3.6.0` |
 | Phase 13 M7 — Mission Completion Messaging | ✅ done | `v3.7.0` |
 | Phase 13 M8 — Bot Experience & Discoverability | ✅ done | `v3.8.0` |
-| Phase 13 M9 — Public Release Prep | ⏳ next | (audits `v3.8.0`) |
+| Reconciliation pass (classification migration, `/import all`, Safe Mode) | ✅ done | `v3.9.0` |
+| Phase 13 M9 — Public Release Prep | ⏳ next | (audits `v3.9.0`) |
 
-**Test suite (current, 2026-07-30):** 1178/1178 backend (+20 Phase 13 M1,
-+31 M2, +34 M3, +17 M4, +26 M5, +55 M6, +18 M7, +5 M8) + 41 desktop — the 919/919 figure above was the Phase 12
+**Test suite (current, 2026-07-30):** 1194/1194 backend (+20 Phase 13 M1,
++31 M2, +34 M3, +17 M4, +26 M5, +55 M6, +18 M7, +5 M8, +16 reconciliation
+pass) + 41 desktop — the 919/919 figure above was the Phase 12
 M2.1 snapshot; Phase 12 M2.2 and M3 each
 added more (see
 CHANGELOG for the exact per-release deltas).

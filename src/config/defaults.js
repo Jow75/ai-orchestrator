@@ -382,6 +382,16 @@ export const ORCHESTRATOR_DEFAULTS = {
     defaultProvider: 'claude',
     defaultModel: '',
     /**
+     * Reconciliation pass, 2026-07-30: `/safemode on|off`. A global override,
+     * independent of any project's own `claude.permissionMode` — while true,
+     * `ClaudeDriver` never forwards `permissionMode`/`dangerouslySkipPermissions`
+     * to the engine, so every project runs the same headless-default
+     * behaviour (auto-deny writes) a project with no `permissionMode` set
+     * already gets today. Off by default: existing per-project permission
+     * choices keep working exactly as before this existed.
+     */
+    safeMode: false,
+    /**
      * Phase 13 M2: how `/scan` looks for real projects under `projectRoots`.
      * Deliberately shallow (one configured root → its immediate
      * subdirectories, marker-probed a few levels deep) and never cached —

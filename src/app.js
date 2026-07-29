@@ -114,6 +114,11 @@ export class App {
       // worker by construction, and a NEW worker (the next mission) picks
       // it up automatically just by starting after the change landed.
       defaultModelProvider: () => this.config.operator?.defaultModel || '',
+      // Reconciliation pass, 2026-07-30: same "worker's own config snapshot,
+      // read once at construction" isolation `defaultModelProvider` already
+      // documents above — `/safemode` toggles the daemon's live object, an
+      // in-flight worker never rereads it.
+      safeModeProvider: () => Boolean(this.config.operator?.safeMode),
     });
 
     // Phase 10A/10C: the Approval Manager — store + remote providers.

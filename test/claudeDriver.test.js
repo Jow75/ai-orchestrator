@@ -92,6 +92,52 @@ test('buildArgs: the closure is read fresh on every call — a change applies to
   assert.equal(first[first.indexOf('--model') + 1], 'sonnet');
 });
 
+// ── reconciliation pass, 2026-07-30: Safe Mode ──────────────────────────
+
+test('buildArgs: with no safeModeProvider, identical to before Safe Mode existed (regression)', () => {
+  const bare = new ClaudeDriver({ logger: silentLogger }); // no closure passed at all
+  const args = bare.buildArgs({ model: '', permissionMode: 'acceptEdits', dangerouslySkipPermissions: true }, null);
+  assert.ok(args.includes('--permission-mode'), 'a project\'s own permission settings still apply when Safe Mode was never wired in');
+  assert.ok(args.includes('--dangerously-skip-permissions'));
+});
+
+test('buildArgs: safeModeProvider() false forwards a project\'s own permission settings unchanged', () => {
+  const driver = new ClaudeDriver({ logger: silentLogger, safeModeProvider: () => false });
+  const args = driver.buildArgs({ model: '', permissionMode: 'acceptEdits', dangerouslySkipPermissions: true }, null);
+  assert.ok(args.includes('--permission-mode') && args.includes('acceptEdits'));
+  assert.ok(args.includes('--dangerously-skip-permissions'));
+});
+
+test('buildArgs: safeModeProvider() true strips permissionMode and dangerouslySkipPermissions, even when the project sets them', () => {
+  const driver = new ClaudeDriver({ logger: silentLogger, safeModeProvider: () => true });
+  const args = driver.buildArgs(
+    { model: 'sonnet', permissionMode: 'acceptEdits', dangerouslySkipPermissions: true, allowedTools: ['Bash(git:*)'] },
+    null
+  );
+  assert.ok(!args.includes('--permission-mode'), 'Safe Mode must override even a project that explicitly asked for write access');
+  assert.ok(!args.includes('--dangerously-skip-permissions'));
+  // Safe Mode only touches permission flags — everything else still forwards.
+  assert.ok(args.includes('--model') && args.includes('sonnet'));
+  assert.ok(args.includes('Bash(git:*)'));
+});
+
+test('buildArgs: the safeModeProvider closure is read fresh on every call — a toggle applies to the NEXT launch only', () => {
+  let on = false;
+  const driver = new ClaudeDriver({ logger: silentLogger, safeModeProvider: () => on });
+  const config = { model: '', permissionMode: 'acceptEdits', dangerouslySkipPermissions: true };
+
+  const first = driver.buildArgs(config, null);
+  assert.ok(first.includes('--permission-mode'));
+
+  on = true; // simulates /safemode on landing between two launches
+  const second = driver.buildArgs(config, null);
+  assert.ok(!second.includes('--permission-mode'));
+
+  // The FIRST args array is a plain, already-returned array — nothing
+  // retroactively changes it, matching "never interrupts an active mission."
+  assert.ok(first.includes('--permission-mode'));
+});
+
 test('extractLimitResetTime: epoch-seconds form', () => {
   const epochSeconds = Math.floor(Date.now() / 1000) + 3600;
   const parsed = driver.extractLimitResetTime(

@@ -905,6 +905,49 @@ test('/scan and /import are refused when operator.discovery is disabled', async 
   assert.match(imported.reply, /disabled/);
 });
 
+// ─────────────────────── reconciliation pass, 2026-07-30: /import all ──────
+
+test('/import all proposes every /scan candidate and registers them only after one batch confirmation', async () => {
+  const h = discoveryHarness();
+  mkCandidate(h.rootsDir, 'first-project');
+  mkCandidate(h.rootsDir, 'second-project');
+
+  const proposed = await h.say('/import all');
+  assert.match(proposed.reply, /first-project/);
+  assert.match(proposed.reply, /second-project/);
+  assert.match(proposed.reply, /confirm/i);
+  assert.equal(h.registry.names().length, 1, 'nothing is written on the proposal message (still just alpha)');
+
+  const code = proposed.reply.match(/\/confirm ([A-Z0-9]+)/i)[1];
+  const { reply } = await h.say(`/confirm ${code}`);
+  assert.match(reply, /Imported 2 project/);
+  assert.ok(h.registry.has('first-project'));
+  assert.ok(h.registry.has('second-project'));
+  assert.equal(h.events.read({ types: ['project.imported'] }).length, 2);
+});
+
+test('/import all says there is nothing to do when /scan finds no candidates', async () => {
+  const h = discoveryHarness();
+  const { reply } = await h.say('/import all');
+  assert.match(reply, /[Nn]othing to import/);
+});
+
+test('/import all skips a candidate that got registered between the proposal and the confirmation', async () => {
+  const h = discoveryHarness();
+  const dir = mkCandidate(h.rootsDir, 'race-project');
+
+  const proposed = await h.say('/import all');
+  const code = proposed.reply.match(/\/confirm ([A-Z0-9]+)/i)[1];
+
+  // Simulate a manual /import of the same candidate landing first.
+  await h.say(`/import ${dir}`);
+
+  const { reply } = await h.say(`/confirm ${code}`);
+  assert.match(reply, /Imported 0 project/);
+  assert.match(reply, /Skipped/);
+  assert.equal(h.registry.names().length, 2, 'still just alpha + the one real import (no duplicate)');
+});
+
 test("a project whose workingDirectory vanished reports 'missing', not 'misconfigured'", async () => {
   const h = harness({ projects: ['gone'] });
   const project = h.registry.configManager.getRawProject('gone');
@@ -1170,6 +1213,52 @@ test('/model actually changes what the NEXT ClaudeDriver launch uses — never s
 test('/model is refused when operator.liveConfig is disabled', async () => {
   const { say } = harness({ operator: { liveConfig: { enabled: false } } });
   const { reply } = await say('/model opus');
+  assert.match(reply, /disabled/);
+});
+
+// ────────────────── reconciliation pass, 2026-07-30: /safemode ─────────────
+
+test('/safemode with no argument reports it is off by default', async () => {
+  const { say } = harness();
+  const { reply } = await say('/safemode');
+  assert.match(reply, /off/i);
+});
+
+test('/safemode on turns it on; /safemode alone then reports it, live, no restart', async () => {
+  const { say, events, router } = harness();
+
+  const set = await say('/safemode on');
+  assert.match(set.reply, /Safe Mode ON/);
+  assert.equal(events.read({ types: ['operator.safemode-changed'] }).length, 1);
+  assert.equal(router.config.operator.safeMode, true);
+
+  const check = await say('/safemode');
+  assert.match(check.reply, /Safe Mode is ON/);
+});
+
+test('/safemode off turns it back off', async () => {
+  const { say } = harness({ operator: { safeMode: true } });
+  const { reply } = await say('/safemode off');
+  assert.match(reply, /Safe Mode OFF/);
+  assert.match((await say('/safemode')).reply, /off/i);
+});
+
+test('/safemode on when already on says so instead of re-writing config', async () => {
+  const { say, events } = harness({ operator: { safeMode: true } });
+  const { reply } = await say('/safemode on');
+  assert.match(reply, /already on/);
+  assert.equal(events.read({ types: ['operator.safemode-changed'] }).length, 0);
+});
+
+test('/safemode refuses an argument that is not on/off', async () => {
+  const { say } = harness();
+  const { reply } = await say('/safemode maybe');
+  assert.match(reply, /Usage: \/safemode/);
+});
+
+test('/safemode is refused when operator.liveConfig is disabled', async () => {
+  const { say } = harness({ operator: { liveConfig: { enabled: false } } });
+  const { reply } = await say('/safemode on');
   assert.match(reply, /disabled/);
 });
 

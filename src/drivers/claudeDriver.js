@@ -40,12 +40,18 @@ export class ClaudeDriver extends AIDriver {
    *   reads), so an in-flight mission's args are already fixed by the time
    *   any later `/model` change lands — no extra "don't disrupt a running
    *   mission" logic is needed, because none is possible by construction.
+   * @param {() => boolean} [options.safeModeProvider] - Reconciliation pass,
+   *   2026-07-30 (`operator.safeMode`, `/safemode on|off`): same closure
+   *   shape and same isolation guarantee as `defaultModelProvider` above —
+   *   read fresh at each `buildArgs()` call, so a worker already spawned is
+   *   never affected by a later toggle.
    */
-  constructor({ logger, defaultModelProvider }) {
+  constructor({ logger, defaultModelProvider, safeModeProvider }) {
     super({ logger });
     this.id = 'claude';
     this.name = 'Claude Code';
     this.defaultModelProvider = defaultModelProvider ?? (() => '');
+    this.safeModeProvider = safeModeProvider ?? (() => false);
 
     // Engine-specific knowledge consumed by the core exit classifier.
     this.exitPatterns = {
@@ -112,11 +118,20 @@ export class ClaudeDriver extends AIDriver {
     // always wins.
     const model = claudeConfig.model || this.defaultModelProvider();
     if (model) args.push('--model', model);
-    if (claudeConfig.permissionMode) {
-      args.push('--permission-mode', claudeConfig.permissionMode);
-    }
-    if (claudeConfig.dangerouslySkipPermissions) {
-      args.push('--dangerously-skip-permissions');
+    // Reconciliation pass, 2026-07-30: Safe Mode overrides EVERY project's
+    // own permission settings, not just the ones that happen to be unset —
+    // that is the entire point of a machine-wide "look before you trust"
+    // switch. Omitting both flags is enough: headless Claude with neither
+    // set already auto-denies writes (the existing, pre-Safe-Mode behaviour
+    // any project with no permissionMode configured already has).
+    const safeMode = this.safeModeProvider();
+    if (!safeMode) {
+      if (claudeConfig.permissionMode) {
+        args.push('--permission-mode', claudeConfig.permissionMode);
+      }
+      if (claudeConfig.dangerouslySkipPermissions) {
+        args.push('--dangerously-skip-permissions');
+      }
     }
     if (claudeConfig.maxTurns > 0) {
       args.push('--max-turns', String(claudeConfig.maxTurns));
@@ -145,6 +160,7 @@ export class ClaudeDriver extends AIDriver {
       resume: Boolean(engineSessionId),
       engineSessionId,
       cwd: project.workingDirectory,
+      safeMode: this.safeModeProvider(),
     });
 
     run.spawn({

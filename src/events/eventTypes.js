@@ -64,6 +64,10 @@ export const EVENT_TYPES = Object.freeze([
   /** `/model` changed the machine-wide default model. */
   'provider.model-changed',
 
+  // ── safe mode (reconciliation pass, 2026-07-30) ─────────────────────────
+  /** `/safemode on|off` — global override forcing headless-read-only. */
+  'operator.safemode-changed',
+
   // ── remote file system (Phase 13 M6) ────────────────────────────────────
   /** `/files` or `/file` read something from a project's real filesystem. */
   'file.served',

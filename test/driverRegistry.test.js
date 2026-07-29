@@ -64,3 +64,31 @@ test('passing defaultModelProvider to a driver that ignores it (mock, cli) is ha
   assert.doesNotThrow(() => registry.getDriver('mock'));
   assert.doesNotThrow(() => registry.getDriver('cli'));
 });
+
+// ── reconciliation pass, 2026-07-30: safeModeProvider forwarding ────────
+
+test('safeModeProvider is forwarded to a claude driver instance it creates', () => {
+  const registry = new DriverRegistry({
+    logger: silentLogger,
+    safeModeProvider: () => true,
+  });
+  const claude = registry.getDriver('claude');
+  const args = claude.buildArgs({ model: '', permissionMode: 'acceptEdits' }, null);
+  assert.ok(!args.includes('--permission-mode'), 'Safe Mode reached the driver this registry created');
+});
+
+test('a registry built with no safeModeProvider behaves exactly as before Safe Mode existed', () => {
+  const registry = new DriverRegistry({ logger: silentLogger });
+  const claude = registry.getDriver('claude');
+  const args = claude.buildArgs({ model: '', permissionMode: 'acceptEdits' }, null);
+  assert.ok(args.includes('--permission-mode'), 'a project\'s own permission settings still apply with no Safe Mode wiring at all');
+});
+
+test('passing safeModeProvider to a driver that ignores it (mock, cli) is harmless', () => {
+  const registry = new DriverRegistry({
+    logger: silentLogger,
+    safeModeProvider: () => true,
+  });
+  assert.doesNotThrow(() => registry.getDriver('mock'));
+  assert.doesNotThrow(() => registry.getDriver('cli'));
+});

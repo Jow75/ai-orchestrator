@@ -419,6 +419,7 @@ export class CommandRouter {
       case 'roots': return this.commandRoots(rest, ctx);
       case 'provider': return this.commandProvider(ctx);
       case 'model': return this.commandModel(rest, ctx);
+      case 'safemode': return this.commandSafeMode(rest, ctx);
       case 'files': return this.commandFiles(rest, ctx);
       case 'file': return this.commandFile(rest, ctx);
       case 'download_project': return await this.commandDownloadProject(rest, ctx);
@@ -681,7 +682,10 @@ export class CommandRouter {
       return { reply: 'Discovery is disabled (operator.discovery.enabled: false).' };
     }
     if (!rest) {
-      return { reply: 'Usage: /import <path> [as <name>]. Try /scan to see candidates.' };
+      return { reply: 'Usage: /import <path> [as <name>], or /import all. Try /scan to see candidates.' };
+    }
+    if (rest.trim().toLowerCase() === 'all') {
+      return this.commandImportAll(ctx);
     }
 
     const asMatch = rest.match(/^(.*?)\s+as\s+(\S.*)$/i);
@@ -710,6 +714,63 @@ export class CommandRouter {
         + `It has no mission yet — add a "promptFile" or task plan to config/projects/${name}.json `
         + `before starting it. Try /status ${name}.`,
     };
+  }
+
+  /**
+   * `/import all` — reconciliation pass, 2026-07-30. `/scan` already finds
+   * every real, unregistered project correctly; the gap was that `/import`
+   * only ever took one path, so registering N real folders meant N manual
+   * commands. This closes that gap the same way `/projects classify` closes
+   * the equivalent one-batch-vs-N-commands gap for classification: propose
+   * everything `/scan` would find right now, one `ConfirmationStore`
+   * confirmation, then write every registry file inside `perform()`.
+   *
+   * Still strictly additive and reversible — `saveProject()` never touches a
+   * candidate's files, and any of the N imports can be individually undone
+   * with `/forget <name>` afterward, same as a single `/import` always could.
+   */
+  commandImportAll(ctx) {
+    const discovery = this.operatorConfig.discovery ?? {};
+    const roots = this.operatorConfig.projectRoots ?? [];
+    const result = scanRoots(roots, {
+      markers: discovery.markers,
+      ignore: discovery.ignore,
+      maxDepth: discovery.maxDepth,
+      existingDirs: this.existingProjectDirs(),
+    });
+    if (!result.candidates.length) {
+      return { reply: 'Nothing to import — /scan finds no new candidates under your configured roots.' };
+    }
+
+    const lines = result.candidates.map((c) => `${c.name} → ${c.path}`);
+    const confirmation = this.confirmations.require({
+      channel: ctx.channel,
+      action: 'import-all',
+      summary: `Import ${result.candidates.length} project(s):\n${lines.join('\n')}`,
+      perform: () => {
+        const imported = [];
+        const skipped = [];
+        for (const candidate of result.candidates) {
+          // Re-checked at confirm time, not just at propose time: something
+          // else (a manual /import, a second confirmed batch) may have
+          // claimed this name in the gap between the two.
+          if (this.registry.has(candidate.name)) {
+            skipped.push(candidate.name);
+            continue;
+          }
+          this.configManager.saveProject(candidate.name, { driver: 'claude', workingDirectory: candidate.path });
+          this.events?.append({
+            type: 'project.imported', project: candidate.name, actor: ctx.actor,
+            payload: { path: candidate.path, via: 'import-all' },
+          });
+          imported.push(candidate.name);
+        }
+        const skippedNote = skipped.length ? ` Skipped (already registered by the time this ran): ${skipped.join(', ')}.` : '';
+        return `Imported ${imported.length} project(s): ${imported.join(', ')}.${skippedNote}\n\n`
+          + 'None have a mission yet — each needs a "promptFile" or task plan in its config/projects/<name>.json before it can start.';
+      },
+    });
+    return { reply: renderConfirmation(confirmation) };
   }
 
   commandArchive(rest, ctx) {
@@ -921,6 +982,58 @@ export class CommandRouter {
       type: 'provider.model-changed', actor: ctx.actor, payload: { model, previousModel: previous },
     });
     return { reply: `Default model set to "${model}". Applies to the next mission that starts — never one already running.` };
+  }
+
+  /**
+   * `/safemode [on|off]` — reconciliation pass, 2026-07-30. A global
+   * override, independent of any project's own `permissionMode`: while on,
+   * `ClaudeDriver` never forwards `permissionMode`/`dangerouslySkipPermissions`
+   * to the engine, so every mission on every project runs the same
+   * already-existing headless-default behaviour (auto-deny writes) that a
+   * project with no `permissionMode` set gets today — see
+   * `config/projects/example.json`'s own `$comment` for that existing rule.
+   * Not a new safety mechanism, just a machine-wide way to force the one
+   * that already exists, for looking at an unfamiliar project before
+   * trusting it with write access.
+   *
+   * Same isolation guarantee as `/model`: a worker reads its config once at
+   * construction, so this can never interrupt a mission already running —
+   * only the next one to start.
+   */
+  commandSafeMode(rest, ctx) {
+    if (this.operatorConfig.liveConfig?.enabled === false) {
+      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
+    }
+    if (!this.liveConfig) {
+      return { reply: 'This interface cannot change configuration from here.' };
+    }
+
+    const trimmed = (rest ?? '').trim().toLowerCase();
+    const current = Boolean(this.operatorConfig.safeMode);
+    if (!trimmed) {
+      return {
+        reply: current
+          ? '🔒 Safe Mode is ON — every project runs headless-read-only, regardless of its own permissionMode.'
+          : 'Safe Mode is off — projects run with their own configured permissionMode. /safemode on to force read-only globally.',
+      };
+    }
+    if (trimmed !== 'on' && trimmed !== 'off') {
+      return { reply: 'Usage: /safemode, /safemode on, or /safemode off.' };
+    }
+
+    const next = trimmed === 'on';
+    if (next === current) {
+      return { reply: next ? 'Safe Mode is already on.' : 'Safe Mode is already off.' };
+    }
+    this.liveConfig.applyPatch({ 'operator.safeMode': next });
+    this.events?.append({
+      type: 'operator.safemode-changed', actor: ctx.actor, payload: { safeMode: next },
+    });
+    return {
+      reply: next
+        ? '🔒 Safe Mode ON. New missions on every project run headless-read-only until /safemode off. Already-running missions are unaffected.'
+        : 'Safe Mode OFF. New missions use each project\'s own permissionMode again.',
+    };
   }
 
   // --------------------------------------------------------------- files ----

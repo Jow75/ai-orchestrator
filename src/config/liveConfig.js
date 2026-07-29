@@ -27,6 +27,7 @@ export const LIVE_MUTABLE_PATHS = Object.freeze([
   'operator.projectRoots',
   'operator.defaultModel',
   'operator.defaultProvider',
+  'operator.safeMode',
   'notifications.minSeverity',
   'approvals.mode',
 ]);

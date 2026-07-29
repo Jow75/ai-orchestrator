@@ -1,17 +1,13 @@
 {
   "$comment": "Example project definition. Copy this file to <your-project-name>.json, fix workingDirectory and promptFile, then run: ai-orchestrator start <your-project-name>",
-
   "driver": "claude",
-
   "workingDirectory": "C:/Users/Admin/Music/AI-Orchestrator/examples/demo-project",
   "promptFile": "prompt.md",
-
   "mission": {
     "completionMarker": "MISSION COMPLETE",
     "continuePrompt": "Continue from where you left off. Review your progress so far, then carry on with the next unfinished task. Do not repeat completed work. When the entire mission is finished, output the exact text MISSION COMPLETE.",
     "maxRuns": 0
   },
-
   "claude": {
     "$comment": "permissionMode acceptEdits lets Claude edit files unattended. Headless runs with permissionMode \"\" auto-DENY writes, so the agent can do nothing and the orchestrator will block the mission (see the 2026-07-04 incident). For fully autonomous missions use \"acceptEdits\" or set allowedTools; understand the trust implications first (CONFIGURATION.md).",
     "executable": "claude",
@@ -22,5 +18,6 @@
     "disallowedTools": [],
     "maxTurns": 0,
     "extraArgs": []
-  }
+  },
+  "classification": "demo"
 }

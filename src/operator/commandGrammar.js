@@ -188,11 +188,11 @@ export const COMMANDS = Object.freeze([
   {
     name: 'import',
     aliases: [],
-    usage: '/import <path> [as <name>]',
+    usage: '/import <path> [as <name>] | /import all',
     takesRest: true,
     category: 'Registry',
-    examples: ['/import C:\\Users\\Admin\\Music\\new-project', '/import C:\\Users\\Admin\\Music\\new-project as "New Project"'],
-    description: 'Register a folder /scan found as a project (registry only — never touches its files).',
+    examples: ['/import C:\\Users\\Admin\\Music\\new-project', '/import C:\\Users\\Admin\\Music\\new-project as "New Project"', '/import all'],
+    description: 'Register a folder /scan found as a project. "all" registers every current /scan candidate in one confirmed batch. Registry only — never touches files.',
   },
   {
     name: 'archive',
@@ -264,6 +264,15 @@ export const COMMANDS = Object.freeze([
     category: 'Configuration',
     examples: ['/model claude-sonnet-5', '/model default'],
     description: 'Show or set the default model. Never interrupts an active mission.',
+  },
+  {
+    name: 'safemode',
+    aliases: [],
+    usage: '/safemode [on|off]',
+    takesRest: true,
+    category: 'Configuration',
+    examples: ['/safemode on', '/safemode off'],
+    description: 'Global read-only override: while on, every project runs headless-read-only regardless of its own permissionMode.',
   },
   {
     name: 'files',
