@@ -115,8 +115,19 @@ registered projects and AI-Orchestrator's own checkout, and found 17 real,
 genuinely unregistered project folders already sitting in that directory.
 1023/1023 backend tests. Full report: `docs/PHASE_13_M2_REPORT.md`.
 
-**NEXT: Phase 13 M3 — Project Lifecycle & Registry Operations, `v3.3.0`** —
-see `docs/PHASE_13_PLAN.md`.
+**Phase 13 M3 — Project Lifecycle & Registry Operations (`v3.3.0`) is DONE.**
+Owner-set classification (production/development/validation/demo/archived/
+hidden) plus `/archive`/`/restore`/`/hide`/`/unhide`/`/forget`/`/projects
+classify` — strictly registry-only, never touches a project's real files.
+One real plan deviation, disclosed in the report: `updateProject()` doesn't
+enforce full mission-readiness (it would have made it impossible to archive
+an M2-imported, no-mission-yet project). The classification migration
+heuristic was live-validated against the real 6 project files and exactly
+reproduced the plan's expected table. 1057/1057 backend tests. Full report:
+`docs/PHASE_13_M3_REPORT.md`.
+
+**NEXT: Phase 13 M4 — Live Configuration Layer, `v3.4.0`** — see
+`docs/PHASE_13_PLAN.md`.
 
 ---
 
@@ -336,16 +347,17 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 12 M4 — Launch experience & remote project creation | ⏸ **deferred** | was `v3.1.0` |
 | Phase 13 M1 — Long Message Reliability | ✅ done | `v3.1.0` |
 | Phase 13 M2 — Project Roots & Discovery | ✅ done | `v3.2.0` |
-| Phase 13 M3 — Project Lifecycle & Registry Operations | ⏳ next | `v3.3.0` |
-| Phase 13 M4 — Live Configuration Layer | ⏳ planned | `v3.4.0` |
+| Phase 13 M3 — Project Lifecycle & Registry Operations | ✅ done | `v3.3.0` |
+| Phase 13 M4 — Live Configuration Layer | ⏳ next | `v3.4.0` |
 | Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ⏳ planned | `v3.5.0` |
 | Phase 13 M6 — Remote File System | ⏳ planned | `v3.6.0` |
 | Phase 13 M7 — Mission Completion Messaging | ⏳ planned | `v3.7.0` |
 | Phase 13 M8 — Bot Experience & Discoverability | ⏳ planned | `v3.8.0` |
 | Phase 13 M9 — Public Release Prep | ⏳ planned | (audits `v3.8.0`) |
 
-**Test suite (current, 2026-07-29):** 1023/1023 backend (+20 M1, +31 M2) + 41
-desktop — the 919/919 figure above was the M2.1 snapshot; M2.2 and M3 each
+**Test suite (current, 2026-07-29):** 1057/1057 backend (+20 Phase 13 M1,
++31 M2, +34 M3) + 41 desktop — the 919/919 figure above was the Phase 12
+M2.1 snapshot; Phase 12 M2.2 and M3 each
 added more (see
 CHANGELOG for the exact per-release deltas).
 

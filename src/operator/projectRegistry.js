@@ -187,6 +187,10 @@ export class ProjectRegistry {
       // desktop client reads this same registry, and a fact this important
       // must not depend on each surface remembering to look up the driver.
       record.simulated = isSimulatedProject(project);
+      // Phase 13 M3: what the project IS (owner-set), not what it's doing
+      // right now (record.status, computed below). Always present —
+      // PROJECT_DEFAULTS.classification defaults it to 'development'.
+      record.classification = project.classification;
     } catch (error) {
       // A project whose config is broken still EXISTS and must still be
       // listed — silently dropping it is how an operator ends up staring at a
@@ -269,17 +273,28 @@ export class ProjectRegistry {
    * phone screen shows about six lines before scrolling, and the projects that
    * are running or waiting on the owner are the ones worth those lines.
    *
-   * @param {{health?: boolean, git?: boolean}} [options]
+   * Phase 13 M3: a `hidden`-classified project is filtered out entirely
+   * unless `includeHidden` — the same "about six lines" constraint the
+   * status ordering already exists for. An `archived` one stays listed but
+   * sorts after every live status: a demotion in attention priority, not an
+   * act of hiding (that's what `hidden` is for). A project whose config is
+   * broken (`misconfigured`/`missing`) has no `classification` at all and is
+   * never affected by either rule — it must always still be listed.
+   *
+   * @param {{health?: boolean, git?: boolean, includeHidden?: boolean}} [options]
    * @returns {object[]}
    */
-  list(options = {}) {
+  list({ includeHidden = false, ...options } = {}) {
     const order = new Map(PROJECT_STATUSES.map((status, index) => [status, index]));
-    return this.names()
-      .map((name) => this.describe(name, options))
-      .sort((a, b) => {
-        const rank = (order.get(a.status) ?? 99) - (order.get(b.status) ?? 99);
-        return rank !== 0 ? rank : a.name.localeCompare(b.name);
-      });
+    let records = this.names().map((name) => this.describe(name, options));
+    if (!includeHidden) records = records.filter((record) => record.classification !== 'hidden');
+    return records.sort((a, b) => {
+      const archivedRank = (record) => (record.classification === 'archived' ? 1 : 0);
+      const archiveDelta = archivedRank(a) - archivedRank(b);
+      if (archiveDelta !== 0) return archiveDelta;
+      const rank = (order.get(a.status) ?? 99) - (order.get(b.status) ?? 99);
+      return rank !== 0 ? rank : a.name.localeCompare(b.name);
+    });
   }
 
   /**

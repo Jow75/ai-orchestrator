@@ -28,6 +28,10 @@ import { isEvidenceVerifier } from '../notifications/missionCard.js';
 import { parseCommand } from './commandGrammar.js';
 import { scanRoots } from './projectDiscovery.js';
 import {
+  archive, restore, hide, unhide, forget, classifyProposal,
+} from './projectLifecycleOps.js';
+import { DEFAULT_CLASSIFICATION } from '../config/projectClassification.js';
+import {
   renderProjectList, renderProjectDetail, renderTasks, renderApprovals,
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
   renderHelp, renderServiceStatus, renderScanResults, truncate,
@@ -366,7 +370,7 @@ export class CommandRouter {
 
     switch (name) {
       case 'help': return { reply: renderHelp({ active: this.activeProject(ctx) }) };
-      case 'projects': return this.commandProjects(ctx);
+      case 'projects': return this.commandProjects(rest, ctx);
       case 'project': return this.commandSelect(rest, ctx);
       case 'whoami': return this.commandWhoami(ctx);
       case 'status': return this.commandStatus(rest, ctx);
@@ -380,17 +384,59 @@ export class CommandRouter {
       case 'cancel': return this.commandCancel(rest, ctx);
       case 'scan': return this.commandScan(ctx);
       case 'import': return this.commandImport(rest, ctx);
+      case 'archive': return this.commandArchive(rest, ctx);
+      case 'restore': return this.commandRestore(rest, ctx);
+      case 'hide': return this.commandHide(rest, ctx);
+      case 'unhide': return this.commandUnhide(rest, ctx);
       default:
         return { reply: `"/${name}" is recognized but not implemented. This is a bug — please report it.` };
     }
   }
 
-  commandProjects(ctx) {
-    const records = this.registry.list();
+  commandProjects(rest, ctx) {
+    const word = (rest ?? '').trim().toLowerCase();
+    if (word === 'classify') return this.commandProjectsClassify(ctx);
+
+    const includeHidden = word === 'all';
+    const records = this.registry.list({ includeHidden });
     // A selection pointing at a project that no longer exists is worse than no
-    // selection: every later command fails with a confusing error.
-    this.context.pruneMissing(records.map((r) => r.name));
+    // selection: every later command fails with a confusing error. Pruning
+    // uses every real name (not just the ones just listed), so a selection
+    // pointing at a currently-hidden project is never wrongly pruned.
+    this.context.pruneMissing(this.registry.names());
     return { reply: renderProjectList(records, { active: this.activeProject(ctx) }) };
+  }
+
+  /**
+   * `/projects classify` — Phase 13 M3: propose (never silently apply) a
+   * classification for every project that doesn't have one yet. One batch
+   * confirmation via the existing `ConfirmationStore`, not one per project —
+   * exactly the same mechanism `/stop`/`/reset`/`/shutdown` already use,
+   * invoked directly here rather than through the destructive-command gate
+   * since this isn't a per-project destructive action.
+   */
+  commandProjectsClassify(ctx) {
+    const proposals = classifyProposal(this.configManager);
+    if (!proposals.length) {
+      return { reply: 'Every project already has a classification. Nothing to propose.' };
+    }
+    const lines = proposals.map((p) => `${p.name} → ${p.proposed} (${p.reason})`);
+    const confirmation = this.confirmations.require({
+      channel: ctx.channel,
+      action: 'classify',
+      summary: `Classify ${proposals.length} project(s):\n${lines.join('\n')}`,
+      perform: () => {
+        for (const p of proposals) {
+          this.configManager.updateProject(p.name, { classification: p.proposed });
+          this.events?.append({
+            type: 'project.classified', project: p.name, actor: ctx.actor,
+            payload: { classification: p.proposed },
+          });
+        }
+        return `Classified ${proposals.length} project(s).`;
+      },
+    });
+    return { reply: renderConfirmation(confirmation) };
   }
 
   commandSelect(rest, ctx) {
@@ -632,6 +678,53 @@ export class CommandRouter {
     };
   }
 
+  commandArchive(rest, ctx) {
+    return this.mutateClassification(rest, ctx, {
+      fn: archive, verb: 'Archived', to: 'archived', eventType: 'project.archived',
+    });
+  }
+
+  commandRestore(rest, ctx) {
+    return this.mutateClassification(rest, ctx, {
+      fn: restore, verb: 'Restored', to: DEFAULT_CLASSIFICATION, eventType: 'project.restored',
+    });
+  }
+
+  commandHide(rest, ctx) {
+    return this.mutateClassification(rest, ctx, {
+      fn: hide, verb: 'Hidden', to: 'hidden', eventType: 'project.hidden',
+    });
+  }
+
+  commandUnhide(rest, ctx) {
+    return this.mutateClassification(rest, ctx, {
+      fn: unhide, verb: 'Unhidden', to: DEFAULT_CLASSIFICATION, eventType: 'project.unhidden',
+    });
+  }
+
+  /**
+   * The shared shape behind /archive, /restore, /hide, /unhide — all four
+   * are reversible, registry-only classification changes (never destructive,
+   * so none of them go through prepareDestructive()/ConfirmationStore).
+   */
+  mutateClassification(rest, ctx, { fn, verb, to, eventType }) {
+    if (this.operatorConfig.lifecycle?.enabled === false) {
+      return { reply: 'Lifecycle operations are disabled (operator.lifecycle.enabled: false).' };
+    }
+    const resolved = this.resolveTarget(rest, ctx);
+    if (resolved.reply) return { reply: resolved.reply };
+    const { project } = resolved;
+    try {
+      fn(this.configManager, project);
+    } catch (error) {
+      return { reply: `Could not update ${project}: ${error.message}` };
+    }
+    this.events?.append({
+      type: eventType, project, actor: ctx.actor, payload: { classification: to },
+    });
+    return { reply: `${verb} ${project} → ${to}.` };
+  }
+
   // ------------------------------------------------------------ destructive --
 
   /**
@@ -703,6 +796,29 @@ export class CommandRouter {
             payload: { sessionId: session.id, via: 'reset' },
           });
           return `${project}: interrupted session abandoned. The next start begins fresh.`;
+        },
+      };
+    }
+
+    if (name === 'forget') {
+      if (this.operatorConfig.lifecycle?.enabled === false) {
+        return { reply: 'Lifecycle operations are disabled (operator.lifecycle.enabled: false).' };
+      }
+      const holder = this.supervisor.holderOf(project);
+      if (holder) {
+        return { reply: `${project} has a mission running (pid ${holder.pid}). /stop it first, then /forget it.` };
+      }
+      return {
+        project,
+        summary: `Forget ${project} — removes it from the registry. Files on disk are NOT touched.`,
+        perform: () => {
+          try {
+            forget(this.configManager, project);
+          } catch (error) {
+            return `Could not forget ${project}: ${error.message}`;
+          }
+          this.events?.append({ type: 'project.forgotten', project, actor: ctx.actor, payload: {} });
+          return `🗑️ ${project} forgotten. Files on disk are untouched — re-import any time with /import <path>.`;
         },
       };
     }

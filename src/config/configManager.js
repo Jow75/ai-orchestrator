@@ -18,6 +18,7 @@ import path from 'node:path';
 import { ORCHESTRATOR_DEFAULTS, PROJECT_DEFAULTS } from './defaults.js';
 import { resolvePaths } from '../infra/paths.js';
 import { isLegacyMission, normalizeAndValidateTasks } from '../mission/missionPlan.js';
+import { PROJECT_CLASSIFICATIONS, isKnownClassification } from './projectClassification.js';
 
 /** Error type thrown for any user-fixable configuration problem. */
 export class ConfigError extends Error {
@@ -193,6 +194,29 @@ export class ConfigManager {
     }
   }
 
+  /**
+   * Read a project's definition file EXACTLY as written on disk — no
+   * `PROJECT_DEFAULTS` merged in at all (unlike `getRawProject()`, which
+   * merges defaults but skips validation). Needed wherever "did the owner
+   * explicitly set this" matters: `classification` now has a default
+   * (`'development'`), so a defaults-merged read would make every project
+   * look already classified, which is exactly wrong for Phase 13 M3's
+   * migration proposal (`classifyProposal()` in `operator/projectLifecycleOps.js`).
+   *
+   * @param {string} name
+   * @returns {object|null} The raw file contents, or null if missing/invalid.
+   */
+  getProjectFileContents(name) {
+    if (!name) return null;
+    const file = path.join(this.getPaths().projectsDir, `${name}.json`);
+    if (!fs.existsSync(file)) return null;
+    try {
+      return readJsonFile(file);
+    } catch {
+      return null;
+    }
+  }
+
   /** Validate a merged project config. Throws ConfigError on problems. */
   validateProject(project, file) {
     const problems = [];
@@ -274,6 +298,65 @@ export class ConfigManager {
     }
     fs.writeFileSync(file, `${JSON.stringify(definition, null, 2)}\n`, 'utf8');
     return file;
+  }
+
+  /**
+   * Merge `patch` into an existing project's RAW on-disk definition and
+   * persist it (Phase 13 M3 — `/archive`, `/hide`, `/restore`, `/unhide`,
+   * the classification migration).
+   *
+   * Reads and writes the raw file — never the `PROJECT_DEFAULTS`-merged
+   * object — so applying a patch can never bake defaults permanently into a
+   * file that previously relied on them implicitly (the same reasoning
+   * `saveProject()` already follows by writing exactly what it's given).
+   *
+   * Deliberately does NOT run the full `validateProject()` a mission needs
+   * to actually run (driver/workingDirectory/promptFile-or-tasks) — a
+   * project can be legitimately incomplete (Phase 13 M2's freshly-imported,
+   * no-mission-yet projects are exactly this) and lifecycle operations must
+   * still work on it; requiring mission-readiness here would make it
+   * impossible to archive or hide the very projects most likely to need it.
+   * The one thing checked is that a `classification`, if the patch touches
+   * it, is a real one — a typo must not silently create a seventh category.
+   *
+   * @param {string} name
+   * @param {object} patch - Deep-merged over the existing raw definition.
+   * @returns {object} The new raw definition that was written.
+   * @throws {ConfigError} If the project doesn't exist, or the patch sets an
+   *   unknown "classification".
+   */
+  updateProject(name, patch) {
+    const file = path.join(this.getPaths().projectsDir, `${name}.json`);
+    if (!fs.existsSync(file)) {
+      throw new ConfigError(`Project "${name}" not found (expected ${file}).`);
+    }
+    const raw = readJsonFile(file);
+    const merged = deepMerge(raw, patch);
+    if (merged.classification !== undefined && !isKnownClassification(merged.classification)) {
+      throw new ConfigError(
+        `"classification" must be one of: ${PROJECT_CLASSIFICATIONS.join(', ')} (got "${merged.classification}").`
+      );
+    }
+    fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+    return merged;
+  }
+
+  /**
+   * Remove a project's definition file (Phase 13 M3 — `/forget`).
+   *
+   * Registry-only, by design (see docs/PHASE_13_PLAN.md M3): this NEVER
+   * touches the project's actual files on disk. Deleting real code is a
+   * deliberate non-goal this system does not implement at all, on any path.
+   *
+   * @param {string} name
+   * @throws {ConfigError} If the project doesn't exist.
+   */
+  deleteProject(name) {
+    const file = path.join(this.getPaths().projectsDir, `${name}.json`);
+    if (!fs.existsSync(file)) {
+      throw new ConfigError(`Project "${name}" not found (expected ${file}).`);
+    }
+    fs.rmSync(file);
   }
 }
 

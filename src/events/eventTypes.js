@@ -43,6 +43,18 @@ export const EVENT_TYPES = Object.freeze([
   'project.discovered',
   /** A real, discovered folder became a registered project (`/import`). */
   'project.imported',
+  /** `/archive` — classification set to 'archived'. */
+  'project.archived',
+  /** `/restore` — classification returned to the default. */
+  'project.restored',
+  /** `/hide` — classification set to 'hidden'. */
+  'project.hidden',
+  /** `/unhide` — classification returned to the default. */
+  'project.unhidden',
+  /** `/forget` — the project's config file was removed. Files on disk untouched. */
+  'project.forgotten',
+  /** `/projects classify` applied a proposed classification. */
+  'project.classified',
 
   // ── missions requested from an interface (M2 Priority 3) ─────────────────
   /** Free text became a mission request awaiting the owner's approval. */

@@ -245,6 +245,48 @@ test('the list puts what needs attention first', () => {
     'waiting-approval, then blocked, then running — the order of the operator\'s attention');
 });
 
+test('describe() reports classification, defaulting to development', () => {
+  const { configManager, paths } = installation();
+  defineProject(paths, 'plain');
+  defineProject(paths, 'flagged', { classification: 'production' });
+  const { registry } = buildRegistry(configManager, paths);
+
+  assert.equal(registry.describe('plain', { git: false, health: false }).classification, 'development');
+  assert.equal(registry.describe('flagged', { git: false, health: false }).classification, 'production');
+});
+
+test('list() hides a "hidden" project by default, and includes it with includeHidden', () => {
+  const { configManager, paths } = installation();
+  defineProject(paths, 'visible');
+  defineProject(paths, 'stashed', { classification: 'hidden' });
+  const { registry } = buildRegistry(configManager, paths);
+
+  const defaultNames = registry.list({ health: false, git: false }).map((r) => r.name);
+  assert.deepEqual(defaultNames, ['visible']);
+
+  const allNames = registry.list({ health: false, git: false, includeHidden: true }).map((r) => r.name);
+  assert.deepEqual(allNames.sort(), ['stashed', 'visible']);
+});
+
+test('list() sorts an "archived" project after every live status, but never drops it', () => {
+  const { configManager, paths } = installation();
+  defineProject(paths, 'zeta', { classification: 'archived' });
+  defineProject(paths, 'alpha');
+  const { registry } = buildRegistry(configManager, paths);
+
+  const order = registry.list({ health: false, git: false }).map((r) => r.name);
+  assert.deepEqual(order, ['alpha', 'zeta'], 'archived sorts last even though "zeta" > "alpha" is the only other factor');
+});
+
+test('a misconfigured or missing project is never filtered by the hidden rule', () => {
+  const { configManager, paths } = installation();
+  fs.writeFileSync(path.join(paths.projectsDir, 'broken.json'), '{ not json');
+  const { registry } = buildRegistry(configManager, paths);
+
+  const names = registry.list({ health: false, git: false }).map((r) => r.name);
+  assert.ok(names.includes('broken'), 'a broken project must always still be listed');
+});
+
 test('a name is resolved case-insensitively and by unambiguous prefix, never by guess', () => {
   const { configManager, paths } = installation();
   for (const name of ['Remote-Work', 'Remote-Backup', 'calculator']) defineProject(paths, name);

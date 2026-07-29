@@ -3,6 +3,74 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.3.0] — 2026-07-29 — Phase 13 M3: Project Lifecycle & Registry Operations
+
+The registry stops treating every project as equally live. Owner-set
+classification (production/development/validation/demo/archived/hidden) plus
+registry-only archive/hide/restore/unhide/forget operations — strictly split
+from filesystem deletion, which this system still does not implement, on any
+path. `docs/PHASE_13_M3_REPORT.md`.
+
+### Added
+
+- **`src/config/projectClassification.js`** — `PROJECT_CLASSIFICATIONS`
+  (production/development/validation/demo/archived/hidden), named
+  "classification" rather than "lifecycle" deliberately:
+  `missionLifecycle.js` already owns that word for a mission-RUN state
+  machine, an unrelated concept.
+- **`ConfigManager.updateProject()`** — patches a project's RAW on-disk
+  definition (never the defaults-merged object, so a patch can't bake
+  defaults permanently into the file). Deliberately does NOT require full
+  mission-readiness validation (driver/workingDirectory/promptFile-or-tasks)
+  — a project can be legitimately incomplete (M2's freshly-imported
+  projects are exactly this) and lifecycle operations must still work on
+  it; only an unknown `classification` value is refused.
+- **`ConfigManager.deleteProject()`** and **`getProjectFileContents()`** (the
+  latter needed because `classification` now has a default, so the
+  already-defaults-merged `getRawProject()` can't answer "did the owner
+  actually set this yet").
+- **`src/operator/projectLifecycleOps.js`**: `archive()`, `restore()`,
+  `hide()`, `unhide()`, `forget()`, `classifyProposal()`.
+- **`/archive [project]`, `/restore [project]`, `/hide [project]`,
+  `/unhide [project]`** — reversible, registry-only, non-destructive.
+- **`/forget [project]`** — destructive (removes the registry entry),
+  routed through the existing `ConfirmationStore`/`prepareDestructive()`
+  pattern `/stop`/`/reset`/`/shutdown` already use. Refuses while a mission
+  is running. **Never touches the project's real files** — stated in its
+  own confirmation text, and true on every path: deleting real code is a
+  non-goal this system does not build, anywhere.
+- **`/projects all`** (includes hidden) and **`/projects classify`**
+  (proposes a classification for every unclassified project — evidence-based:
+  simulated engine → demo; lives inside AI-Orchestrator's own install →
+  demo; `$comment`/description mentions "valid" → validation; otherwise
+  development — reused the same "explicit field always wins, inference is
+  only the fallback" precedent `isSimulatedProject()` already established).
+  One batch confirmation via `ConfirmationStore`, not one per project.
+- `ProjectRegistry.list()` gains `{includeHidden = false}`; a `hidden`
+  project is filtered from the default `/projects`, an `archived` one stays
+  listed but sorts after every live status (badged `📦 ARCHIVED`, mirroring
+  the existing `🧪 SIMULATED` convention) — a demotion in attention
+  priority, not an act of hiding.
+- New event types `project.archived`, `project.restored`, `project.hidden`,
+  `project.unhidden`, `project.forgotten`, `project.classified`.
+- New `operator.lifecycle.enabled` kill switch (default `true`) — the first
+  surface (after M2's read-only discovery) that writes to the registry
+  remotely.
+
+Migration heuristic live-validated against the real 6 project files:
+reproduces the plan's expected table exactly (`calculator-proof`,
+`phone-demo`, `validation-demo` → validation; `example`,
+`validation-sandbox` → demo; `THE FINISHER` → development, no strong
+signal). Not applied to the real registry — the actual write still requires
+the owner's own `/confirm`.
+
+1023 → 1057 backend tests (+34: new `projectLifecycleOps.test.js`, plus
+coverage across `configManager.test.js`, `projectRegistry.test.js`,
+`operatorRender.test.js`, `commandRouter.test.js`, and one `commandGrammar.test.js`
+assertion updated for the new destructive command).
+
+---
+
 ## [3.2.0] — 2026-07-29 — Phase 13 M2: Project Roots & Discovery
 
 The operator stops hardcoding sample folders. Configurable `operator.projectRoots`

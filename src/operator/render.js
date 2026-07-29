@@ -45,8 +45,13 @@ export function renderProjectLine(record, { active } = {}) {
   const marker = active === record.name ? '▸ ' : '• ';
   // The badge rides on the NAME rather than in the detail line, because the
   // detail line is what gets skimmed past. A simulated project must be
-  // identifiable in the one line an owner actually reads.
-  const badge = record.simulated ? `  ${SIMULATION_BADGE}` : '';
+  // identifiable in the one line an owner actually reads — same reasoning
+  // now applies to an archived one (Phase 13 M3): a demoted-priority
+  // project that stays listed is easy to mistake for a live one otherwise.
+  const badges = [];
+  if (record.simulated) badges.push(SIMULATION_BADGE);
+  if (record.classification === 'archived') badges.push('📦 ARCHIVED');
+  const badge = badges.length ? `  ${badges.join(' ')}` : '';
   const parts = [`${marker}${projectStatusIcon(record.status)} ${record.name}${badge}`];
   const detail = [];
   detail.push(projectStatusLabel(record.status));
@@ -138,6 +143,13 @@ export function renderProjectDetail(record, { now = Date.now() } = {}) {
   if (record.simulated) {
     lines.push('');
     lines.push(`🧪 ${SIMULATION_NOTICE}`);
+  }
+  // Only shown when it's worth saying — every fresh project defaults to
+  // 'development', and repeating that on every /status would be noise the
+  // phone-first design this module follows explicitly argues against.
+  if (record.classification && record.classification !== 'development') {
+    lines.push('');
+    lines.push(`📁 Classification: ${record.classification}`);
   }
   lines.push('');
 

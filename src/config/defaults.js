@@ -384,6 +384,16 @@ export const ORCHESTRATOR_DEFAULTS = {
       /** How many folder levels deep a marker may be found before giving up on a candidate. */
       maxDepth: 2,
     },
+    /**
+     * Phase 13 M3: `/archive`, `/restore`, `/hide`, `/unhide`, `/forget`,
+     * `/projects classify`. A new kill switch, per this codebase's
+     * convention of one per new MUTATING capability class — discovery (M2)
+     * only ever reads; this is the first surface that writes to the
+     * registry remotely.
+     */
+    lifecycle: {
+      enabled: true,
+    },
   },
 
   /** Project launched when `ai-orchestrator start` is run with no name. */
@@ -404,6 +414,14 @@ export const PROJECT_DEFAULTS = {
    * simply renders nothing; the registry never invents a description.
    */
   description: '',
+
+  /**
+   * Phase 13 M3: what this project IS (production/development/validation/
+   * demo/archived/hidden), owner-set — distinct from the registry's
+   * COMPUTED status (running/idle/blocked/…). See
+   * src/config/projectClassification.js.
+   */
+  classification: 'development',
 
   /** Mission control: how the orchestrator decides a project is finished. */
   mission: {

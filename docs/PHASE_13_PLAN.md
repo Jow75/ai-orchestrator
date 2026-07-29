@@ -112,9 +112,14 @@ The default-value change is called out explicitly in the CHANGELOG (it also acti
 
 ---
 
-### M3 — Project Lifecycle & Registry Operations (`v3.3.0`)
+### M3 — Project Lifecycle & Registry Operations (`v3.3.0`) — ✅ DONE
 
-*Owner's item 2. Depends on M2 (Rescan/Import are M2's commands).*
+*Owner's item 2. Depends on M2 (Rescan/Import are M2's commands).* Full
+write-up: [PHASE_13_M3_REPORT.md](PHASE_13_M3_REPORT.md). One real deviation
+from this plan, disclosed in the report: `updateProject()` does NOT run full
+mission-readiness validation as originally described — doing so would have
+made it impossible to archive/hide an M2-imported, no-mission-yet project,
+exactly backwards from the point.
 
 **Builds:** new `src/config/projectClassification.js` — `PROJECT_CLASSIFICATIONS = ['production','development','validation','demo','archived','hidden']`. Named **"classification,"** not "lifecycle" — `src/mission/missionLifecycle.js` already owns "lifecycle" for a mission-run state machine; reusing the word for an unrelated, owner-set, per-project concept is exactly the naming collision to avoid.
 

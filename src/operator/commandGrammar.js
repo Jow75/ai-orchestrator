@@ -44,8 +44,9 @@ export const COMMANDS = Object.freeze([
   {
     name: 'projects',
     aliases: ['ls', 'list'],
-    usage: '/projects',
-    description: 'Every project, with status, branch and health.',
+    usage: '/projects [all|classify]',
+    takesRest: true,
+    description: '"all" (with hidden), "classify" (propose classifications for unclassified projects).',
   },
   {
     name: 'project',
@@ -155,6 +156,42 @@ export const COMMANDS = Object.freeze([
     usage: '/import <path> [as <name>]',
     takesRest: true,
     description: 'Register a folder /scan found as a project (registry only — never touches its files).',
+  },
+  {
+    name: 'archive',
+    aliases: [],
+    usage: '/archive [project]',
+    takesRest: true,
+    description: 'Mark a project archived — demoted in priority, never deleted.',
+  },
+  {
+    name: 'restore',
+    aliases: [],
+    usage: '/restore [project]',
+    takesRest: true,
+    description: 'Return an archived or hidden project to "development".',
+  },
+  {
+    name: 'hide',
+    aliases: [],
+    usage: '/hide [project]',
+    takesRest: true,
+    description: 'Hide a project from /projects (still shown by /projects all).',
+  },
+  {
+    name: 'unhide',
+    aliases: [],
+    usage: '/unhide [project]',
+    takesRest: true,
+    description: 'Return a hidden project to "development".',
+  },
+  {
+    name: 'forget',
+    aliases: [],
+    usage: '/forget [project]',
+    takesRest: true,
+    destructive: true,
+    description: 'Remove a project from the registry. Files on disk are NEVER touched.',
   },
 ]);
 

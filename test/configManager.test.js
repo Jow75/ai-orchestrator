@@ -235,3 +235,81 @@ test('getRawProject returns null for an unknown project or invalid JSON, never t
   fs.writeFileSync(path.join(config.getPaths().projectsDir, 'bad.json'), '{ not json');
   assert.equal(config.getRawProject('bad'), null);
 });
+
+// ── getProjectFileContents (Phase 13 M3) ────────────────────────────────────
+
+test('getProjectFileContents returns exactly what is on disk, with no defaults merged in', () => {
+  const root = scaffold({
+    projects: { p: { workingDirectory: '/w', driver: 'claude' } }, // no "classification" key
+  });
+  const config = new ConfigManager({ rootDir: root });
+
+  const raw = config.getProjectFileContents('p');
+  assert.equal(raw.classification, undefined, 'PROJECT_DEFAULTS.classification must NOT leak in');
+  assert.equal(config.getRawProject('p').classification, 'development', 'but getRawProject DOES apply it');
+});
+
+test('getProjectFileContents returns null for an unknown project or invalid JSON', () => {
+  const root = scaffold({});
+  const config = new ConfigManager({ rootDir: root });
+  assert.equal(config.getProjectFileContents('nope'), null);
+  fs.mkdirSync(config.getPaths().projectsDir, { recursive: true });
+  fs.writeFileSync(path.join(config.getPaths().projectsDir, 'bad.json'), '{ not json');
+  assert.equal(config.getProjectFileContents('bad'), null);
+});
+
+// ── updateProject / deleteProject (Phase 13 M3) ─────────────────────────────
+
+test('updateProject deep-merges a patch into the RAW file, without baking in defaults', () => {
+  const root = scaffold({
+    projects: { p: { workingDirectory: '/w', driver: 'claude', description: 'keep me' } },
+  });
+  const config = new ConfigManager({ rootDir: root });
+
+  const merged = config.updateProject('p', { classification: 'archived' });
+  assert.equal(merged.classification, 'archived');
+  assert.equal(merged.description, 'keep me', 'unrelated fields survive the patch');
+  assert.equal(merged.promptFile, undefined, 'PROJECT_DEFAULTS were never merged into the written file');
+
+  // Re-reading the raw file confirms it was actually persisted, not just returned.
+  assert.equal(config.getProjectFileContents('p').classification, 'archived');
+});
+
+test('updateProject refuses an unknown classification rather than writing it', () => {
+  const root = scaffold({ projects: { p: { workingDirectory: '/w', driver: 'claude' } } });
+  const config = new ConfigManager({ rootDir: root });
+  assert.throws(() => config.updateProject('p', { classification: 'nonsense' }), /classification.*must be one of/);
+  assert.equal(config.getProjectFileContents('p').classification, undefined, 'the bad patch was never written');
+});
+
+test('updateProject succeeds even on a project that would fail full validation', () => {
+  // No promptFile, no tasks — getProject() would throw on this. Lifecycle
+  // operations (archive a broken/imported project) must still work.
+  const root = scaffold({ projects: { broken: { workingDirectory: '/w', driver: 'claude' } } });
+  const config = new ConfigManager({ rootDir: root });
+  assert.throws(() => config.getProject('broken'), /promptFile/);
+  const merged = config.updateProject('broken', { classification: 'archived' });
+  assert.equal(merged.classification, 'archived');
+});
+
+test('updateProject throws for an unknown project', () => {
+  const config = new ConfigManager({ rootDir: scaffold({}) });
+  assert.throws(() => config.updateProject('nope', { classification: 'archived' }), /not found/);
+});
+
+test('deleteProject removes the definition file and nothing else', () => {
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-work-'));
+  fs.writeFileSync(path.join(workDir, 'marker.txt'), 'still here');
+  const root = scaffold({ projects: { p: { workingDirectory: workDir, driver: 'claude' } } });
+  const config = new ConfigManager({ rootDir: root });
+
+  config.deleteProject('p');
+
+  assert.equal(config.getProjectFileContents('p'), null);
+  assert.ok(fs.existsSync(path.join(workDir, 'marker.txt')), 'the project\'s real files are NEVER touched');
+});
+
+test('deleteProject throws for an unknown project', () => {
+  const config = new ConfigManager({ rootDir: scaffold({}) });
+  assert.throws(() => config.deleteProject('nope'), /not found/);
+});

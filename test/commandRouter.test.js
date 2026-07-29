@@ -905,3 +905,118 @@ test("a project whose workingDirectory vanished reports 'missing', not 'misconfi
   const { reply } = await h.say('/status gone');
   assert.match(reply, /folder not found/);
 });
+
+// ─────────────────────────── Phase 13 M3: lifecycle & classification ───────
+
+test('/archive marks a project archived; it stays listed but sorts after live statuses', async () => {
+  const { say, registry } = harness({ projects: ['alpha', 'beta'] });
+
+  const { reply } = await say('/archive alpha');
+  assert.match(reply, /Archived alpha → archived/);
+
+  const listed = await say('/projects');
+  assert.match(listed.reply, /alpha/, 'archived stays listed by default');
+  assert.match(listed.reply, /📦 ARCHIVED/);
+  const alphaIndex = listed.reply.indexOf('alpha');
+  const betaIndex = listed.reply.indexOf('beta');
+  assert.ok(betaIndex < alphaIndex, 'a live project sorts before an archived one');
+  assert.equal(registry.describe('alpha', { git: false, health: false }).classification, 'archived');
+});
+
+test('/restore returns an archived project to development', async () => {
+  const { say } = harness({ projects: ['alpha'] });
+  await say('/archive alpha');
+  const { reply } = await say('/restore alpha');
+  assert.match(reply, /Restored alpha → development/);
+});
+
+test('/hide removes a project from the default /projects listing; /projects all still shows it', async () => {
+  const { say } = harness({ projects: ['alpha', 'beta'] });
+  await say('/hide alpha');
+
+  const defaultList = await say('/projects');
+  assert.doesNotMatch(defaultList.reply, /alpha/);
+  assert.match(defaultList.reply, /beta/);
+
+  const allList = await say('/projects all');
+  assert.match(allList.reply, /alpha/);
+});
+
+test('/unhide returns a hidden project to development and to the default listing', async () => {
+  const { say } = harness({ projects: ['alpha'] });
+  await say('/hide alpha');
+  const { reply } = await say('/unhide alpha');
+  assert.match(reply, /Unhidden alpha → development/);
+  assert.match((await say('/projects')).reply, /alpha/);
+});
+
+test('archive/restore/hide/unhide apply to the active project when none is named', async () => {
+  const { say } = harness({ projects: ['alpha'] });
+  await say('/project alpha');
+  const { reply } = await say('/archive');
+  assert.match(reply, /Archived alpha/);
+});
+
+test('archive/restore/hide/unhide are refused when operator.lifecycle is disabled', async () => {
+  const { say } = harness({ projects: ['alpha'], operator: { lifecycle: { enabled: false } } });
+  for (const cmd of ['/archive alpha', '/restore alpha', '/hide alpha', '/unhide alpha']) {
+    // eslint-disable-next-line no-await-in-loop
+    const { reply } = await say(cmd);
+    assert.match(reply, /disabled/, `${cmd} should be refused`);
+  }
+});
+
+test('/forget requires confirmation, then removes the project from the registry only', async () => {
+  const { say, registry } = harness({ projects: ['alpha', 'beta'] });
+  const workingDirectory = registry.configManager.getRawProject('alpha').workingDirectory;
+  fs.writeFileSync(path.join(workingDirectory, 'real-file.txt'), 'still here');
+
+  const asked = await say('/forget alpha');
+  assert.match(asked.reply, /confirm/i);
+  assert.ok(registry.has('alpha'), 'nothing happens on the first message');
+
+  const code = asked.reply.match(/\/confirm ([A-Z0-9]+)/i)[1];
+  const confirmed = await say(`/confirm ${code}`);
+  assert.match(confirmed.reply, /forgotten/);
+  assert.ok(!registry.has('alpha'));
+  assert.ok(registry.has('beta'), 'other projects are untouched');
+  assert.ok(fs.existsSync(path.join(workingDirectory, 'real-file.txt')), 'the real file is NEVER touched');
+});
+
+test('/forget refuses a project with a mission currently running', async () => {
+  const { say, workerRegistry } = harness({ projects: ['alpha'] });
+  workerRegistry.register('alpha', { pid: process.pid });
+  const { reply } = await say('/forget alpha');
+  assert.match(reply, /has a mission running/);
+});
+
+test('/forget is refused when operator.lifecycle is disabled', async () => {
+  const { say } = harness({ projects: ['alpha'], operator: { lifecycle: { enabled: false } } });
+  const { reply } = await say('/forget alpha');
+  assert.match(reply, /disabled/);
+});
+
+test('/projects classify proposes classifications and applies them only after one batch confirmation', async () => {
+  const { say, registry } = harness({ projects: ['alpha', 'beta'] });
+
+  const proposed = await say('/projects classify');
+  assert.match(proposed.reply, /alpha/);
+  assert.match(proposed.reply, /beta/);
+  assert.match(proposed.reply, /confirm/i);
+  assert.equal(
+    registry.configManager.getProjectFileContents('alpha').classification, undefined,
+    'nothing is written on the proposal message'
+  );
+
+  const code = proposed.reply.match(/\/confirm ([A-Z0-9]+)/i)[1];
+  const { reply } = await say(`/confirm ${code}`);
+  assert.match(reply, /Classified 2 project/);
+  assert.equal(registry.configManager.getProjectFileContents('alpha').classification, 'development');
+});
+
+test('/projects classify says there is nothing to do once every project is classified', async () => {
+  const { say, registry } = harness({ projects: ['alpha'] });
+  registry.configManager.updateProject('alpha', { classification: 'production' });
+  const { reply } = await say('/projects classify');
+  assert.match(reply, /already has a classification/);
+});

@@ -46,6 +46,13 @@ test('the project list leads with status and says what is selected', () => {
   assert.match(text, /Active: beta/);
 });
 
+test('an archived project is badged in the project list (Phase 13 M3)', () => {
+  const text = renderProjectList([
+    { name: 'old-thing', status: 'idle', classification: 'archived' },
+  ], {});
+  assert.match(text, /📦 ARCHIVED/);
+});
+
 test('an empty project list tells the owner exactly how to fix it', () => {
   const text = renderProjectList([], {});
 
@@ -73,6 +80,14 @@ test('project detail reports real git facts and no invented ones', () => {
   const withoutRepo = renderProjectDetail({ name: 'plain', status: 'idle', path: 'C:/work/plain' }, { now: NOW });
   assert.match(withoutRepo, /not a git repository/);
   assert.match(withoutRepo, /Last activity: never/);
+});
+
+test('classification is shown only when it is not the silent default (Phase 13 M3)', () => {
+  const defaulted = renderProjectDetail({ name: 'p', status: 'idle', classification: 'development' }, { now: NOW });
+  assert.doesNotMatch(defaulted, /Classification:/);
+
+  const flagged = renderProjectDetail({ name: 'p', status: 'idle', classification: 'production' }, { now: NOW });
+  assert.match(flagged, /Classification: production/);
 });
 
 test('a misconfigured project renders the actual problem', () => {

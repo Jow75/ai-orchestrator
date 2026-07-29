@@ -116,7 +116,7 @@ test('an ordinary sentence is free text and keeps its exact wording', () => {
 test('every destructive command is declared in the grammar, not in the router', () => {
   const destructive = destructiveCommands();
 
-  assert.deepEqual(destructive.sort(), ['reset', 'shutdown', 'stop']);
+  assert.deepEqual(destructive.sort(), ['forget', 'reset', 'shutdown', 'stop']);
   for (const name of destructive) {
     assert.equal(findCommand(name).destructive, true);
   }
