@@ -66,6 +66,40 @@ test('dedupeKeyFor: approval/human-action requests use the request id; other eve
   assert.equal(dedupeKeyFor('approval:required', {}), null); // no request on the payload
 });
 
+// ── Phase 13 M1: report text is no longer cut to a flat char cap ──────────
+// (root cause of the owner's observed mid-report truncation — see
+// docs/PHASE_13_PLAN.md M1. Splitting long text safely is telegramSplit.js's
+// job, exercised in its own test file and in the channel/provider tests.)
+
+test('mission:complete no longer truncates a long agent summary to 300/400 chars', async () => {
+  const c = fakeChannel('fake');
+  const longSummary = 'Purpose: '.padEnd(2000, 'x'); // far past the old 300/400-char caps
+  const { engine } = engineWith([c]);
+  await engine.notify('mission:complete', { project: 'p', summary: longSummary });
+  assert.ok(c.sent[0].message.includes(longSummary));
+  assert.ok(!c.sent[0].message.endsWith('…'));
+});
+
+test('approval:required and human-action:required no longer truncate a long message to 1200 chars', async () => {
+  const c = fakeChannel('fake');
+  const long = 'x'.repeat(2000);
+  const { engine } = engineWith([c]);
+  await engine.notify('approval:required', { project: 'p', message: long });
+  await engine.notify('human-action:required', { project: 'p', message: long });
+  assert.equal(c.sent[0].message, long);
+  assert.equal(c.sent[1].message, long);
+});
+
+test('summary:daily and summary:weekly no longer truncate to 1500 chars', async () => {
+  const c = fakeChannel('fake');
+  const long = 'y'.repeat(2000);
+  const { engine } = engineWith([c]);
+  await engine.notify('summary:daily', { text: long });
+  await engine.notify('summary:weekly', { text: long });
+  assert.equal(c.sent[0].message, long);
+  assert.equal(c.sent[1].message, long);
+});
+
 test('without a notificationState, every notify() call sends (pre-M2 behaviour preserved)', async () => {
   const c = fakeChannel('fake');
   const { engine } = engineWith([c]); // withState: false

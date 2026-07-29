@@ -3,6 +3,55 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.1.0] — 2026-07-29 — Phase 13 M1: Long Message Reliability
+
+Root-causes and fixes the owner's repeatedly-observed defect: mission reports
+arriving cut off mid-sentence. `docs/PHASE_13_M1_REPORT.md`; full phase plan:
+`docs/PHASE_13_PLAN.md`.
+
+### Fixed
+
+- **The real cause was never Telegram's 4096-char message limit.** Real
+  mission data reconstructed through the actual card/format pipeline stays in
+  the low hundreds to low thousands of characters — nowhere near it — and
+  every session log available shows zero silently-swallowed HTTP failures
+  (`"Notification channel failed"` never once appears, despite warn-level
+  logging demonstrably working for other conditions). The actual mechanism:
+  `notificationEngine.js`'s `EVENT_MESSAGES` table applied a flat,
+  boundary-blind `truncate(text, N)` (300/400 for `mission:complete`, 1200 for
+  `approval:required`/`human-action:required`, 1500 for the daily/weekly
+  summaries) directly to the **agent's own free-form report text** — a
+  deliberate Phase 11 "keep it short for a phone" choice, not a transport
+  bug, that silently discarded real content mid-sentence the moment a report
+  ran past the cap. All four flat caps are removed; the full text now goes
+  out.
+
+### Added
+
+- **`src/notifications/telegramSplit.js`** — the shared send path every
+  Telegram text call site now converges on. `splitForTelegram()` is a
+  tag/entity-aware scanner over already-HTML-formatted text: never cuts
+  inside a `<tag>` or `&entity;`, prefers a paragraph break, then a line
+  break, then a word break, and only accepts a boundary that fills at least
+  half the message budget (otherwise a single early break — e.g. one
+  newline right after a short title — would produce a tiny first part
+  instead of a well-packed one). `sendLongText()` sends one message when the
+  real (post-formatting) length fits Telegram's actual 4096-char limit,
+  numbered continuations (`(1/3)`, `(2/3)`, …) when it doesn't, and retries
+  once with formatting stripped if Telegram rejects an HTML payload outright
+  — closing the one real transport-level failure mode this investigation
+  did find a plausible (if unobserved-in-logs) path for.
+- `TelegramChannel.postMessage()` / `TelegramApprovalProvider.postMessage()`
+  — the single-part senders `sendLongText` calls into; `send()`, `publish()`,
+  and `sendText()` are now thin wrappers around it.
+
+972 → 992 backend tests (+20: `telegramSplit.test.js` plus wiring/regression
+coverage in `telegramChannel.test.js`, `approvalProviders.test.js`,
+`notificationEngine.test.js`). Live-validated against the real bot: a
+synthetic 7,000+ character report was sent end to end with no errors.
+
+---
+
 ## [3.0.0] — 2026-07-28 — Phase 12 M3: Operator Control Center
 
 The desktop app becomes a pure client of the Core Service, closing the gap M1

@@ -59,6 +59,34 @@ test('send() throws a descriptive error on a non-ok HTTP response', async () => 
   await assert.rejects(() => c.send({ title: 't', message: 'm' }), /responded 401/);
 });
 
+test('send() splits a message over Telegram\'s real limit into sequential, numbered posts (Phase 13 M1)', async () => {
+  const { channel: c, calls } = channel();
+  await c.send({ title: 'Mission complete', message: 'x'.repeat(5000) });
+  assert.equal(calls.length, 2);
+  const bodies = calls.map((call) => JSON.parse(call.options.body));
+  assert.ok(bodies[0].text.endsWith('(1/2)'));
+  assert.ok(bodies[1].text.endsWith('(2/2)'));
+  for (const body of bodies) assert.ok(body.text.length <= 4096);
+});
+
+test('send() retries with plain text (no parse_mode) if Telegram rejects the HTML payload', async () => {
+  let call = 0;
+  const calls = [];
+  const fetchFn = async (url, options) => {
+    calls.push(options);
+    call += 1;
+    if (call === 1) return { ok: false, status: 400, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ ok: true, result: {} }) };
+  };
+  const c = new TelegramChannel({ config: { botToken: 'BOT', chatId: '42' }, logger: silentLogger, fetchFn });
+  const result = await c.send({ title: 'x', message: 'See README.md' });
+  assert.equal(calls.length, 2);
+  assert.equal(JSON.parse(calls[0].body).parse_mode, 'HTML');
+  assert.equal(JSON.parse(calls[1].body).parse_mode, undefined);
+  assert.ok(!JSON.parse(calls[1].body).text.includes('<code>'));
+  assert.ok(result); // did not throw — the message still went out
+});
+
 // ── sendDocument ────────────────────────────────────────────────────────
 
 function tmpFile(content = 'hello world') {

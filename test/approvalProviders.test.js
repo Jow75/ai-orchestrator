@@ -83,6 +83,19 @@ test('telegram provider demands configuration before doing anything', async () =
   await assert.rejects(() => provider.publish({ title: 't', message: 'm' }), /botToken/);
 });
 
+test('publish() and sendText() split a message over the real limit (Phase 13 M1)', async () => {
+  const { provider, calls } = telegramHarness();
+  await provider.publish({ title: 'Approval required', message: 'x'.repeat(5000) });
+  assert.equal(calls.length, 2);
+  const bodies = calls.map((c) => JSON.parse(c.options.body));
+  assert.ok(bodies[0].text.endsWith('(1/2)'));
+  assert.ok(bodies[1].text.endsWith('(2/2)'));
+
+  const { provider: provider2, calls: calls2 } = telegramHarness();
+  await provider2.sendText('y'.repeat(5000));
+  assert.equal(calls2.length, 2);
+});
+
 // ── email provider ────────────────────────────────────────────────────────
 
 test('email provider is publish-only and includes response instructions', async () => {

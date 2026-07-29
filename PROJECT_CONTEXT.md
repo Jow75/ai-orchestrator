@@ -95,10 +95,20 @@ Start Menu, `/new` with mandatory plan approval) is unchanged — see
 `docs/PHASE_12_PLAN.md` §4 — and resumes under the next available `v3.x`
 version once Phase 13 completes.
 
-**NEXT: Phase 13 M1 — Long Message Reliability, `v3.1.0`** (root-cause and
-fix the live defect where mission-complete reports were observed cutting off
-mid-sentence) — see `docs/PHASE_13_PLAN.md`. M0 (roadmap synchronization,
-this update) has just landed; M1 is next.
+**Phase 13 M1 — Long Message Reliability (`v3.1.0`) is DONE.** Root cause was
+not Telegram's 4096-char limit (real reports measured in the hundreds of
+characters) or a swallowed HTTP error (zero such log entries across 6 days of
+real operation) — it was a flat, boundary-blind `truncate()` applied
+directly to the agent's own report text in `notificationEngine.js`, a
+Phase 11 design choice, not a transport bug. That cap is gone; a new
+`sendLongText()` (`src/notifications/telegramSplit.js`) is the shared send
+path every Telegram call site now converges on — one message when it fits,
+numbered continuations when it doesn't. 992/992 backend tests; live-validated
+against the real bot with a 7,091-char synthetic report. Full report:
+`docs/PHASE_13_M1_REPORT.md`.
+
+**NEXT: Phase 13 M2 — Project Roots & Discovery, `v3.2.0`** — see
+`docs/PHASE_13_PLAN.md`.
 
 ---
 
@@ -316,8 +326,8 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 12 M2.2 — The artifact investigation, closed | ✅ done | `v2.11.0` |
 | Phase 12 M3 — Operator Control Center (desktop as daemon client) | ✅ done | `v3.0.0` |
 | Phase 12 M4 — Launch experience & remote project creation | ⏸ **deferred** | was `v3.1.0` |
-| Phase 13 M1 — Long Message Reliability | ⏳ next | `v3.1.0` |
-| Phase 13 M2 — Project Roots & Discovery | ⏳ planned | `v3.2.0` |
+| Phase 13 M1 — Long Message Reliability | ✅ done | `v3.1.0` |
+| Phase 13 M2 — Project Roots & Discovery | ⏳ next | `v3.2.0` |
 | Phase 13 M3 — Project Lifecycle & Registry Operations | ⏳ planned | `v3.3.0` |
 | Phase 13 M4 — Live Configuration Layer | ⏳ planned | `v3.4.0` |
 | Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ⏳ planned | `v3.5.0` |
@@ -326,8 +336,9 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 13 M8 — Bot Experience & Discoverability | ⏳ planned | `v3.8.0` |
 | Phase 13 M9 — Public Release Prep | ⏳ planned | (audits `v3.8.0`) |
 
-**Test suite (current, 2026-07-29):** 972/972 backend + 41 desktop — the
-919/919 figure above was the M2.1 snapshot; M2.2 and M3 each added more (see
+**Test suite (current, 2026-07-29):** 992/992 backend (+20, Phase 13 M1) + 41
+desktop — the 919/919 figure above was the M2.1 snapshot; M2.2 and M3 each
+added more (see
 CHANGELOG for the exact per-release deltas).
 
 The user's master prompt arc (desktop app → multi-agent → autonomous

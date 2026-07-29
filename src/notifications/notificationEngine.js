@@ -151,9 +151,15 @@ const EVENT_MESSAGES = {
     // different "success" icon across surfaces (CLI used ✔, Mission Cards
     // used ✅); now all three agree via outcomeIcon('complete').
     title: `${outcomeIcon('complete')} Mission complete — ${project}`,
+    // Phase 13 M1: this used to be `truncate(summary, 300/400)` — a flat,
+    // boundary-blind cut on the AGENT'S OWN report text that was the real
+    // cause of reports arriving cut off mid-sentence (see
+    // docs/PHASE_13_PLAN.md M1; it was never Telegram's actual 4096-char
+    // limit). The full summary now goes out; sendLongText (telegramSplit.js)
+    // is what makes that safe to send.
     message: card
-      ? `${renderMissionCardText(card)}\n\n${truncate(summary ?? '', 300)}`.trim()
-      : truncate(summary ?? 'The mission is complete.', 400),
+      ? `${renderMissionCardText(card)}\n\n${summary ?? ''}`.trim()
+      : (summary ?? 'The mission is complete.'),
   }),
   'orchestrator:recovered-after-reboot': ({ project }) => ({
     title: 'AI-Orchestrator recovered',
@@ -162,7 +168,9 @@ const EVENT_MESSAGES = {
   // ── Phase 10 events ─────────────────────────────────────────────────────
   'approval:required': ({ project, request, title, message }) => ({
     title: title ?? `🔔 Approval required — ${project}`,
-    message: truncate(message ?? `Request ${request?.id} (${request?.category}) awaits your decision.`, 1200),
+    // Phase 13 M1: was truncated to 1200 chars flat — see mission:complete
+    // above for why that class of cap is gone; sendLongText handles length.
+    message: message ?? `Request ${request?.id} (${request?.category}) awaits your decision.`,
   }),
   'approval:resolved': ({ project, request }) => ({
     title: `Approval ${decisionLabel(request?.status)} — ${project}`,
@@ -171,7 +179,9 @@ const EVENT_MESSAGES = {
   }),
   'human-action:required': ({ project, title, message, request }) => ({
     title: title ?? `🙋 Human action required — ${project}`,
-    message: truncate(message ?? `Request ${request?.id} needs you to act, then reply DONE ${request?.id}.`, 1200),
+    // Phase 13 M1: was truncated to 1200 chars flat — see mission:complete
+    // above for why that class of cap is gone; sendLongText handles length.
+    message: message ?? `Request ${request?.id} needs you to act, then reply DONE ${request?.id}.`,
   }),
   'task:verification-failed': ({ project, taskId, attempt, maxRuns, failedChecks }) => ({
     title: `Verification failed — ${project}`,
@@ -190,11 +200,13 @@ const EVENT_MESSAGES = {
   }),
   'summary:daily': ({ text }) => ({
     title: '📊 Daily summary — AI-Orchestrator',
-    message: truncate(text ?? 'No activity recorded.', 1500),
+    // Phase 13 M1: was truncated to 1500 chars flat — see mission:complete
+    // above for why that class of cap is gone; sendLongText handles length.
+    message: text ?? 'No activity recorded.',
   }),
   'summary:weekly': ({ text }) => ({
     title: '📊 Weekly summary — AI-Orchestrator',
-    message: truncate(text ?? 'No activity recorded.', 1500),
+    message: text ?? 'No activity recorded.',
   }),
 };
 

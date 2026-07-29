@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { escapeHtml, formatTelegramText } from '../telegramFormat.js';
+import { sendLongText } from '../telegramSplit.js';
 
 /** Abort a hung Telegram call after this long. */
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -51,14 +52,29 @@ export class TelegramChannel {
    */
   async send({ title, message }) {
     this.requireConfig();
+    const text = `${escapeHtml(title)}\n${formatTelegramText(message)}`;
+    // Phase 13 M1: one message when it fits Telegram's real 4096-char limit,
+    // deterministic numbered continuations when it doesn't — see
+    // telegramSplit.js for why this replaced ad hoc content truncation.
+    return sendLongText({ text, send: (part, opts) => this.postMessage(part, opts) });
+  }
 
+  /**
+   * Send exactly one already-final message string.
+   *
+   * @param {string} text
+   * @param {{plain?: boolean}} [options] - `plain: true` sends without
+   *   `parse_mode` — the retry path when Telegram rejects an HTML payload.
+   * @returns {Promise<{messageId?: string}>}
+   */
+  async postMessage(text, { plain = false } = {}) {
     const response = await this.fetchFn(this.api('sendMessage'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: this.config.chatId,
-        text: `${escapeHtml(title)}\n${formatTelegramText(message)}`,
-        parse_mode: 'HTML',
+        text,
+        ...(plain ? {} : { parse_mode: 'HTML' }),
         disable_web_page_preview: true,
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),

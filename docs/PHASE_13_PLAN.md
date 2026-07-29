@@ -53,9 +53,17 @@ No version bump and no tag — matches the `c2428f9` precedent cited above.
 
 ---
 
-### M1 — Long Message Reliability (`v3.1.0`)
+### M1 — Long Message Reliability (`v3.1.0`) — ✅ DONE
 
-*Owner's item 7. No dependencies — ships first.*
+*Owner's item 7. No dependencies — ships first.* Full write-up:
+[PHASE_13_M1_REPORT.md](PHASE_13_M1_REPORT.md). Root-cause finding worth
+flagging here: it was **not** Telegram's 4096-char limit (real messages
+measured in the hundreds of characters) and **not** a swallowed HTTP error
+(zero such log entries across 6 days of real operation) — it was a flat,
+boundary-blind `truncate()` applied directly to the agent's own report text,
+a Phase 11 design choice, not a transport bug. The plan below is retained as
+written (including the un-narrowed hypotheses) because it accurately
+reflects what was investigated and why; the report has the resolution.
 
 **Root-cause investigation before any fix** (part of the milestone, not a preamble): correlate the owner's observed "Purpose …" cutoffs against `state/events/events.jsonl` timestamps/types, then evaluate two concrete, evidenced hypotheses:
 - **A — the real 4096-char Telegram limit is actually being hit.** None of the ~9 scattered local `truncate(text, maxChars)` helpers across the codebase (`notificationEngine.js`'s 300/1200/1500-char caps, plus one each in `render.js`, `implementationSummary.js`, `continuationBuilder.js`, `checkpoint.js`, `claudeDriver.js`, `cliDriver.js`, two verifiers) measure the string **after** `formatTelegramText()` (`src/notifications/telegramFormat.js`) — which *grows* it (HTML-entity escaping, `<code>` wrapping around every filename-like token). A message safely under a local cap pre-formatting can cross Telegram's real limit post-formatting, invisibly to every existing check. A Mission Card near its 8-file display cap (`src/notifications/missionCard.js:175`) with full Windows paths plus a 300-char summary is a concrete, plausible way to cross it.

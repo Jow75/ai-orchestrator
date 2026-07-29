@@ -15,6 +15,7 @@
 import { ApprovalProvider, parseDecisionText } from './approvalProvider.js';
 import { writeJsonAtomic, readJsonSafe } from '../../state/statePersistence.js';
 import { escapeHtml, formatTelegramText } from '../../notifications/telegramFormat.js';
+import { sendLongText } from '../../notifications/telegramSplit.js';
 
 /** Abort a hung Telegram call after this long. */
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -59,11 +60,28 @@ export class TelegramApprovalProvider extends ApprovalProvider {
     // + formatTelegramText, so a plan/summary that mentions a filename
     // ("README.md") never renders as a dead link on the owner's phone.
     const text = `${escapeHtml(title)}\n\n${formatTelegramText(message)}`;
+    // Phase 13 M1: one message when it fits, numbered continuations when it
+    // doesn't — see notifications/telegramSplit.js.
+    return sendLongText({ text, send: (part, opts) => this.postMessage(part, opts) });
+  }
+
+  /**
+   * Send exactly one already-final message string.
+   *
+   * @param {string} text
+   * @param {{plain?: boolean}} [options] - `plain: true` sends without
+   *   `parse_mode` — the retry path when Telegram rejects an HTML payload.
+   * @returns {Promise<{messageId?: string}>}
+   */
+  async postMessage(text, { plain = false } = {}) {
     const response = await this.fetchFn(this.api('sendMessage'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: this.config.chatId, text, parse_mode: 'HTML', disable_web_page_preview: true,
+        chat_id: this.config.chatId,
+        text,
+        ...(plain ? {} : { parse_mode: 'HTML' }),
+        disable_web_page_preview: true,
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -244,21 +262,12 @@ export class TelegramApprovalProvider extends ApprovalProvider {
    */
   async sendText(text) {
     this.requireConfig();
-    const response = await this.fetchFn(this.api('sendMessage'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: this.config.chatId,
-        text: formatTelegramText(text),
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    // Phase 13 M1: one message when it fits, numbered continuations when it
+    // doesn't — see notifications/telegramSplit.js.
+    return sendLongText({
+      text: formatTelegramText(text),
+      send: (part, opts) => this.postMessage(part, opts),
     });
-    if (!response.ok) throw new Error(`Telegram API responded ${response.status}`);
-    const body = await response.json().catch(() => ({}));
-    const id = body?.result?.message_id;
-    return { messageId: id != null ? String(id) : undefined };
   }
 }
 
