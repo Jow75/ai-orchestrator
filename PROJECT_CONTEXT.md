@@ -12,14 +12,18 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-29. **Phase 12 is DONE (M1→M3, plus the M2.1/M2.2
-response milestones)**, audited for secrets/PII ahead of a public push
-(commit `c4e2f72`, still NOT pushed — awaiting the owner's go-ahead). **Phase
-12 M4 (Launch Experience & Remote Project Creation, was `v3.1.0`) is
-DEFERRED**, not cancelled — the owner directed a further architecture pass
-first. **Phase 13 (Architecture Evolution) is approved and underway**,
-`v3.1.0`→`v3.8.0`; see `docs/PHASE_13_PLAN.md`. M4 resumes under the next
-available `v3.x` once Phase 13 completes.
+**Last updated:** 2026-07-29. **Phase 12 (M1→M3, plus the M2.1/M2.2 response
+milestones) and Phase 13 M1→M7 are ALL DONE and PUSHED to GitHub** —
+`main` and all 12 tags `v2.8.0`→`v3.7.0` are now on `origin`
+(`github.com/Jow75/ai-orchestrator`), following a fresh secrets/PII sweep of
+every commit since the 2026-07-28 audit (which found nothing new to redact)
+and a re-verification that every tag matches its commit and `package.json`
+(`3.7.0`) matches `CHANGELOG.md`'s `[3.7.0]` head. Full findings:
+`docs/PHASE_13_CONSOLIDATION_REVIEW.md`. **Phase 12 M4 (Launch Experience &
+Remote Project Creation, was `v3.1.0`) remains DEFERRED**, not cancelled —
+resumes under the next available `v3.x` once Phase 13 completes. **Phase 13
+M8 (Bot Experience & Discoverability, `v3.8.0`) is NEXT**, unchanged in
+scope after the consolidation review — see `docs/PHASE_13_PLAN.md`.
 
 **Phase 13 M6 — Remote File System (`v3.6.0`) is DONE.** The first new
 runtime dependency since baseline (`archiver`) and the first filesystem
