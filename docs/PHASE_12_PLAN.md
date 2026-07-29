@@ -184,15 +184,31 @@ empty and every code path is identical to `v2.7.0`.
 
 ## 4. Milestones
 
-| Milestone | Version | Theme |
-| --- | --- | --- |
-| **M1** | `v2.8.0` | **Core Service** — daemon, worker supervision, exclusive Telegram ownership, Windows autostart, reboot recovery |
-| **M2** | `v2.9.0` | **Telegram Operator Interface** — command router, project context, executive Mission Cards |
-| **M3** | `v3.0.0` | **Operator Control Center** — multi-project desktop as a pure daemon client |
-| **M4** | `v3.1.0` | **Launch Experience & Remote Project Creation** — launcher, Start Menu, `/new` with mandatory plan approval |
+| Milestone | Version | Status | Theme |
+| --- | --- | --- | --- |
+| **M1** | `v2.8.0` | ✅ done | **Core Service** — daemon, worker supervision, exclusive Telegram ownership, Windows autostart, reboot recovery |
+| **M2** | `v2.9.0` | ✅ done | **Telegram Operator Interface** — command router, project context, executive Mission Cards |
+| **M3** | `v3.0.0` | ✅ done | **Operator Control Center** — multi-project desktop as a pure daemon client |
+| **M4** | ~~`v3.1.0`~~ | ⏸ **Deferred** | **Launch Experience & Remote Project Creation** — launcher, Start Menu, `/new` with mandatory plan approval |
 
 Each ships independently: implementation → tests → full regression → live
 validation → docs → version bump → commit → annotated tag → completion report.
+
+### M4 deferral (2026-07-29)
+
+After M3 shipped, the owner reviewed the full Phase 12 M1→M3 evidence and
+directed a further architecture pass — **Phase 13** (`docs/PHASE_13_PLAN.md`)
+— to happen first: configurable project discovery, project lifecycle,
+provider/model abstraction completion, remote file access, and a live
+message-truncation defect, all treated as permanent architecture decisions
+rather than retrofitted after M4. M4 is **deferred, not cancelled** — its
+scope above is unchanged and stays the plan for whenever it resumes. Its
+reserved version slot, `v3.1.0`, is released back to the pool and reused by
+Phase 13 M1; M4 will be re-evaluated against Phase 13's finished
+architecture (in particular Phase 13 M2's discovery use of
+`operator.projectRoots`, which M4's `/new` was always going to consume for
+its write-safety check — see §6) and picked up under the next available
+`v3.x` version once Phase 13 completes.
 
 ---
 

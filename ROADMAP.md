@@ -410,12 +410,56 @@ all become clients of one daemon. Plan: `docs/PHASE_12_PLAN.md`.
   client, showing every project, worker, queue and approval at once — with no
   orchestration logic of its own. M2 built what it will consume:
   `GET /api/registry`, `GET /api/events`, and `POST /api/operator/command`.
-- **M4 — Launch experience & remote project creation** (`v3.1.0`):
-  double-click launcher, Start Menu integration, automatic daemon detection,
-  and `/new` project creation with a mandatory plan approval before any write.
-  The safety rule it depends on already exists (`operator.projectRoots`,
-  empty = refuse), as does the confirmation gate destructive project
-  operations will inherit.
+- **M4 — Launch experience & remote project creation** (⏸ **deferred**,
+  was `v3.1.0`): double-click launcher, Start Menu integration, automatic
+  daemon detection, and `/new` project creation with a mandatory plan
+  approval before any write. The safety rule it depends on already exists
+  (`operator.projectRoots`, empty = refuse), as does the confirmation gate
+  destructive project operations will inherit. Deferred in favor of Phase 13
+  (below) after the owner reviewed M1–M3's evidence and asked for a further
+  architecture pass first; scope unchanged, picked up under the next
+  available `v3.x` version once Phase 13 completes. See
+  `docs/PHASE_12_PLAN.md` §4.
+
+## Phase 13 — Architecture Evolution: Discovery, Lifecycle, Live Configuration, Provider/Model Control, Remote Filesystem & Reliability 🔄 (M1 next)
+
+Framed by the owner as an architecture milestone, not a feature milestone:
+every decision justified up front so the system "still makes sense after
+hundreds of projects." Extends the driver/provider abstraction, the
+destructive-confirmation flow, and the append-only event log Phase 12 already
+built, rather than duplicating them. Full plan: `docs/PHASE_13_PLAN.md`.
+
+- **M1 — Long Message Reliability** (`v3.1.0`): root-causes and fixes the
+  live defect where mission-complete reports were observed cutting off
+  mid-sentence — a shared, tag-aware `sendLongText()` send path every
+  Telegram call site converges on, splitting deterministically at Telegram's
+  real 4096-char limit instead of silently truncating.
+- **M2 — Project Roots & Discovery** (`v3.2.0`): configurable
+  `operator.projectRoots` (default `C:\Users\Admin\Music`) discovered and
+  scanned instead of hardcoded sample folders; `/scan` and `/import`.
+- **M3 — Project Lifecycle & Registry Operations** (`v3.3.0`): owner-set
+  project classification (production/development/validation/demo/archived/
+  hidden) and archive/hide/restore/forget operations, strictly registry-only
+  — never touches a project's files on disk without a separate, explicit
+  capability this phase deliberately does not build.
+- **M4 — Live Configuration Layer** (`v3.4.0`): the first mechanism for the
+  daemon to accept a config change (project roots, default model, …) without
+  a restart — disk write via the existing `writeLocalConfig()`, mirrored into
+  the same in-memory config object every subsystem already holds by
+  reference.
+- **M5 — Provider Architecture Completion & Remote Model/Provider
+  Management** (`v3.5.0`): a capabilities descriptor over the
+  already-generic driver system, plus `/provider` and `/model` to switch a
+  machine-wide default model remotely without disrupting an active mission.
+- **M6 — Remote File System** (`v3.6.0`): `/files`, `/file`,
+  `/download-project` — safe, paginated, path-traversal-guarded file
+  retrieval and project export over Telegram.
+- **M7 — Mission Completion Messaging** (`v3.7.0`): completion messages lead
+  naturally into `/files`/`/file`/`/download-project`.
+- **M8 — Bot Experience & Discoverability** (`v3.8.0`): richer, categorized
+  command metadata, still generated from the one `COMMANDS` table.
+- **M9 — Public Release Prep**: repeats the audit-then-present-for-approval
+  process this repo already used for `v3.0.0`, never an automatic push.
 
 **Deliberately deferred in M1** (see the report): notification routing stays
 with workers; no new Telegram command grammar; no desktop changes; missions

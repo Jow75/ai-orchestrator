@@ -12,10 +12,14 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-28, after **Phase 12 M3 (Operator Control Center),
-v3.0.0** — committed + tagged, NOT pushed. **Phase 12 is DONE (M1→M3, plus the
-M2.1/M2.2 response milestones).** M4 (Launch Experience & Remote Project
-Creation, `v3.1.0`) is next, whenever picked up.
+**Last updated:** 2026-07-29. **Phase 12 is DONE (M1→M3, plus the M2.1/M2.2
+response milestones)**, audited for secrets/PII ahead of a public push
+(commit `c4e2f72`, still NOT pushed — awaiting the owner's go-ahead). **Phase
+12 M4 (Launch Experience & Remote Project Creation, was `v3.1.0`) is
+DEFERRED**, not cancelled — the owner directed a further architecture pass
+first. **Phase 13 (Architecture Evolution) is approved and underway**,
+`v3.1.0`→`v3.8.0`; see `docs/PHASE_13_PLAN.md`. M4 resumes under the next
+available `v3.x` once Phase 13 completes.
 
 ---
 
@@ -84,9 +88,17 @@ positive control — do not delete; it is evidence).
 Reports: `docs/PHASE_12_M2.1_REPORT.md`, `docs/PHASE_12_M2.2_REPORT.md`,
 `docs/PHASE_12_M3_REPORT.md`.
 
-**NEXT: Phase 12 M4 — Launch Experience & Remote Project Creation, `v3.1.0`**
-(launcher, Start Menu, `/new` with mandatory plan approval) — see
-`docs/PHASE_12_PLAN.md` §4. Nothing is blocking it; pick up whenever ready.
+**Phase 12 M4 — Launch Experience & Remote Project Creation (was `v3.1.0`) is
+DEFERRED**, not cancelled: after reviewing the M1→M3 evidence, the owner
+directed a further architecture pass (Phase 13) first. M4's scope (launcher,
+Start Menu, `/new` with mandatory plan approval) is unchanged — see
+`docs/PHASE_12_PLAN.md` §4 — and resumes under the next available `v3.x`
+version once Phase 13 completes.
+
+**NEXT: Phase 13 M1 — Long Message Reliability, `v3.1.0`** (root-cause and
+fix the live defect where mission-complete reports were observed cutting off
+mid-sentence) — see `docs/PHASE_13_PLAN.md`. M0 (roadmap synchronization,
+this update) has just landed; M1 is next.
 
 ---
 
@@ -281,7 +293,7 @@ phase work) — the audit that seeded the Phase 10.5 objectives.
 Before that: 2026-07-12, after completing Phase 10 (Autonomous Project
 Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 
-## Where things stand: P0–P7, Phase 8, Phase 9, Phase 10, Phase 11 ALL complete
+## Where things stand: P0–P11, Phase 12 M1–M3 ALL complete; Phase 13 underway
 
 | Phase | Status | Tag |
 | --- | --- | --- |
@@ -301,13 +313,22 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 12 M1 — AI-Orchestrator Core Service (daemon, worker supervision, exclusive remote channel) | ✅ done | `v2.8.0` |
 | Phase 12 M2 — Telegram Operator Interface (project registry, command grammar, event log, mission requests) | ✅ done | `v2.9.0` |
 | Phase 12 M2.1 — Residency, honesty, ports (from M2 live validation) | ✅ done | `v2.10.0` |
-| Phase 12 M3 — Operator Control Center (desktop as daemon client) | ⏳ next | `v3.0.0` |
-| Phase 12 M4 — Launch experience & remote project creation | ⏳ planned | `v3.1.0` |
+| Phase 12 M2.2 — The artifact investigation, closed | ✅ done | `v2.11.0` |
+| Phase 12 M3 — Operator Control Center (desktop as daemon client) | ✅ done | `v3.0.0` |
+| Phase 12 M4 — Launch experience & remote project creation | ⏸ **deferred** | was `v3.1.0` |
+| Phase 13 M1 — Long Message Reliability | ⏳ next | `v3.1.0` |
+| Phase 13 M2 — Project Roots & Discovery | ⏳ planned | `v3.2.0` |
+| Phase 13 M3 — Project Lifecycle & Registry Operations | ⏳ planned | `v3.3.0` |
+| Phase 13 M4 — Live Configuration Layer | ⏳ planned | `v3.4.0` |
+| Phase 13 M5 — Provider Architecture & Remote Model/Provider Mgmt | ⏳ planned | `v3.5.0` |
+| Phase 13 M6 — Remote File System | ⏳ planned | `v3.6.0` |
+| Phase 13 M7 — Mission Completion Messaging | ⏳ planned | `v3.7.0` |
+| Phase 13 M8 — Bot Experience & Discoverability | ⏳ planned | `v3.8.0` |
+| Phase 13 M9 — Public Release Prep | ⏳ planned | (audits `v3.8.0`) |
 
-**Test suite (current, 2026-07-28):** 919/919 backend + 20/20 desktop —
-M2.1 added 33 (`serviceControl` 14, `portRegistry` 19) plus the simulation and
-marker regressions; the 608/608 figure was the Phase 11 M4 snapshot and
-436/436 below is this section's original Phase-10.5-era one.
+**Test suite (current, 2026-07-29):** 972/972 backend + 41 desktop — the
+919/919 figure above was the M2.1 snapshot; M2.2 and M3 each added more (see
+CHANGELOG for the exact per-release deltas).
 
 The user's master prompt arc (desktop app → multi-agent → autonomous
 project management) completed at Phase 10; the stated intent at the time
