@@ -39,6 +39,13 @@ export const DRIVER_CAPABILITIES = Object.freeze({
     cancellation: true,
     toolUse: 'unknown',
   }),
+  nvidia: Object.freeze({
+    label: 'NVIDIA NIM (text-completion fallback — no file/tool access)',
+    models: Object.freeze(['nvidia/nemotron-3-ultra-550b-a55b', 'openai/gpt-oss-120b']),
+    streaming: false,
+    cancellation: true,
+    toolUse: false,
+  }),
 });
 
 /** Capabilities for one driver id, or null when the id isn't known. */

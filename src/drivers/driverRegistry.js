@@ -14,6 +14,7 @@ import { childLogger } from '../infra/logger.js';
 import ClaudeDriver from './claudeDriver.js';
 import MockDriver from './mockDriver.js';
 import CliDriver from './cliDriver.js';
+import NvidiaDriver from './nvidiaDriver.js';
 
 /** Built-in driver constructors, keyed by driver id. */
 const BUILTIN_DRIVERS = {
@@ -22,6 +23,9 @@ const BUILTIN_DRIVERS = {
   // Phase 9: one generic, config-driven driver for any CLI engine (Gemini,
   // Codex, OpenCode, local LLMs) — configured per-agent, no class per engine.
   cli: CliDriver,
+  // Optional fallback text-completion engine (HTTP, not a CLI process) — see
+  // nvidiaDriver.js for its capability boundary (no file/tool access).
+  nvidia: NvidiaDriver,
 };
 
 export class DriverRegistry {
@@ -37,11 +41,16 @@ export class DriverRegistry {
    *   `ClaudeDriver` reads it today — the generic `cli` driver has no
    *   standardized permission concept to override, so Safe Mode has nothing
    *   to enforce there yet; harmless no-op for `mock`/`cli`.
+   * @param {() => object} [options.nvidiaConfigProvider] - Same forwarding
+   *   rule again: only `NvidiaDriver` reads it (its `{apiKey, baseUrl,
+   *   model, timeoutMs}`, sourced from config/local.json); harmless no-op
+   *   for every other driver.
    */
-  constructor({ logger, defaultModelProvider, safeModeProvider }) {
+  constructor({ logger, defaultModelProvider, safeModeProvider, nvidiaConfigProvider }) {
     this.logger = logger;
     this.defaultModelProvider = defaultModelProvider;
     this.safeModeProvider = safeModeProvider;
+    this.nvidiaConfigProvider = nvidiaConfigProvider;
     this.constructors = new Map(Object.entries(BUILTIN_DRIVERS));
     this.instances = new Map();
   }
@@ -85,6 +94,7 @@ export class DriverRegistry {
       logger: childLogger(this.logger, `${id}-driver`),
       defaultModelProvider: this.defaultModelProvider,
       safeModeProvider: this.safeModeProvider,
+      nvidiaConfigProvider: this.nvidiaConfigProvider,
     });
     this.instances.set(id, instance);
     return instance;

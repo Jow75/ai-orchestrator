@@ -116,6 +116,57 @@ export function renderScanResults({ candidates, rootsScanned, rootsMissing }, { 
   return lines.join('\n');
 }
 
+/** `/mission` — what was auto-detected and assigned to one project. */
+export function renderMissionAssignment(name, result) {
+  const { stack, promptFileName, needsPermission } = result;
+  const lines = [`✅ ${name} — mission assigned`, ''];
+  lines.push(`Detected: ${stack.language}${stack.framework ? ` / ${stack.framework}` : ''} (confidence: ${stack.confidence})`);
+  if (stack.packageManager) lines.push(`Package manager: ${stack.packageManager}`);
+  if (stack.buildCommand) lines.push(`Build: ${stack.buildCommand}`);
+  if (stack.testCommand) lines.push(`Test: ${stack.testCommand}`);
+  if (stack.tags.length) lines.push(`Tags: ${stack.tags.join(', ')}`);
+  lines.push('');
+  lines.push(`Wrote ${promptFileName} — edit it by hand before starting if the auto-detected mission isn't what you want.`);
+  if (needsPermission) {
+    lines.push('');
+    lines.push(
+      '⚠️ No claude.permissionMode is set for this project — a real mission will run read-only and '
+      + 'block. Set it in config/projects/<name>.json before /start.'
+    );
+  }
+  return lines.join('\n');
+}
+
+/** `/mission all` — one row per project a batch assigned, skipped, or failed. */
+export function renderMissionBatch({ assigned, skipped, failed }) {
+  const lines = ['✅ Mission auto-assignment complete', ''];
+  if (assigned.length) {
+    lines.push(`Assigned (${assigned.length}):`);
+    for (const a of assigned.slice(0, MAX_LIST)) {
+      lines.push(`• ${a.name} — ${a.stack.language}${a.stack.framework ? `/${a.stack.framework}` : ''} (${a.stack.confidence})`);
+    }
+    if (assigned.length > MAX_LIST) lines.push(`… and ${assigned.length - MAX_LIST} more.`);
+    lines.push('');
+  }
+  if (skipped.length) {
+    lines.push(`Skipped — already had a mission by the time this ran: ${skipped.join(', ')}.`);
+    lines.push('');
+  }
+  if (failed.length) {
+    lines.push(`Failed (${failed.length}):`);
+    for (const f of failed) lines.push(`• ${f.name} — ${f.error}`);
+    lines.push('');
+  }
+  const needPermission = assigned.filter((a) => a.needsPermission).map((a) => a.name);
+  if (needPermission.length) {
+    lines.push(
+      `${needPermission.length} project(s) still need claude.permissionMode set before a real mission `
+      + `can write files: ${needPermission.join(', ')}.`
+    );
+  }
+  return lines.join('\n').trim();
+}
+
 /** `/status` — everything known about one project. */
 export function renderProjectDetail(record, { now = Date.now() } = {}) {
   if (record.status === 'misconfigured') {

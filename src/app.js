@@ -119,6 +119,10 @@ export class App {
       // documents above — `/safemode` toggles the daemon's live object, an
       // in-flight worker never rereads it.
       safeModeProvider: () => Boolean(this.config.operator?.safeMode),
+      // Same isolation guarantee again: this worker's own config snapshot,
+      // read once here — never re-read mid-mission. The real apiKey lives
+      // in config/local.json, merged in by ConfigManager.load() already.
+      nvidiaConfigProvider: () => this.config.nvidia ?? {},
     });
 
     // Phase 10A/10C: the Approval Manager — store + remote providers.

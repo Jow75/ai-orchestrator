@@ -196,6 +196,7 @@ Minimal working example:
 | `tasks` | no | `[]` | Phase P2: an ordered task plan instead of one prompt — see "tasks" below |
 | `enabled` | no | `true` | Reserved for multi-project scheduling |
 | `description` | no | `""` | Phase 12 M2: one line describing what this project is, shown by `/projects` on your phone and by `projects status`. Purely descriptive — nothing reads it to make a decision, and an empty one simply renders nothing |
+| `stack` | no | — | Phase 14 M9: auto-detected language/framework/build-test metadata, written by `/mission`/`/mission all`. See "stack" below |
 
 ### mission
 
@@ -215,6 +216,49 @@ long research phases between file writes:
 ```json
 "progress": { "maxConsecutiveNoProgress": 8 }
 ```
+
+### stack (Phase 14 M9 — auto-detected, not owner-authored)
+
+Written by `/mission [project]` (one project) or `/mission all` (every
+registered project still missing a `promptFile`/`tasks`) — never by hand.
+`/mission` also writes the `promptFile` itself (default `prompt.md`, or
+`prompt.generated.md` if that name is already taken on disk) and never
+overwrites a project that already has a mission. Detection is deliberately
+deterministic (reads `package.json`/`requirements.txt`/`pyproject.toml`/
+`Cargo.toml` off disk — see `src/operator/projectInspector.js`), not
+AI-reasoned, so it runs instantly and identically whether or not any AI
+provider is configured.
+
+```json
+"stack": {
+  "language": "javascript",
+  "framework": "electron",
+  "packageManager": "npm",
+  "buildCommand": "npm run build",
+  "testCommand": "npm test",
+  "tags": ["desktop"],
+  "confidence": "high",
+  "signals": ["found package.json", "electron in dependencies"],
+  "source": "auto-detected",
+  "generatedAt": "2026-07-30T12:00:00.000Z"
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `language` | `javascript`, `typescript`, `python`, `rust`, or `unknown` |
+| `framework` | e.g. `electron`, `react`, `express`, `flask` — `null` if none recognized |
+| `packageManager` | e.g. `npm`, `pnpm`, `pip`, `poetry`, `cargo` — `null` if undetected |
+| `buildCommand` / `testCommand` | Read directly from the project's own manifest (e.g. `package.json`'s `scripts`) — `null` rather than invented when absent |
+| `tags` | Coarse category words (`desktop`, `web`, `backend`, `api`, `ai`) |
+| `confidence` | `high` (manifest + recognized framework), `medium` (manifest, no recognized framework), or `low` (no manifest found at all) |
+| `signals` | What was actually found on disk, so the detection can disclose its own basis |
+| `source` | Always `"auto-detected"` — distinguishes this from anything the owner set by hand |
+
+**Note:** unrelated to the `classification` field above (`production`/
+`development`/`validation`/`demo`/`archived`/`hidden`, Phase 13 M3's
+lifecycle state) — `stack` describes what a project technically *is*,
+`classification` describes what state it's *in*.
 
 ### tasks (Phase P2 — mission mode)
 

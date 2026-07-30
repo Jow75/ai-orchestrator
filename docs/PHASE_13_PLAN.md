@@ -1,6 +1,6 @@
 # Phase 13 — Architecture Evolution: Discovery, Lifecycle, Live Configuration, Provider/Model Control, Remote Filesystem & Reliability
 
-**Status:** approved, M0 in progress
+**Status:** ✅ **DONE — M1 through M9 all complete** (2026-07-30). M9's full sign-off, evidence, and the reconciliation pass that landed between M8 and M9 are in `docs/PHASE_13_M9_ACCEPTANCE_REVIEW.md`. Phase 14 planning: `docs/PHASE_14_PLAN.md`.
 **Baseline:** `v3.0.0` (Phase 12 M1–M3 complete, audited, not yet pushed). Phase 12 M4 (Launch Experience & Remote Project Creation) has **not shipped** and is **deferred, not cancelled** — re-evaluated against Phase 13's final architecture and slotted into the next available `v3.x` release once Phase 13 completes, per the owner's explicit decision. See `docs/PHASE_12_PLAN.md` §4.
 **Author:** Phase 13 architecture pass, 2026-07-29
 
@@ -230,11 +230,13 @@ All three commands sit behind new `operator.files.enabled` (default `true`) — 
 
 ---
 
-### M9 — Public Release Prep (process checkpoint, no code)
+### M9 — Public Release Prep (process checkpoint, no code) — ✅ DONE (2026-07-30)
 
 *Owner's item 10. Depends on M1–M8, each already independently live-validated.*
 
 Repeats exactly the process just run for `v3.0.0`: full regression, `docs/` staleness audit, CHANGELOG finalized, README/QUICKSTART spot-checked against the real command surface, tags verified, then **presented for approval and never auto-pushed** — no new version number of its own; it finalizes and audits whatever M8 shipped as (`v3.8.0`).
+
+**Closed by `docs/PHASE_13_M9_ACCEPTANCE_REVIEW.md`** — a full engineering acceptance review run against the real, live Core Service (a 5-commit reconciliation pass had landed as `v3.9.0` in the interim, so M9 audited that instead of `v3.8.0`, per that report's own note). 1194/1194 backend + 41/41 desktop tests, re-run fresh; both `v3.8.0` and `v3.9.0` tag-to-commit verified; `README.md`/`docs/QUICKSTART.md` spot-checked against live command output; no Critical or release-blocking issue found. Still awaiting the owner's own go-ahead to push `main` + both tags to `origin` — never auto-pushed, per this project's standing rule.
 
 ---
 

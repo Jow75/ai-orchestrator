@@ -3,6 +3,42 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.10.0] — 2026-07-30 — Phase 14 M9: Remote Mission-Readiness
+
+Closes the single highest-value gap the 2026-07-30 acceptance review found:
+19 of 23 real registered projects had no `promptFile` and no remote way to
+get one. Implemented first in Phase 14's sequencing, ahead of M0–M8, per
+the owner's own priority call. Full design tradeoffs (why `updateProject()`
+not `saveProject()`, why auto-detect-only with no manual objective text, why
+the detected metadata is a new `stack` field rather than reusing
+`classification`) are recorded in `docs/PHASE_14_PLAN.md`'s M9 section.
+
+### Added
+
+- **`/mission [project]`, `/mission all`** (`src/operator/commandRouter.js`)
+  — auto-detects a project's language/framework/package-manager/build-test
+  commands from files already on disk and writes it a starter `promptFile`
+  plus a `stack` metadata block. `all` mirrors `/import all`'s
+  propose-then-`/confirm`-then-execute shape, with per-project failure
+  isolation (one vanished working directory can't abort the rest of the
+  batch — an improvement over `/import all`'s own known gap). Never
+  overwrites an existing `promptFile`/`tasks`; no `--force` in v1. Kill
+  switch: `operator.mission.enabled`.
+- **`src/operator/projectInspector.js`** — the detector behind `/mission`.
+  Deliberately deterministic (Class A per `docs/PHASE_14_PLAN.md` §1): reads
+  `package.json`/`requirements.txt`/`pyproject.toml`/`Cargo.toml`, no AI, no
+  mission pipeline, so it runs instantly and identically for all 19 projects
+  regardless of which AI provider (if any) is configured.
+- New project config field: `stack` (see `CONFIGURATION.md`). New event
+  type: `project.mission-assigned`.
+
+### Regression coverage
+
+- `projectInspector.test.js` (new, 10 tests), `commandRouter.test.js` (+7).
+  1194 → 1219 backend tests (the gap also includes the previously-unlanded
+  `nvidia` driver's 9 tests), zero regressions. 41/41 desktop tests
+  unaffected.
+
 ## [3.9.0] — 2026-07-30 — Reconciliation pass: classification migration, `/import all`, Safe Mode
 
 Not a numbered Phase 13 milestone — a directed reconciliation ahead of M9.

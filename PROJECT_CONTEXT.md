@@ -29,9 +29,72 @@ global `/safemode on|off` override. **`v3.8.0` and `v3.9.0` are both tagged
 locally, NOT yet pushed** — awaiting the owner's go-ahead, same as every
 prior push. **Phase 12 M4 (Launch Experience & Remote Project Creation, was
 `v3.1.0`) remains DEFERRED**, not cancelled — its formal re-evaluation now
-folds into Phase 14 planning, per the owner's own direction. **Phase 13 M9
-(Public Release Prep, process checkpoint, no code) is NEXT, now auditing
-`v3.9.0`** — see `docs/PHASE_13_PLAN.md`.
+folds into Phase 14 planning, per the owner's own direction.
+
+**Phase 13 M9 (Public Release Prep, process checkpoint, no code) is DONE.**
+A full engineering acceptance review (`docs/PHASE_13_M9_ACCEPTANCE_REVIEW.md`)
+re-ran the full regression suite fresh (1194/1194 backend + 41/41 desktop),
+live-validated the registry against 5 real named projects (3 of the 5 turned
+out to be part of the 19-of-23 `/import all` cohort that has no `promptFile`
+yet — reproducible, documented behavior, not a defect), and ran one complete
+mission request → two-gate approval → real worker execution → completion
+cycle against `calculator-proof` with Safe Mode forced on, independently
+confirmed by filesystem `mtime` (not just the tool's own reply text) that
+zero files changed. A dedicated source-level architecture pass found four
+new, non-blocking hardening items (a hardcoded personal path in
+`config/defaults.js`, a non-constant-time API token comparison, an unlocked
+config-file write race, one grammar/dispatch seam) — all carried into the
+report's risk register, none Critical. **No blocking issue was found.**
+**Phase 13 is officially complete.** `docs/PHASE_14_PLAN.md` (Remote
+Engineering — git/log visibility, repo/symbol search, TODO discovery, test
+visibility, AI-assisted mission templates for review/architecture-summary/
+docgen/refactor-proposals, the Phase 12 M4 re-evaluation, remote-config
+completion, and closing the newly-found "19/23 projects have no remote path
+to a first mission" gap) is drafted, planning-only, awaiting the owner's
+go-ahead to begin implementation. **`v3.8.0` and `v3.9.0` remain unpushed**,
+same standing rule as above — the acceptance review deliberately does not
+push on the owner's behalf.
+
+**2026-07-30, same day:** the owner reviewed a larger "Workspace Intelligence"
+pitch (cross-project relationships/dependency graphs/a Workspace Registry) and
+explicitly decided NOT to fold it into Phase 14 as a new subsystem — instead,
+`docs/PHASE_14_PLAN.md` gained **M0 — Workspace Overview** (`/workspace`, a
+read-only rollup over the existing `ProjectRegistry`, no new persistence), with
+the cross-project-reasoning half deliberately deferred to a future phase (see
+the plan's §0a). Separately, an optional **`nvidia` driver** shipped
+(`src/drivers/nvidiaDriver.js`, registered in `driverRegistry.js`, capability
+`toolUse: false` in `drivers/capabilities.js`) — a text-completion fallback
+engine for when `claude` is unreachable, with NO file/tool access (cannot edit
+a workspace, only produce text results). Its API key lives in
+`config/local.json` (git-ignored) under `nvidia.apiKey`, never in a tracked
+file. 1203/1203 backend tests pass (1194 prior + 9 new for the driver).
+
+**Phase 14 M9 — Remote Mission-Readiness (`v3.10.0`) is DONE**, implemented
+first per the owner's own priority call (it closes the single highest-value
+gap the acceptance review found: 19 of 23 real projects had no `promptFile`).
+New `/mission [project]` / `/mission all` auto-detect a project's language/
+framework/package-manager/build-test commands from files already on disk
+(`src/operator/projectInspector.js` — deterministic, no AI, no mission
+pipeline) and write a starter `promptFile` plus a new `stack` config field.
+Ships with three deliberate deviations from the original plan sketch, each
+forced by the real codebase rather than chosen for its own sake: writes via
+`ConfigManager.updateProject()` (`saveProject()` throws on an
+already-registered project, which every M9 target is), auto-detect only
+with no manual objective-text argument (`resolveTarget()` can't split
+"project name" from "extra text" when project names contain spaces), and
+the detected metadata is a new `stack` field rather than `classification`
+(which already means the Phase 13 M3 lifecycle enum in this codebase). Full
+reasoning in `docs/PHASE_14_PLAN.md`'s M9 section. 1194 → 1219 backend
+tests (`projectInspector.test.js` new, `commandRouter.test.js` +7), zero
+regressions; 41/41 desktop tests unaffected. **Committed and tagged
+`v3.10.0`** — regression suite re-verified fresh (1219/1219 backend, 41/41
+desktop) immediately before the commit. **Not yet pushed to `origin`** —
+same standing practice as `v3.8.0`/`v3.9.0`, awaiting the owner's
+go-ahead. `docs/OPERATOR_CONSOLE.md`'s Git Bash caution was elevated from
+a one-line note to an explicit **Operator recommendation** callout after
+recurring across Phase 13/14 sessions. M0 (Workspace Overview) begins
+next; M1–M8 sequencing otherwise unchanged (M1, M2, M8, M3, M4, M5, M6,
+M7 — see the plan's dependency graph).
 
 **Phase 13 M6 — Remote File System (`v3.6.0`) is DONE.** The first new
 runtime dependency since baseline (`archiver`) and the first filesystem
@@ -119,10 +182,10 @@ but `/import` only ever took one path at a time. Shipped `/import all`
 ran it live, taking the registry from 6 to 23 real projects. 1178 → 1194
 backend tests. Full report: `docs/PHASE_13_RECONCILIATION_2026-07-30.md`.
 
-**NEXT: Phase 13 M9 — Public Release Prep (process checkpoint, no code)** —
-repeats the `v3.0.0` process (full regression, docs staleness audit,
-README/QUICKSTART spot-check, tag verification), now auditing `v3.9.0`,
-then presented for approval. See `docs/PHASE_13_PLAN.md`.
+**Phase 13 M9 is done** — see the top of this file. **NEXT: Phase 14
+planning decision** (owner go-ahead on scope/order + Phase 12 M4's
+disposition), then the still-outstanding push of `v3.8.0`/`v3.9.0` to
+`origin` whenever the owner is ready. See `docs/PHASE_14_PLAN.md`.
 
 ---
 
@@ -479,7 +542,7 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 13 M7 — Mission Completion Messaging | ✅ done | `v3.7.0` |
 | Phase 13 M8 — Bot Experience & Discoverability | ✅ done | `v3.8.0` |
 | Reconciliation pass (classification migration, `/import all`, Safe Mode) | ✅ done | `v3.9.0` |
-| Phase 13 M9 — Public Release Prep | ⏳ next | (audits `v3.9.0`) |
+| Phase 13 M9 — Public Release Prep | ✅ done | (audited `v3.9.0`, no version of its own) |
 
 **Test suite (current, 2026-07-30):** 1194/1194 backend (+20 Phase 13 M1,
 +31 M2, +34 M3, +17 M4, +26 M5, +55 M6, +18 M7, +5 M8, +16 reconciliation

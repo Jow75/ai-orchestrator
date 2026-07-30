@@ -55,6 +55,8 @@ export const EVENT_TYPES = Object.freeze([
   'project.forgotten',
   /** `/projects classify` applied a proposed classification. */
   'project.classified',
+  /** `/mission` or `/mission all` auto-detected a stack and wrote a promptFile. */
+  'project.mission-assigned',
 
   // ── live configuration (Phase 13 M4) ────────────────────────────────────
   /** A remotely-mutable config key changed. Payload logs the KEY only, never the value. */

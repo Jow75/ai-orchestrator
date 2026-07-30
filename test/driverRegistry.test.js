@@ -12,7 +12,7 @@ import { silentLogger } from '../src/infra/logger.js';
 
 test('listDrivers returns every built-in driver id, sorted', () => {
   const registry = new DriverRegistry({ logger: silentLogger });
-  assert.deepEqual(registry.listDrivers(), ['claude', 'cli', 'mock']);
+  assert.deepEqual(registry.listDrivers(), ['claude', 'cli', 'mock', 'nvidia']);
 });
 
 test('getDriver lazily creates and caches one instance per id', () => {
@@ -56,13 +56,14 @@ test('a registry built with no defaultModelProvider behaves exactly as before th
   assert.ok(!args.includes('--model'));
 });
 
-test('passing defaultModelProvider to a driver that ignores it (mock, cli) is harmless', () => {
+test('passing defaultModelProvider to a driver that ignores it (mock, cli, nvidia) is harmless', () => {
   const registry = new DriverRegistry({
     logger: silentLogger,
     defaultModelProvider: () => 'opus',
   });
   assert.doesNotThrow(() => registry.getDriver('mock'));
   assert.doesNotThrow(() => registry.getDriver('cli'));
+  assert.doesNotThrow(() => registry.getDriver('nvidia'));
 });
 
 // ── reconciliation pass, 2026-07-30: safeModeProvider forwarding ────────
@@ -84,11 +85,29 @@ test('a registry built with no safeModeProvider behaves exactly as before Safe M
   assert.ok(args.includes('--permission-mode'), 'a project\'s own permission settings still apply with no Safe Mode wiring at all');
 });
 
-test('passing safeModeProvider to a driver that ignores it (mock, cli) is harmless', () => {
+test('passing safeModeProvider to a driver that ignores it (mock, cli, nvidia) is harmless', () => {
   const registry = new DriverRegistry({
     logger: silentLogger,
     safeModeProvider: () => true,
   });
   assert.doesNotThrow(() => registry.getDriver('mock'));
   assert.doesNotThrow(() => registry.getDriver('cli'));
+  assert.doesNotThrow(() => registry.getDriver('nvidia'));
+});
+
+test('nvidiaConfigProvider is forwarded to an nvidia driver instance it creates', async () => {
+  const registry = new DriverRegistry({
+    logger: silentLogger,
+    nvidiaConfigProvider: () => ({ apiKey: 'nv-key' }),
+  });
+  const nvidia = registry.getDriver('nvidia');
+  const result = await nvidia.checkInstallation();
+  assert.equal(result.ok, true);
+});
+
+test('a registry built with no nvidiaConfigProvider still returns a usable nvidia driver', async () => {
+  const registry = new DriverRegistry({ logger: silentLogger });
+  const nvidia = registry.getDriver('nvidia');
+  const result = await nvidia.checkInstallation();
+  assert.equal(result.ok, false, 'unconfigured, so checkInstallation reports it instead of throwing');
 });

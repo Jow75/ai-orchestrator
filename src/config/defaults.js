@@ -254,6 +254,21 @@ export const ORCHESTRATOR_DEFAULTS = {
   },
 
   /**
+   * Optional NVIDIA NIM driver (see src/drivers/nvidiaDriver.js) — a
+   * fallback text-completion engine for when `claude` is unavailable.
+   * Machine-wide credential, same shape as `notifications.telegram`: the
+   * real `apiKey` belongs in `config/local.json` (git-ignored), never in
+   * this tracked file. Empty `apiKey` ⇒ the driver reports itself
+   * unconfigured via checkInstallation() rather than failing obscurely.
+   */
+  nvidia: {
+    apiKey: '',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    model: 'nvidia/nemotron-3-ultra-550b-a55b',
+    timeoutMs: 120_000,
+  },
+
+  /**
    * Phase 12 M2.1: the port registry (see src/runtime/portRegistry.js).
    *
    * The window automatic allocations are drawn from. It sits above the ports
@@ -437,6 +452,18 @@ export const ORCHESTRATOR_DEFAULTS = {
     files: {
       enabled: true,
     },
+    /**
+     * Phase 14 M9: `/mission`, `/mission all` — auto-detects a project's
+     * language/framework/build-test commands from files already on disk and
+     * writes a generated `promptFile` plus a `stack` metadata block. A
+     * read-then-write surface (reads the project's real files, writes its
+     * own config + a prompt file) — its own switch, separate from
+     * `lifecycle`/`files`: this is the first capability that both inspects a
+     * project's source AND mutates its registry entry in one step.
+     */
+    mission: {
+      enabled: true,
+    },
     /** Phase 13 M6: `/download-project` sizing and exclusions. */
     download: {
       /**
@@ -551,6 +578,15 @@ export const PROJECT_DEFAULTS = {
      * orchestrator never kills a silent process. 0 disables the warning.
      */
     launchTimeoutMs: 120_000,
+  },
+
+  /**
+   * NVIDIA NIM driver settings (see src/drivers/nvidiaDriver.js). A field
+   * left empty falls back to the machine-wide `nvidia` block above — set
+   * `model` here only to use a different model for this one project.
+   */
+  nvidia: {
+    model: '',
   },
 };
 

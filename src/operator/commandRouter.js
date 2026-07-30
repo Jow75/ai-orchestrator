@@ -27,6 +27,7 @@ import { approvalEventFor } from '../events/eventTypes.js';
 import { isEvidenceVerifier } from '../notifications/missionCard.js';
 import { parseCommand } from './commandGrammar.js';
 import { scanRoots } from './projectDiscovery.js';
+import { inspectProject, buildAutoMissionPrompt } from './projectInspector.js';
 import {
   archive, restore, hide, unhide, forget, classifyProposal,
 } from './projectLifecycleOps.js';
@@ -36,7 +37,7 @@ import {
   renderProjectList, renderProjectDetail, renderTasks, renderApprovals,
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
   renderHelp, renderServiceStatus, renderScanResults, renderFileListing,
-  renderFileInline, formatBytes, truncate,
+  renderFileInline, formatBytes, truncate, renderMissionAssignment, renderMissionBatch,
 } from './render.js';
 import {
   FileAccessError, listFiles, resolveWithinProject, looksBinary,
@@ -412,6 +413,7 @@ export class CommandRouter {
       case 'cancel': return this.commandCancel(rest, ctx);
       case 'scan': return this.commandScan(ctx);
       case 'import': return this.commandImport(rest, ctx);
+      case 'mission': return this.commandMission(rest, ctx);
       case 'archive': return this.commandArchive(rest, ctx);
       case 'restore': return this.commandRestore(rest, ctx);
       case 'hide': return this.commandHide(rest, ctx);
@@ -768,6 +770,142 @@ export class CommandRouter {
         const skippedNote = skipped.length ? ` Skipped (already registered by the time this ran): ${skipped.join(', ')}.` : '';
         return `Imported ${imported.length} project(s): ${imported.join(', ')}.${skippedNote}\n\n`
           + 'None have a mission yet — each needs a "promptFile" or task plan in its config/projects/<name>.json before it can start.';
+      },
+    });
+    return { reply: renderConfirmation(confirmation) };
+  }
+
+  /**
+   * Shared logic behind `/mission` and `/mission all` — Phase 14 M9. Reads
+   * the RAW config (never the defaults-merged view: `promptFile` has no
+   * default, but checking the raw file is what makes "already has a
+   * mission" mean "something actually set one", not an artifact of
+   * PROJECT_DEFAULTS). `configManager.getProject()` is deliberately NOT used
+   * here — it validates and would throw on exactly the projects this
+   * command exists to fix.
+   *
+   * @returns {{ok: true, stack: object, promptFileName: string, needsPermission: boolean}
+   *         | {ok: false, reason: string, alreadyReady?: boolean}}
+   */
+  assignMission(name, ctx, { via }) {
+    const raw = this.configManager.getProjectFileContents(name);
+    if (!raw) return { ok: false, reason: `"${name}" has no readable config.` };
+    if (raw.promptFile || (Array.isArray(raw.tasks) && raw.tasks.length > 0)) {
+      return { ok: false, alreadyReady: true, reason: 'already has a mission (a promptFile or task plan is set)' };
+    }
+    const workingDirectory = raw.workingDirectory;
+    if (!workingDirectory || !fs.existsSync(workingDirectory)) {
+      return { ok: false, reason: `working directory does not exist: ${workingDirectory ?? '(none set)'}` };
+    }
+
+    const detected = inspectProject(workingDirectory);
+    const promptFileName = fs.existsSync(path.join(workingDirectory, 'prompt.md')) ? 'prompt.generated.md' : 'prompt.md';
+    const resolvedDefaults = this.configManager.getRawProject(name) ?? {};
+    const completionMarker = resolvedDefaults.mission?.completionMarker || 'MISSION COMPLETE';
+    const promptContent = buildAutoMissionPrompt(detected, { completionMarker });
+    fs.writeFileSync(path.join(workingDirectory, promptFileName), promptContent, 'utf8');
+
+    const stack = { ...detected, source: 'auto-detected', generatedAt: new Date().toISOString() };
+    this.configManager.updateProject(name, { promptFile: promptFileName, stack });
+    this.events?.append({
+      type: 'project.mission-assigned',
+      project: name,
+      actor: ctx.actor,
+      payload: {
+        path: workingDirectory, via, language: detected.language, framework: detected.framework, confidence: detected.confidence,
+      },
+    });
+    return {
+      ok: true,
+      stack,
+      promptFileName,
+      needsPermission: resolvedDefaults.driver === 'claude' && !resolvedDefaults.claude?.permissionMode,
+    };
+  }
+
+  /**
+   * `/mission [project]` / `/mission all` — Phase 14 M9. Auto-detects a
+   * project's language/framework/build-test commands from files already on
+   * disk (see projectInspector.js) and writes it a starter promptFile plus a
+   * `stack` metadata block — the remote fix for a project `/import`(-ed) but
+   * never given a mission.
+   *
+   * Deliberately auto-detect only, no manual objective text:
+   * `resolveTarget()`'s "the whole rest IS the project name" rule can't
+   * combine with trailing free text without an ambiguous split (several real
+   * project names contain spaces, e.g. "THE FINISHER"), and inspecting the
+   * repo is what was actually asked for. Never overwrites an existing
+   * promptFile or task plan — edit config/projects/<name>.json by hand to
+   * replace one.
+   */
+  commandMission(rest, ctx) {
+    if (this.operatorConfig.mission?.enabled === false) {
+      return { reply: 'Mission auto-detection is disabled (operator.mission.enabled: false).' };
+    }
+    if (rest && rest.trim().toLowerCase() === 'all') {
+      return this.commandMissionAll(ctx);
+    }
+    const resolved = this.resolveTarget(rest, ctx);
+    if (resolved.reply) return { reply: resolved.reply };
+
+    const result = this.assignMission(resolved.project, ctx, { via: 'mission' });
+    if (!result.ok) {
+      if (result.alreadyReady) {
+        return {
+          reply: `${resolved.project} already has a mission — ${result.reason}. `
+            + 'Edit config/projects/<name>.json by hand to replace it; /mission never overwrites one.',
+        };
+      }
+      return { reply: `Could not assign a mission to ${resolved.project}: ${result.reason}` };
+    }
+    return { reply: renderMissionAssignment(resolved.project, result) };
+  }
+
+  /**
+   * `/mission all` — every registered project with no promptFile and no
+   * task plan, in one confirmed batch. Mirrors `commandImportAll()`'s
+   * propose-then-`/confirm`-then-execute shape; unlike it, each project's
+   * detect+write is wrapped individually so one failure (e.g. a vanished
+   * working directory) cannot abort the whole batch.
+   */
+  commandMissionAll(ctx) {
+    const candidates = this.registry.names().filter((name) => {
+      const raw = this.configManager.getProjectFileContents(name);
+      return raw && !raw.promptFile && (!Array.isArray(raw.tasks) || raw.tasks.length === 0);
+    });
+    if (!candidates.length) {
+      return { reply: `All ${this.registry.names().length} project(s) already have a mission.` };
+    }
+
+    const lines = candidates.map(
+      (name) => `${name} → ${this.configManager.getProjectFileContents(name)?.workingDirectory}`
+    );
+    const confirmation = this.confirmations.require({
+      channel: ctx.channel,
+      action: 'mission-all',
+      summary: `Auto-detect and assign a mission to ${candidates.length} project(s):\n${lines.join('\n')}`,
+      perform: () => {
+        const assigned = [];
+        const skipped = [];
+        const failed = [];
+        for (const name of candidates) {
+          try {
+            const result = this.assignMission(name, ctx, { via: 'mission-all' });
+            if (result.ok) {
+              assigned.push({ name, ...result });
+            } else if (result.alreadyReady) {
+              // Re-checked at confirm time — the same race guard
+              // commandImportAll() applies (something else assigned this
+              // project's mission in the gap between propose and confirm).
+              skipped.push(name);
+            } else {
+              failed.push({ name, error: result.reason });
+            }
+          } catch (error) {
+            failed.push({ name, error: error.message });
+          }
+        }
+        return renderMissionBatch({ assigned, skipped, failed });
       },
     });
     return { reply: renderConfirmation(confirmation) };

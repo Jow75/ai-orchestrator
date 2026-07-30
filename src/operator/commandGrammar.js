@@ -195,6 +195,15 @@ export const COMMANDS = Object.freeze([
     description: 'Register a folder /scan found as a project. "all" registers every current /scan candidate in one confirmed batch. Registry only — never touches files.',
   },
   {
+    name: 'mission',
+    aliases: [],
+    usage: '/mission [project] | /mission all',
+    takesRest: true,
+    category: 'Registry',
+    examples: ['/mission Remote Work', '/mission all'],
+    description: 'Auto-detect a project\'s stack from files on disk and write it a starter promptFile. "all" does every project missing one, in one confirmed batch. Never overwrites an existing mission.',
+  },
+  {
     name: 'archive',
     aliases: [],
     usage: '/archive [project]',

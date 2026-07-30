@@ -960,6 +960,108 @@ test("a project whose workingDirectory vanished reports 'missing', not 'misconfi
   assert.match(reply, /folder not found/);
 });
 
+// ────────────────────────── Phase 14 M9: /mission, /mission all ────────────
+
+test('/mission auto-detects a Node/Electron project and writes it a promptFile', async () => {
+  const h = discoveryHarness();
+  const dir = mkCandidate(h.rootsDir, 'calc-app', { marker: null });
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    JSON.stringify({ dependencies: { electron: '^30.0.0' }, scripts: { build: 'vite build', test: 'vitest run' } })
+  );
+  await h.say(`/import ${dir}`);
+
+  const { reply } = await h.say('/mission calc-app');
+
+  assert.match(reply, /mission assigned/i);
+  assert.match(reply, /electron/i);
+
+  const raw = JSON.parse(fs.readFileSync(path.join(h.paths.projectsDir, 'calc-app.json'), 'utf8'));
+  assert.equal(raw.promptFile, 'prompt.md');
+  assert.equal(raw.stack.language, 'javascript');
+  assert.equal(raw.stack.framework, 'electron');
+  assert.equal(raw.stack.source, 'auto-detected');
+
+  const promptContent = fs.readFileSync(path.join(dir, 'prompt.md'), 'utf8');
+  assert.match(promptContent, /MISSION COMPLETE/);
+  assert.match(promptContent, /electron/i);
+
+  assert.equal(h.events.read({ types: ['project.mission-assigned'] }).length, 1);
+});
+
+test('/mission never overwrites a project that already has a promptFile', async () => {
+  const h = harness({ projects: ['alpha'] }); // harness() gives alpha a real promptFile already
+
+  const { reply } = await h.say('/mission alpha');
+
+  assert.match(reply, /already has a mission/i);
+  const raw = JSON.parse(fs.readFileSync(path.join(h.paths.projectsDir, 'alpha.json'), 'utf8'));
+  assert.equal(raw.stack, undefined, 'nothing was written on top of the existing config');
+  assert.equal(h.events.read({ types: ['project.mission-assigned'] }).length, 0);
+});
+
+test('/mission is refused when operator.mission is disabled', async () => {
+  const h = harness({ projects: ['alpha'], operator: { mission: { enabled: false } } });
+  const { reply } = await h.say('/mission alpha');
+  assert.match(reply, /disabled/i);
+});
+
+test('/mission all proposes only the projects missing a mission, and assigns them after one confirmation', async () => {
+  const h = discoveryHarness(); // 'alpha' already has a mission from harness()
+  const dir1 = mkCandidate(h.rootsDir, 'node-app', { marker: null });
+  fs.writeFileSync(path.join(dir1, 'package.json'), JSON.stringify({ dependencies: { express: '^4.0.0' } }));
+  const dir2 = mkCandidate(h.rootsDir, 'py-app', { marker: null });
+  fs.writeFileSync(path.join(dir2, 'requirements.txt'), 'flask==3.0.0\n');
+  await h.say(`/import ${dir1}`);
+  await h.say(`/import ${dir2}`);
+
+  const proposed = await h.say('/mission all');
+  assert.match(proposed.reply, /node-app/);
+  assert.match(proposed.reply, /py-app/);
+  assert.doesNotMatch(proposed.reply, /\balpha\b/, 'alpha already has a mission and is not proposed');
+
+  const code = proposed.reply.match(/\/confirm ([A-Z0-9]+)/i)[1];
+  const { reply } = await h.say(`/confirm ${code}`);
+
+  assert.match(reply, /Assigned \(2\)/);
+  const nodeRaw = JSON.parse(fs.readFileSync(path.join(h.paths.projectsDir, 'node-app.json'), 'utf8'));
+  const pyRaw = JSON.parse(fs.readFileSync(path.join(h.paths.projectsDir, 'py-app.json'), 'utf8'));
+  assert.equal(nodeRaw.stack.framework, 'express');
+  assert.equal(pyRaw.stack.framework, 'flask');
+  assert.equal(h.events.read({ types: ['project.mission-assigned'] }).length, 2);
+});
+
+test('/mission all reports nothing to do when every project already has a mission', async () => {
+  const h = harness({ projects: ['alpha', 'beta'] });
+  const { reply } = await h.say('/mission all');
+  assert.match(reply, /already have a mission/i);
+});
+
+test('/mission all isolates one project\'s failure from the rest of the batch', async () => {
+  const h = discoveryHarness();
+  const dir1 = mkCandidate(h.rootsDir, 'good-project', { marker: null });
+  fs.writeFileSync(path.join(dir1, 'package.json'), '{}');
+  const dir2 = mkCandidate(h.rootsDir, 'vanishing-project', { marker: null });
+  fs.writeFileSync(path.join(dir2, 'package.json'), '{}');
+  await h.say(`/import ${dir1}`);
+  await h.say(`/import ${dir2}`);
+
+  const proposed = await h.say('/mission all');
+  const code = proposed.reply.match(/\/confirm ([A-Z0-9]+)/i)[1];
+
+  // Simulate the folder disappearing between the proposal and the confirmation.
+  fs.rmSync(dir2, { recursive: true, force: true });
+
+  const { reply } = await h.say(`/confirm ${code}`);
+
+  assert.match(reply, /Assigned \(1\)/);
+  assert.match(reply, /Failed \(1\)/);
+  assert.match(reply, /vanishing-project/);
+  const goodRaw = JSON.parse(fs.readFileSync(path.join(h.paths.projectsDir, 'good-project.json'), 'utf8'));
+  assert.ok(goodRaw.stack, 'the surviving project was still assigned a mission');
+  assert.equal(h.events.read({ types: ['project.mission-assigned'] }).length, 1);
+});
+
 // ─────────────────────────── Phase 13 M3: lifecycle & classification ───────
 
 test('/archive marks a project archived; it stays listed but sorts after live statuses', async () => {

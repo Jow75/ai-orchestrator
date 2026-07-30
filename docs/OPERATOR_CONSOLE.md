@@ -4,7 +4,8 @@ How to run your projects from your phone. Introduced in Phase 12 M2
 (`v2.9.0`); this page is kept current with the full command surface, last
 audited end-to-end in Phase 13 M8 (`v3.8.0`), which also grouped `/help`
 itself into the same sections used below. `/import all` and `/safemode`
-were added in the 2026-07-30 reconciliation pass (`v3.9.0`).
+were added in the 2026-07-30 reconciliation pass (`v3.9.0`); `/mission` and
+`/mission all` were added in Phase 14 M9 (`v3.10.0`).
 
 This is the guide to *operating* AI-Orchestrator remotely. For deciding
 individual approvals, see [REMOTE_APPROVALS.md](REMOTE_APPROVALS.md); for
@@ -117,6 +118,8 @@ M4; `/import all` — reconciliation pass, 2026-07-30).
 | `/scan` | Find real, unregistered projects under your configured roots |
 | `/import <path> [as <name>]` | Register a folder `/scan` found (registry only — never touches its files) |
 | `/import all` | Register every current `/scan` candidate in one batch, after one confirmation |
+| `/mission [project]` | Auto-detect a project's language/framework/build-test commands from files on disk and write it a starter `promptFile` (Phase 14 M9). Never overwrites an existing mission |
+| `/mission all` | Do the above for every registered project still missing a mission, in one confirmed batch |
 | `/archive [project]` | Demote a project's priority. Never deletes it |
 | `/restore [project]` | Return an archived or hidden project to "development" |
 | `/hide [project]` · `/unhide [project]` | Keep a project out of `/projects` without archiving or removing it |
@@ -305,9 +308,19 @@ $ ai-orchestrator projects status
 `operator` sends the message through the *same router* your phone talks to —
 there is one implementation of the command logic, not two.
 
-> **Git Bash on Windows** rewrites a leading `/` into a path, so
-> `operator "/projects"` arrives mangled. Use PowerShell, or drop the slash:
-> `operator "projects"` and `operator "status alpha"` work in any shell.
+> **Operator recommendation: use PowerShell, not Git Bash, for CLI slash
+> commands.** Git Bash on Windows rewrites a leading `/` into a filesystem
+> path before the shell ever sees it, so `operator "/projects"` arrives at
+> the router mangled — and because `resolveTarget()` treats unmatched input
+> as free-form mission text, a mangled command can silently create a real
+> mission request instead of failing loudly. This has recurred across
+> Phase 13/14 development (see `docs/PHASE_13_M8_REPORT.md` and
+> `docs/PHASE_13_RECONCILIATION_2026-07-30.md` for two disclosed incidents)
+> — it is Windows/Git-Bash behavior, not a bug in this codebase, so there is
+> no code fix, only this standing recommendation. If Git Bash is
+> unavoidable, drop the leading
+> slash: `operator "projects"` and `operator "status alpha"` both work in
+> any shell.
 
 ---
 
