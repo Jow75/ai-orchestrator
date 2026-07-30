@@ -1222,6 +1222,92 @@ test('/git names an unknown project the same way /status does', async () => {
   assert.match(reply, /No project matches "nope"/);
 });
 
+// ───────────────────────────── Phase 14 M2: log visibility ─────────────────
+
+/** Appends one winston-shaped JSON log line to today's real log file. */
+function writeLogLine(paths, record) {
+  const file = path.join(paths.logsDir, 'orchestrator-2026-07-30.log');
+  fs.appendFileSync(file, `${JSON.stringify({ timestamp: new Date().toISOString(), ...record })}\n`);
+}
+
+test('/log with no log file yet says so plainly', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const { reply } = await h.say('/log alpha');
+  assert.match(reply, /alpha/);
+  assert.match(reply, /No log file exists yet/);
+});
+
+test('/log reports which file it read from, and tags each line with timestamp and severity', async () => {
+  const h = harness({ projects: ['alpha'] });
+  writeLogLine(h.paths, { level: 'info', project: 'alpha', message: 'mission worker started' });
+  writeLogLine(h.paths, { level: 'error', project: 'alpha', message: 'mission worker crashed' });
+
+  const { reply } = await h.say('/log alpha');
+
+  assert.match(reply, /alpha — orchestrator-2026-07-30\.log/);
+  assert.match(reply, /🔵.*mission worker started/);
+  assert.match(reply, /🔴.*mission worker crashed/);
+  assert.match(reply, /2 lines/);
+});
+
+test('/log only shows lines tagged for the named project, never another project\'s or untagged service activity', async () => {
+  const h = harness({ projects: ['alpha', 'beta'] });
+  writeLogLine(h.paths, { level: 'info', project: 'alpha', message: 'alpha activity' });
+  writeLogLine(h.paths, { level: 'info', project: 'beta', message: 'beta activity' });
+  writeLogLine(h.paths, { level: 'info', message: 'daemon startup, no project' });
+
+  const { reply } = await h.say('/log alpha');
+
+  assert.match(reply, /alpha activity/);
+  assert.doesNotMatch(reply, /beta activity/);
+  assert.doesNotMatch(reply, /daemon startup/);
+});
+
+test('/log with no argument uses the active project, like /git and /status', async () => {
+  const h = harness({ projects: ['alpha'] });
+  writeLogLine(h.paths, { level: 'info', project: 'alpha', message: 'from the active project' });
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/log');
+
+  assert.match(reply, /alpha/);
+  assert.match(reply, /from the active project/);
+});
+
+test('/log paginates like /files: a trailing bare number is a page once a project name precedes it', async () => {
+  const h = harness({ projects: ['alpha'] });
+  for (let i = 1; i <= 25; i += 1) {
+    writeLogLine(h.paths, { level: 'info', project: 'alpha', message: `line ${i}` });
+  }
+
+  const page1 = await h.say('/log alpha');
+  assert.match(page1.reply, /Page 1\/2/);
+  assert.match(page1.reply, /line 25/);
+  assert.doesNotMatch(page1.reply, /line 1\b/);
+
+  const page2 = await h.say('/log alpha 2');
+  assert.match(page2.reply, /Page 2\/2/);
+  assert.match(page2.reply, /line 1\b/);
+});
+
+test('/log 40 treats a lone bare number as a project name, not a page — matching /files\' rule', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const { reply } = await h.say('/log 40');
+  assert.match(reply, /No project matches "40"/);
+});
+
+test('/log is refused when operator.log is disabled', async () => {
+  const h = harness({ projects: ['alpha'], operator: { log: { enabled: false } } });
+  const { reply } = await h.say('/log alpha');
+  assert.match(reply, /disabled/i);
+});
+
+test('/log names an unknown project the same way /status does', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const { reply } = await h.say('/log nope');
+  assert.match(reply, /No project matches "nope"/);
+});
+
 // ─────────────────────────── Phase 13 M3: lifecycle & classification ───────
 
 test('/archive marks a project archived; it stays listed but sorts after live statuses', async () => {

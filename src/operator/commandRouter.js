@@ -29,6 +29,7 @@ import { parseCommand } from './commandGrammar.js';
 import { scanRoots } from './projectDiscovery.js';
 import { inspectProject, buildAutoMissionPrompt } from './projectInspector.js';
 import { gitReport } from './gitVisibility.js';
+import { readLogTail } from './logVisibility.js';
 import {
   archive, restore, hide, unhide, forget, classifyProposal,
 } from './projectLifecycleOps.js';
@@ -39,7 +40,7 @@ import {
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
   renderHelp, renderServiceStatus, renderScanResults, renderFileListing,
   renderFileInline, formatBytes, truncate, renderMissionAssignment, renderMissionBatch,
-  renderWorkspace, renderGitStatus, renderGitFilter,
+  renderWorkspace, renderGitStatus, renderGitFilter, renderLogTail,
 } from './render.js';
 import {
   FileAccessError, listFiles, resolveWithinProject, looksBinary,
@@ -82,9 +83,11 @@ export class CommandRouter {
    * @param {import('../config/liveConfig.js').LiveConfigLayer} [deps.liveConfig]
    * @param {import('../drivers/driverRegistry.js').DriverRegistry} [deps.driverRegistry]
    * @param {object} deps.config - The full merged global config.
-   * @param {{downloadsDir: string}} [deps.paths] - Phase 13 M6: where
-   *   `/download-project` writes generated ZIPs. Absent ⇒ `/download-project`
-   *   refuses cleanly rather than guessing a location.
+   * @param {{downloadsDir: string, logsDir: string}} [deps.paths] - Phase 13
+   *   M6: where `/download-project` writes generated ZIPs. Absent ⇒
+   *   `/download-project` refuses cleanly rather than guessing a location.
+   *   Phase 14 M2: `logsDir` is where `/log` tails the real orchestrator log
+   *   file from; absent ⇒ `/log` refuses cleanly the same way.
    * @param {() => void} [deps.requestShutdown] - Stops the Core Service.
    * @param {object} deps.logger
    */
@@ -413,6 +416,7 @@ export class CommandRouter {
       case 'missions': return this.commandMissions(ctx);
       case 'service': return await this.commandService();
       case 'events': return this.commandEvents(rest, ctx);
+      case 'log': return this.commandLog(rest, ctx);
       case 'confirm': return await this.commandConfirm(rest, ctx);
       case 'cancel': return this.commandCancel(rest, ctx);
       case 'scan': return this.commandScan(ctx);
@@ -581,6 +585,43 @@ export class CommandRouter {
     const records = this.registry.list({ includeHidden: false })
       .filter((r) => r.git && (kind === 'dirty' ? r.git.dirty : !r.git.dirty));
     return { reply: renderGitFilter(kind, records) };
+  }
+
+  /**
+   * `/log [project] [page]` — Phase 14 M2: a tail of the real orchestrator
+   * log file (`logVisibility.js`) for the active (or named) project —
+   * timestamp, severity, and message per line. Paginated exactly like
+   * `/files`: a trailing bare number is a page once a project name already
+   * precedes it, so "/log 40" means the project "40" (page 1), not page 40
+   * of the active project — the same disambiguation `commandFiles()` uses
+   * and for the same reason. Read-only, no approval gate — same risk class
+   * as `/git`.
+   *
+   * Distinct from `/events`: that reads the structured internal event log;
+   * this reads the raw text log every daemon/worker process writes to (one
+   * shared file for the whole installation — see `src/infra/paths.js`'s
+   * `logsDir`), filtered to the lines that project's own activity tagged
+   * with a `project` field. Lines with no such field are the service's own
+   * activity, not this project's, so they are correctly excluded.
+   */
+  commandLog(rest, ctx) {
+    if (this.operatorConfig.log?.enabled === false) {
+      return { reply: 'Log visibility is disabled (operator.log.enabled: false).' };
+    }
+    if (!this.paths?.logsDir) {
+      return { reply: 'This interface cannot read the log from here.' };
+    }
+
+    const words = (rest ?? '').trim().split(/\s+/).filter(Boolean);
+    let page = 1;
+    if (words.length > 1 && /^\d+$/.test(words.at(-1))) page = Number(words.pop());
+    const projectRest = words.join(' ');
+
+    const resolved = this.resolveTarget(projectRest, ctx);
+    if (resolved.reply) return { reply: resolved.reply };
+
+    const tail = readLogTail(this.paths.logsDir, resolved.project, { page });
+    return { reply: renderLogTail(resolved.project, tail) };
   }
 
   commandStart(rest, ctx) {

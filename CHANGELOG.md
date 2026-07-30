@@ -3,6 +3,47 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.13.0] — 2026-07-30 — Phase 14 M2: Log Visibility
+
+Answers "what actually happened, in the system's own words" from a phone —
+distinct from `/events`' structured internal record, this tails the real
+text log every daemon and mission-worker process writes to. Full design
+tradeoffs, including the one real naming collision found and fixed before
+shipping, recorded in `docs/PHASE_14_PLAN.md`'s M2 section.
+
+### Added
+
+- **`/log [project] [page]`** (`src/operator/commandRouter.js`,
+  `renderLogTail()` in `render.js`) — tails the real `logs/orchestrator-
+  *.log` file, newest line first: timestamp, severity icon, and message per
+  line, filtered to the lines that project's own activity tagged. Paginated
+  exactly like `/files` (a trailing bare number is a page only once a
+  project name already precedes it). Read-only, no approval gate, matching
+  `/git`/`/status`. Kill switch: `operator.log.enabled`.
+- **`src/operator/logVisibility.js`** — `latestLogFile()` (picked by mtime,
+  not an assembled date string, so a read moments after midnight still
+  finds yesterday's real file) and `readLogTail()` (parses the winston
+  JSON-lines format `src/infra/logger.js` writes, filters by the `project`
+  field individual log calls already attach, paginates).
+
+### Fixed
+
+- **A real naming collision, caught before it shipped:** `log` was already
+  a live alias for `/events`, dating to Phase 12 M2. Since `/log` and
+  `/events` read genuinely different things (raw text log vs. structured
+  event log) and this milestone's own command needed the name, the alias
+  is retired — `/events` keeps `activity`; `/log` gets its own alias,
+  `logs`.
+
+### Regression coverage
+
+- `logVisibility.test.js` (new, 10 tests, against a real throwaway log
+  directory), `commandRouter.test.js` (+8). 1240 → 1258 backend tests, zero
+  regressions. 41/41 desktop tests unaffected. Live-validated against the
+  real Core Service and real project history (`calculator-proof`) through
+  the CLI operator bridge: real timestamps, real severities, real
+  pagination across 44 real log lines.
+
 ## [3.12.0] — 2026-07-30 — Phase 14 M1: Git Visibility
 
 Answers "what state is this repo actually in" from a phone, without a

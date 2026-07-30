@@ -487,6 +487,19 @@ export const ORCHESTRATOR_DEFAULTS = {
     git: {
       enabled: true,
     },
+    /**
+     * Phase 14 M2: `/log [project] [n]` — tails the real
+     * `logs/orchestrator-*.log` file (the raw text log every daemon/worker
+     * process writes to via `src/infra/logger.js`), filtered to the lines
+     * tagged with the given project. Distinct from `/events`, which reads
+     * the structured internal event log, not this file. Read-only, same
+     * risk class as `/files` (a real-file read, no writes) — its own
+     * switch anyway, following this codebase's one-switch-per-new-
+     * capability convention.
+     */
+    log: {
+      enabled: true,
+    },
     /** Phase 13 M6: `/download-project` sizing and exclusions. */
     download: {
       /**

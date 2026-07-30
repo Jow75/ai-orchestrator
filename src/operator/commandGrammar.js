@@ -144,12 +144,21 @@ export const COMMANDS = Object.freeze([
   },
   {
     name: 'events',
-    aliases: ['log', 'activity'],
+    aliases: ['activity'],
     usage: '/events [count]',
     takesRest: true,
     category: 'System',
     examples: ['/events 20'],
     description: 'The most recent things the system actually did.',
+  },
+  {
+    name: 'log',
+    aliases: ['logs'],
+    usage: '/log [project] [n]',
+    takesRest: true,
+    category: 'System',
+    examples: ['/log Remote Work', '/log Remote Work 40'],
+    description: 'Tail the real orchestrator log file for the active (or named) project — raw text, not the structured event log /events shows.',
   },
   {
     name: 'reset',

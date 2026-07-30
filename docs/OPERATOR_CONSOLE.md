@@ -7,7 +7,9 @@ itself into the same sections used below. `/import all` and `/safemode`
 were added in the 2026-07-30 reconciliation pass (`v3.9.0`); `/mission` and
 `/mission all` were added in Phase 14 M9 (`v3.10.0`); `/workspace` in Phase
 14 M0 (`v3.11.0`); `/git`, `/git dirty`, and `/git clean` in Phase 14 M1
-(`v3.12.0`).
+(`v3.12.0`); `/log` in Phase 14 M2 (`v3.13.0`) — which also freed the `log`
+alias off `/events` (see the System section below), since the two commands
+read genuinely different things and the name was needed for the real one.
 
 This is the guide to *operating* AI-Orchestrator remotely. For deciding
 individual approvals, see [REMOTE_APPROVALS.md](REMOTE_APPROVALS.md); for
@@ -59,7 +61,7 @@ added later can accidentally become reachable.
 
 ## The commands
 
-33 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
+34 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
 — both read from the one `COMMANDS` array in `src/operator/commandGrammar.js`,
 so this table and the bot's own `/help` cannot drift apart.
 
@@ -108,7 +110,8 @@ What is waiting on you.
 | Command | What it does |
 | --- | --- |
 | `/service` | Running / Starting / Stopped — and whether it survives a reboot |
-| `/events [n]` | What the system actually did |
+| `/events [n]` | What the system actually did — the structured internal event log |
+| `/log [project] [page]` | Tail the real orchestrator log file for a project — raw text, not the structured event log `/events` reads |
 | `/shutdown` ⚠️ | Stop the Core Service itself |
 
 ### Registry
@@ -154,8 +157,8 @@ Read-only remote inspection (Phase 13 M6).
 Plus the decision grammar, unchanged since Phase 10:
 `APPROVE A7` · `REJECT A7 [why]` · `MODIFY A7 <changes>` · `DONE A7`.
 
-Aliases exist where they are natural — `/ls`, `/use`, `/cd`, `/queue`, `/log`,
-`/yes`, `/no`, `/rescan`, `/dir`, `/cat`, `/zip`. The leading `/` is optional
+Aliases exist where they are natural — `/ls`, `/use`, `/cd`, `/queue`,
+`/activity`, `/logs`, `/yes`, `/no`, `/rescan`, `/dir`, `/cat`, `/zip`. The leading `/` is optional
 for a bare command (`projects`, `status calculator`), and prose that merely
 *starts* with a command word ("status update: the importer is done…") is
 treated as prose, not a command.

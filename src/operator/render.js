@@ -711,6 +711,42 @@ export function renderFileInline(relativePath, content) {
   return [`📄 ${relativePath}`, '', body].join('\n');
 }
 
+/** Icon for one log line's winston level — `/log`'s severity marker. */
+const LOG_LEVEL_ICON = Object.freeze({
+  error: '🔴',
+  warn: '🟡',
+  info: '🔵',
+  debug: '⚪',
+});
+
+/**
+ * `/log [project]` — Phase 14 M2: a tail of the real orchestrator log file,
+ * newest line first. `tail` is `logVisibility.js`'s `readLogTail()` result —
+ * null when no log file exists on disk yet at all (a fresh install that has
+ * never logged anything), distinct from a real file with zero lines tagged
+ * for this particular project.
+ */
+export function renderLogTail(project, tail) {
+  if (!tail) {
+    return [`${project}`, '', 'No log file exists yet.'].join('\n');
+  }
+
+  const lines = [`${project} — ${tail.file}`, ''];
+  if (!tail.lines.length) {
+    lines.push(tail.total ? '(nothing on this page)' : 'Nothing logged for this project yet.');
+  }
+  for (const entry of tail.lines) {
+    const when = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '--:--:--';
+    const icon = LOG_LEVEL_ICON[entry.level] ?? '⚪';
+    lines.push(`${when} ${icon} ${entry.message}`);
+  }
+  lines.push('');
+  lines.push(tail.pageCount > 1
+    ? `Page ${tail.page}/${tail.pageCount} · ${tail.total} lines total`
+    : `${tail.total} line${tail.total === 1 ? '' : 's'}`);
+  return lines.join('\n');
+}
+
 export default {
   relativeTime, renderProjectLine, renderProjectList, renderProjectDetail,
   renderTasks, renderApprovals, renderMissionProposal, renderMissionRequests,

@@ -112,6 +112,37 @@ distinctly from "actually broken" (needs hand-editing). Full reasoning in
 unaffected. **Committed and tagged `v3.11.0`**, same standing practice as
 every prior milestone — **not yet pushed to `origin`**.
 
+**Phase 14 M2 — Log Visibility (`v3.13.0`) is DONE.** New `/log [project]
+[page]`: a tail of the real `logs/orchestrator-*.log` file (the raw text
+log every daemon and mission-worker process writes to via
+`src/infra/logger.js`) — timestamp, severity icon, and message per line,
+newest first, filtered to the lines that project's own activity tagged with
+a `project` field. Distinct from `/events`, which reads the structured
+internal event log, not this file. Paginated exactly like `/files`: a
+trailing bare number is a page only once a project name already precedes
+it, the identical disambiguation `commandFiles()` uses. New
+`src/operator/logVisibility.js` (`latestLogFile()` — picked by mtime, not
+an assembled date string, so a read moments after midnight still finds
+yesterday's real file instead of a phantom empty one; `readLogTail()`).
+Kill switch: `operator.log.enabled`. **One real naming collision found and
+fixed before it shipped:** `log` was already a live alias for `/events`,
+dating to Phase 12 M2 — since the two commands read genuinely different
+things and this milestone's own command needed the name, the alias is
+retired (`/events` keeps `activity`; `/log` gets its own alias, `logs`).
+Full reasoning in `docs/PHASE_14_PLAN.md`'s M2 section. `logVisibility.test.js`
+(new, 10 tests), `commandRouter.test.js` (+8). 1240 → 1258 backend tests,
+zero regressions; 41/41 desktop tests unaffected. Live-validated against
+the real Core Service and real project history (`calculator-proof`)
+through the CLI operator bridge — real timestamps, real severities, real
+pagination across 44 real log lines. That same live pass hit the
+documented Git Bash `/`-mangling gotcha again (a `/log` command typed from
+Git Bash silently became mission request M16); caught immediately,
+rejected before approval, nothing written, both events left in the log —
+same incident shape as Phase 13 M8's, same fix (use PowerShell for operator
+CLI calls). **Committed and tagged `v3.13.0`**, same standing practice as
+every prior milestone — **not yet pushed to `origin`**. M8, M3, M4, M5, M6,
+M7 remain, per the plan's dependency graph.
+
 **Phase 14 M1 — Git Visibility (`v3.12.0`) is DONE.** New `/git [project]`:
 branch, dirty/clean state (with a changed-file count), HEAD, up to 8 recent
 commit subjects, and ahead/behind the branch's own upstream when one is
