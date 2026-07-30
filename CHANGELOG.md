@@ -3,6 +3,40 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.11.0] — 2026-07-30 — Phase 14 M0: Workspace Overview
+
+The first Phase 14 milestone in its own numeric order (M9 shipped first, per
+an explicit owner priority call). Answers "how is the whole portfolio doing"
+without opening one project at a time. Full design tradeoffs recorded in
+`docs/PHASE_14_PLAN.md`'s M0 section.
+
+### Added
+
+- **`/workspace`** (`src/operator/commandRouter.js`, `renderWorkspace()` in
+  `render.js`) — a read-only rollup over every registered project: total
+  count, mission-ready count, a status breakdown (running/idle/blocked/
+  waiting-for-you/etc.), git clean/dirty counts, the 5 most recently active
+  projects, and a "needs attention" list. No new data source — every field
+  is already computed by `ProjectRegistry.list()`, summed rather than shown
+  one row at a time. Kill switch: `operator.workspace.enabled`.
+
+### Fixed
+
+- One real gap `/workspace`'s own design surfaced: a project with neither a
+  `promptFile` nor a task plan fails `ConfigManager.validateProject()` (both
+  are required for a legal config) and so always reports registry status
+  `misconfigured` — including every project the Phase 14 M9 gap described.
+  `renderWorkspace()`'s "needs attention" list now checks mission-readiness
+  (a raw config read, the same technique `/mission`'s own `assignMission()`
+  uses) BEFORE falling back to the generic `misconfigured` label, so this
+  common, one-command-fixable state ("no mission yet") reads distinctly
+  from a project that's actually broken for some other reason.
+
+### Regression coverage
+
+- `commandRouter.test.js` (+6 for `/workspace`). 1219 → 1225 backend tests,
+  zero regressions. 41/41 desktop tests unaffected.
+
 ## [3.10.0] — 2026-07-30 — Phase 14 M9: Remote Mission-Readiness
 
 Closes the single highest-value gap the 2026-07-30 acceptance review found:

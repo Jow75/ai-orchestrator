@@ -1,6 +1,6 @@
 # Phase 14 — Remote Engineering (Planning Only)
 
-**Status:** Draft planning document. **No code has been written for this phase.** Produced as the Part 10 deliverable of the 2026-07-30 engineering acceptance review (`docs/PHASE_13_M9_ACCEPTANCE_REVIEW.md`), per the owner's own instruction that Phase 14 planning only starts once Phase 13 is officially closed.
+**Status:** Draft planning document; execution has begun out of numeric order (M9 then M0), per explicit owner priority calls — see each milestone's own status line below. Produced as the Part 10 deliverable of the 2026-07-30 engineering acceptance review (`docs/PHASE_13_M9_ACCEPTANCE_REVIEW.md`), per the owner's own instruction that Phase 14 planning only starts once Phase 13 is officially closed.
 
 **Framing, per standing owner direction:** Phase 14 is intended to be **the last infrastructure-heavy phase**. It is allowed to be substantial, but every milestone below is scoped to extend the *existing* architecture (new commands, new mission templates, new read-only surfaces) rather than introduce a new subsystem, process model, or persistence layer. Anything that would require a genuinely new architectural layer is flagged explicitly rather than folded in quietly.
 
@@ -57,7 +57,7 @@ This distinction is the load-bearing decision of this whole phase: it's why Phas
 
 ## 2. Milestones
 
-### M0 — Workspace Overview (`/workspace`)
+### M0 — Workspace Overview (`/workspace`) — SHIPPED, `v3.11.0`
 A single read-only rollup across every project the registry knows about, answering
 "how is the whole portfolio doing" without opening one project at a time. Iterates
 `ProjectRegistry.list()` — already computes per-project status (running/idle/
@@ -79,6 +79,20 @@ already computed by an existing registry read, just summed instead of shown one
 row at a time. Kill switch: `operator.workspace.enabled`, following the one
 switch per new capability class convention every other Phase 13/14 milestone
 uses.
+
+**One deviation from the sketch above, forced by something the sketch missed:**
+mission-readiness could NOT come from `ProjectRegistry.list()` records directly —
+`ConfigManager.validateProject()` requires either a `promptFile` or a non-empty
+`tasks` array to consider a config legal at all, so a project missing both never
+reaches `describe()`'s status computation; it throws first and the record comes
+back `status: 'misconfigured'`. `commandWorkspace()` reads each project's RAW
+config file instead (the same technique M9's `assignMission()` already uses) to
+tell "no mission yet" (this milestone's whole reason to exist — the M9 gap,
+mostly closed but not universally guaranteed forever) apart from "broken for a
+real, different reason" (bad driver id, say) — `render.js`'s `attentionReason()`
+checks mission-readiness BEFORE the generic `misconfigured` label for exactly
+this reason. `1219 → 1225` backend tests (`commandRouter.test.js` +6), zero
+regressions.
 **Depends on:** nothing. **Risk:** low — read-only, same risk class as `/status`/`/projects`, which this milestone is a rollup of.
 
 ### M1 — Git Visibility (`/git [project]`)

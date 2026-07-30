@@ -92,9 +92,27 @@ desktop) immediately before the commit. **Not yet pushed to `origin`** —
 same standing practice as `v3.8.0`/`v3.9.0`, awaiting the owner's
 go-ahead. `docs/OPERATOR_CONSOLE.md`'s Git Bash caution was elevated from
 a one-line note to an explicit **Operator recommendation** callout after
-recurring across Phase 13/14 sessions. M0 (Workspace Overview) begins
-next; M1–M8 sequencing otherwise unchanged (M1, M2, M8, M3, M4, M5, M6,
-M7 — see the plan's dependency graph).
+recurring across Phase 13/14 sessions.
+
+**Phase 14 M0 — Workspace Overview (`v3.11.0`) is DONE.** New `/workspace`:
+a read-only rollup over every registered project (mission-ready count,
+status breakdown, git clean/dirty counts, 5 most recently active, needs
+attention), reading nothing `ProjectRegistry.list()` didn't already
+compute per project. Kill switch: `operator.workspace.enabled`. One real
+gap found and fixed during the build itself: a project with neither a
+`promptFile` nor a task plan fails `ConfigManager.validateProject()`
+outright, so it always shows registry status `misconfigured` — including
+every project the M9 gap describes. `renderWorkspace()`'s "needs
+attention" list now checks mission-readiness (a raw config read, same
+technique `assignMission()` already uses) BEFORE the generic
+`misconfigured` label, so "no mission yet" (one command to fix) reads
+distinctly from "actually broken" (needs hand-editing). Full reasoning in
+`docs/PHASE_14_PLAN.md`'s M0 section. 1219 → 1225 backend tests
+(`commandRouter.test.js` +6), zero regressions; 41/41 desktop tests
+unaffected. **Committed and tagged `v3.11.0`**, same standing practice as
+every prior milestone — **not yet pushed to `origin`**. M1–M8 sequencing
+unchanged (M1, M2, M8, M3, M4, M5, M6, M7 — see the plan's dependency
+graph).
 
 **Phase 13 M6 — Remote File System (`v3.6.0`) is DONE.** The first new
 runtime dependency since baseline (`archiver`) and the first filesystem

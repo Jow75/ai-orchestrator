@@ -464,6 +464,17 @@ export const ORCHESTRATOR_DEFAULTS = {
     mission: {
       enabled: true,
     },
+    /**
+     * Phase 14 M0: `/workspace` — a read-only rollup across every registered
+     * project (mission-readiness, status counts, git clean/dirty, recently
+     * active, needs attention). Same risk class as `/status`/`/projects`
+     * (no new data source, nothing here isn't already shown one row at a
+     * time) — its own switch anyway, following this codebase's one-switch-
+     * per-new-capability convention every other Phase 13/14 milestone uses.
+     */
+    workspace: {
+      enabled: true,
+    },
     /** Phase 13 M6: `/download-project` sizing and exclusions. */
     download: {
       /**

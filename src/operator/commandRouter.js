@@ -38,6 +38,7 @@ import {
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
   renderHelp, renderServiceStatus, renderScanResults, renderFileListing,
   renderFileInline, formatBytes, truncate, renderMissionAssignment, renderMissionBatch,
+  renderWorkspace,
 } from './render.js';
 import {
   FileAccessError, listFiles, resolveWithinProject, looksBinary,
@@ -403,6 +404,7 @@ export class CommandRouter {
       case 'project': return this.commandSelect(rest, ctx);
       case 'whoami': return this.commandWhoami(ctx);
       case 'status': return this.commandStatus(rest, ctx);
+      case 'workspace': return this.commandWorkspace();
       case 'start': return this.commandStart(rest, ctx);
       case 'tasks': return this.commandTasks(rest, ctx);
       case 'approvals': return this.commandApprovals();
@@ -510,6 +512,31 @@ export class CommandRouter {
     const resolved = this.resolveTarget(rest, ctx);
     if (resolved.reply) return { reply: resolved.reply };
     return { reply: renderProjectDetail(this.registry.describe(resolved.project)) };
+  }
+
+  /**
+   * `/workspace` — Phase 14 M0: a read-only rollup over the whole registry.
+   * Every field `renderWorkspace()` sums (status, git, lastActivity) is
+   * already computed by `registry.list()` — this method's only real job is
+   * mission-readiness, which reads the RAW config file per project, exactly
+   * like `assignMission()`'s own "already has a mission" check: the
+   * validated view `configManager.getProject()` gives THROWS on precisely
+   * the misconfigured/missing-folder projects this rollup still has to
+   * count, so it can't be used here either.
+   */
+  commandWorkspace() {
+    if (this.operatorConfig.workspace?.enabled === false) {
+      return { reply: 'Workspace overview is disabled (operator.workspace.enabled: false).' };
+    }
+    const records = this.registry.list({ includeHidden: false });
+    const missionReady = new Set();
+    for (const record of records) {
+      const raw = this.configManager.getProjectFileContents(record.name);
+      if (raw && (raw.promptFile || (Array.isArray(raw.tasks) && raw.tasks.length > 0))) {
+        missionReady.add(record.name);
+      }
+    }
+    return { reply: renderWorkspace(records, { missionReady }) };
   }
 
   commandStart(rest, ctx) {

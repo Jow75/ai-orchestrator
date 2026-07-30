@@ -21,6 +21,7 @@ import {
   healthLabel, decisionLabel,
 } from '../shared/vocabulary.js';
 import { COMMANDS } from './commandGrammar.js';
+import { PROJECT_STATUSES } from './projectRegistry.js';
 import { SIMULATION_BADGE, SIMULATION_NOTICE } from '../drivers/simulation.js';
 
 /** Longest list a single phone message should carry before it is summarized. */
@@ -83,6 +84,102 @@ export function renderProjectList(records, { active } = {}) {
   if (records.length > MAX_LIST) lines.push(`… and ${records.length - MAX_LIST} more.`);
   lines.push('');
   lines.push(active ? `Active: ${active}` : 'No project selected — /project <name>');
+  return lines.join('\n');
+}
+
+/**
+ * Why a project belongs in `/workspace`'s "needs attention" list, or `null`
+ * if it doesn't. Checked in priority order.
+ *
+ * "No mission yet" is checked BEFORE the generic 'misconfigured' status,
+ * not after: a project with neither a `promptFile` nor a task plan fails
+ * `ConfigManager.validateProject()` (both are required for a legal config)
+ * and so ALWAYS shows status 'misconfigured' too — the exact 19-of-23-
+ * projects gap `/mission` (Phase 14 M9) exists to close. Reporting that as
+ * "misconfigured" would be accurate but actively unhelpful: the fix is one
+ * command (`/mission <name>`), not hand-editing JSON. A project that fails
+ * validation for a genuinely different reason (bad driver id, say) while
+ * still having a `promptFile` set is unaffected by this reordering — it is
+ * already in `missionReady`, so it falls through to 'misconfigured' below.
+ */
+function attentionReason(record, missionReady) {
+  if (record.status === 'missing') return 'folder missing';
+  if (missionReady && !missionReady.has(record.name)) return 'no mission yet';
+  if (record.status === 'misconfigured') return 'misconfigured';
+  if (record.status === 'blocked') return 'blocked';
+  return null;
+}
+
+/**
+ * `/workspace` — Phase 14 M0: a portfolio-wide rollup over every registered
+ * project, answering "how is the whole workspace doing" without opening one
+ * project at a time. No new data source: every field is already computed
+ * per-project by `ProjectRegistry.list()` (status, git, lastActivity),
+ * summed rather than shown one row at a time — except mission-readiness,
+ * which isn't on the record at all (it comes from a raw config read only
+ * the caller has reason to make), so it arrives precomputed as a `Set`.
+ * Deliberately no cross-project reasoning here — see
+ * `docs/PHASE_14_PLAN.md` §0a for why that's out of scope for this phase.
+ *
+ * @param {object[]} records - From `ProjectRegistry.list()`.
+ * @param {{missionReady?: Set<string>, recentCount?: number}} [options]
+ */
+export function renderWorkspace(records, { missionReady, recentCount = 5 } = {}) {
+  if (!records.length) {
+    return [
+      'No projects are defined yet.',
+      '',
+      'Add one from the machine with: ai-orchestrator projects add --interactive',
+    ].join('\n');
+  }
+
+  const readyCount = missionReady ? records.filter((r) => missionReady.has(r.name)).length : 0;
+  const lines = [
+    `🗂️ Workspace — ${records.length} project${records.length === 1 ? '' : 's'}`,
+    '',
+    `Mission-ready: ${readyCount}/${records.length}`,
+  ];
+
+  const statusCounts = new Map();
+  for (const record of records) statusCounts.set(record.status, (statusCounts.get(record.status) ?? 0) + 1);
+  lines.push('', 'Status:');
+  for (const status of PROJECT_STATUSES) {
+    const count = statusCounts.get(status);
+    if (count) lines.push(`${projectStatusIcon(status)} ${projectStatusLabel(status)}: ${count}`);
+  }
+
+  const withGit = records.filter((r) => r.git);
+  if (withGit.length) {
+    const dirty = withGit.filter((r) => r.git.dirty).length;
+    const noRepo = records.length - withGit.length;
+    const parts = [`${withGit.length - dirty} clean`, `${dirty} dirty`];
+    if (noRepo) parts.push(`${noRepo} not a repo`);
+    lines.push('', `Git: ${parts.join(' · ')}`);
+  }
+
+  const recent = records
+    .filter((r) => r.lastActivity)
+    .sort((a, b) => Date.parse(b.lastActivity) - Date.parse(a.lastActivity))
+    .slice(0, recentCount);
+  if (recent.length) {
+    lines.push('', 'Recently active:');
+    for (const r of recent) lines.push(`• ${r.name} — ${relativeTime(r.lastActivity)}`);
+  }
+
+  const needsAttention = records
+    .map((r) => ({ record: r, reason: attentionReason(r, missionReady) }))
+    .filter((entry) => entry.reason);
+  lines.push('');
+  if (needsAttention.length) {
+    lines.push(`Needs attention (${needsAttention.length}):`);
+    for (const { record, reason } of needsAttention.slice(0, MAX_LIST)) {
+      lines.push(`${projectStatusIcon(record.status)} ${record.name} — ${reason}`);
+    }
+    if (needsAttention.length > MAX_LIST) lines.push(`… and ${needsAttention.length - MAX_LIST} more.`);
+  } else {
+    lines.push('Nothing needs attention right now.');
+  }
+
   return lines.join('\n');
 }
 

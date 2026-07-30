@@ -77,6 +77,7 @@ Browsing and selecting what you already have.
 | `/projects [all\|classify]` | Every project: status, tasks, branch, health. `all` includes hidden; `classify` proposes classifications |
 | `/project <name>` | Select the active project. Remembered until you change it |
 | `/status [project]` | Phase, tasks, worker, branch, commit, last activity, health |
+| `/workspace` | Portfolio rollup: mission-ready count, status breakdown, git clean/dirty, recently active, needs attention |
 
 ### Missions
 

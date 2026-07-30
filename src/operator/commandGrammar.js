@@ -78,6 +78,13 @@ export const COMMANDS = Object.freeze([
     description: 'Full status of the active (or named) project.',
   },
   {
+    name: 'workspace',
+    aliases: ['overview'],
+    usage: '/workspace',
+    category: 'Projects',
+    description: 'Portfolio rollup: mission-readiness, status counts, git clean/dirty, recently active, needs attention.',
+  },
+  {
     name: 'start',
     aliases: ['run'],
     usage: '/start [project]',

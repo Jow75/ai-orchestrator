@@ -1062,6 +1062,69 @@ test('/mission all isolates one project\'s failure from the rest of the batch', 
   assert.equal(h.events.read({ types: ['project.mission-assigned'] }).length, 1);
 });
 
+// ─────────────────────────────────── Phase 14 M0: /workspace ───────────────
+
+test('/workspace reports total, mission-ready count, status breakdown, and git counts', async () => {
+  const h = harness({ projects: ['alpha', 'beta'] }); // both get a real promptFile from harness()
+  h.workerRegistry.register('beta', { pid: process.pid });
+
+  const { reply } = await h.say('/workspace');
+
+  assert.match(reply, /2 projects/);
+  assert.match(reply, /Mission-ready: 2\/2/);
+  assert.match(reply, /Running: 1/);
+  assert.match(reply, /Idle: 1/);
+  assert.match(reply, /Nothing needs attention right now\./);
+});
+
+test('/workspace lists a project missing a promptFile under needs attention', async () => {
+  const h = discoveryHarness(); // 'alpha' already has a mission from harness()
+  const dir = mkCandidate(h.rootsDir, 'no-mission-yet');
+  await h.say(`/import ${dir}`);
+
+  const { reply } = await h.say('/workspace');
+
+  assert.match(reply, /Mission-ready: 1\/2/);
+  assert.match(reply, /Needs attention \(1\):/);
+  assert.match(reply, /no-mission-yet — no mission yet/);
+  assert.doesNotMatch(reply, /alpha — no mission yet/);
+});
+
+test('/workspace reports a blocked project under needs attention, with its own status icon', async () => {
+  const h = harness({ projects: ['alpha'] });
+  h.lifecycle.transition('alpha', 'blocked', 'stuck');
+
+  const { reply } = await h.say('/workspace');
+
+  assert.match(reply, /Blocked: 1/);
+  assert.match(reply, /Needs attention \(1\):/);
+  assert.match(reply, /alpha — blocked/);
+});
+
+test('/workspace shows the most recently active projects, most recent first', async () => {
+  const h = harness({ projects: ['alpha', 'beta'] });
+  h.lifecycle.transition('alpha', 'blocked', 'first'); // gives alpha a lifecycle.updatedAt in the past
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+  h.lifecycle.transition('beta', 'blocked', 'second'); // beta's updatedAt is strictly later
+
+  const { reply } = await h.say('/workspace');
+
+  const section = reply.slice(reply.indexOf('Recently active:'));
+  assert.ok(section.indexOf('beta') < section.indexOf('alpha'), 'beta (more recent) is listed first');
+});
+
+test('/workspace is refused when operator.workspace is disabled', async () => {
+  const h = harness({ projects: ['alpha'], operator: { workspace: { enabled: false } } });
+  const { reply } = await h.say('/workspace');
+  assert.match(reply, /disabled/i);
+});
+
+test('/workspace on an empty registry says so plainly', async () => {
+  const h = harness({ projects: [] });
+  const { reply } = await h.say('/workspace');
+  assert.match(reply, /No projects are defined yet/);
+});
+
 // ─────────────────────────── Phase 13 M3: lifecycle & classification ───────
 
 test('/archive marks a project archived; it stays listed but sorts after live statuses', async () => {
