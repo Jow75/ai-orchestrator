@@ -475,6 +475,18 @@ export const ORCHESTRATOR_DEFAULTS = {
     workspace: {
       enabled: true,
     },
+    /**
+     * Phase 14 M1: `/git [project]`, `/git dirty`, `/git clean` — branch,
+     * dirty/clean state, HEAD, recent commits, and (when tracked) ahead/
+     * behind, shelled out to the real `git` binary the same way `/status`'s
+     * `git.branch`/`git.dirty` fields already do. Read-only, no diff, no
+     * file contents — same risk class as `/status`/`/workspace`, its own
+     * switch anyway, following this codebase's one-switch-per-new-capability
+     * convention.
+     */
+    git: {
+      enabled: true,
+    },
     /** Phase 13 M6: `/download-project` sizing and exclusions. */
     download: {
       /**

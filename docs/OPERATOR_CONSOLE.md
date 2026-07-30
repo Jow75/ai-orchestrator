@@ -5,7 +5,9 @@ How to run your projects from your phone. Introduced in Phase 12 M2
 audited end-to-end in Phase 13 M8 (`v3.8.0`), which also grouped `/help`
 itself into the same sections used below. `/import all` and `/safemode`
 were added in the 2026-07-30 reconciliation pass (`v3.9.0`); `/mission` and
-`/mission all` were added in Phase 14 M9 (`v3.10.0`).
+`/mission all` were added in Phase 14 M9 (`v3.10.0`); `/workspace` in Phase
+14 M0 (`v3.11.0`); `/git`, `/git dirty`, and `/git clean` in Phase 14 M1
+(`v3.12.0`).
 
 This is the guide to *operating* AI-Orchestrator remotely. For deciding
 individual approvals, see [REMOTE_APPROVALS.md](REMOTE_APPROVALS.md); for
@@ -57,7 +59,7 @@ added later can accidentally become reachable.
 
 ## The commands
 
-30 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
+33 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
 — both read from the one `COMMANDS` array in `src/operator/commandGrammar.js`,
 so this table and the bot's own `/help` cannot drift apart.
 
@@ -78,6 +80,7 @@ Browsing and selecting what you already have.
 | `/project <name>` | Select the active project. Remembered until you change it |
 | `/status [project]` | Phase, tasks, worker, branch, commit, last activity, health |
 | `/workspace` | Portfolio rollup: mission-ready count, status breakdown, git clean/dirty, recently active, needs attention |
+| `/git [project\|dirty\|clean]` | Branch, dirty/clean state, HEAD, recent commits, ahead/behind for one project; "dirty"/"clean" list every registered project in that state |
 
 ### Missions
 

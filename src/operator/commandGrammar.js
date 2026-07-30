@@ -85,6 +85,15 @@ export const COMMANDS = Object.freeze([
     description: 'Portfolio rollup: mission-readiness, status counts, git clean/dirty, recently active, needs attention.',
   },
   {
+    name: 'git',
+    aliases: [],
+    usage: '/git [project|dirty|clean]',
+    takesRest: true,
+    category: 'Projects',
+    examples: ['/git Remote Work', '/git dirty', '/git clean'],
+    description: 'Branch, dirty/clean state, HEAD, and recent commits for the active (or named) project. "dirty"/"clean" list every registered project in that state.',
+  },
+  {
     name: 'start',
     aliases: ['run'],
     usage: '/start [project]',

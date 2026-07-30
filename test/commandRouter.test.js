@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import ConfigManager from '../src/config/configManager.js';
 import CommandRouter from '../src/operator/commandRouter.js';
 import ProjectRegistry from '../src/operator/projectRegistry.js';
@@ -144,6 +145,19 @@ function harness({ projects = ['alpha', 'beta'], operator = {}, driver = 'claude
     root, paths, router, say, supervisor, taskQueue, approvalStore, approvalManager,
     workerRegistry, events, shutdowns, registry, sessionManager, lifecycle,
   };
+}
+
+/** Turns a project's real working directory into a real git repo, with one commit. */
+function makeRepo(workingDirectory, { branch = 'main', dirty = false } = {}) {
+  const git = (...args) => execFileSync('git', ['-C', workingDirectory, ...args], {
+    stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
+  });
+  git('init', '-b', branch);
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'user.name', 'Test');
+  git('add', '.');
+  git('commit', '-m', 'first commit');
+  if (dirty) fs.writeFileSync(path.join(workingDirectory, 'uncommitted.txt'), 'wip');
 }
 
 // ─────────────────────────────────────────────────── Priority 1 & 2 ────────
@@ -1123,6 +1137,89 @@ test('/workspace on an empty registry says so plainly', async () => {
   const h = harness({ projects: [] });
   const { reply } = await h.say('/workspace');
   assert.match(reply, /No projects are defined yet/);
+});
+
+// ─────────────────────────────────────── Phase 14 M1: /git ─────────────────
+
+test('/git on a project with no repository says so plainly', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const { reply } = await h.say('/git alpha');
+  assert.match(reply, /alpha/);
+  assert.match(reply, /Not a git repository/);
+});
+
+test('/git reports branch, clean status, HEAD, and recent commits for a real repo', async () => {
+  const h = harness({ projects: ['alpha'] });
+  makeRepo(path.join(h.root, 'work', 'alpha'), { branch: 'payroll' });
+
+  const { reply } = await h.say('/git alpha');
+
+  assert.match(reply, /Branch: payroll/);
+  assert.match(reply, /Status: 🟢 Clean/);
+  assert.match(reply, /HEAD: [0-9a-f]{7,} — first commit/);
+  assert.match(reply, /Upstream: not tracked/);
+  assert.match(reply, /Recent commits \(1\):/);
+});
+
+test('/git reports dirty status with a changed-file count', async () => {
+  const h = harness({ projects: ['alpha'] });
+  makeRepo(path.join(h.root, 'work', 'alpha'), { dirty: true });
+
+  const { reply } = await h.say('/git alpha');
+
+  assert.match(reply, /Status: 🔴 Dirty \(1 changed\)/);
+});
+
+test('/git with no argument uses the active project, like /status', async () => {
+  const h = harness({ projects: ['alpha'] });
+  makeRepo(path.join(h.root, 'work', 'alpha'));
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/git');
+
+  assert.match(reply, /alpha/);
+  assert.match(reply, /Branch: main/);
+});
+
+test('/git works on a project missing a promptFile — git state is independent of mission-readiness', async () => {
+  const h = discoveryHarness();
+  const dir = mkCandidate(h.rootsDir, 'no-mission-yet');
+  makeRepo(dir);
+  await h.say(`/import ${dir}`);
+
+  const { reply } = await h.say('/git no-mission-yet');
+
+  assert.match(reply, /Branch: main/);
+});
+
+test('/git dirty and /git clean list every registered project in that state', async () => {
+  const h = harness({ projects: ['alpha', 'beta', 'gamma'] });
+  makeRepo(path.join(h.root, 'work', 'alpha'), { dirty: true });
+  makeRepo(path.join(h.root, 'work', 'beta'));
+  // gamma is left with no git repo at all — must appear in neither list.
+
+  const dirty = await h.say('/git dirty');
+  assert.match(dirty.reply, /🔴 Dirty projects \(1\)/);
+  assert.match(dirty.reply, /• alpha/);
+  assert.doesNotMatch(dirty.reply, /beta/);
+  assert.doesNotMatch(dirty.reply, /gamma/);
+
+  const clean = await h.say('/git clean');
+  assert.match(clean.reply, /🟢 Clean projects \(1\)/);
+  assert.match(clean.reply, /• beta/);
+  assert.doesNotMatch(clean.reply, /alpha/);
+});
+
+test('/git is refused when operator.git is disabled', async () => {
+  const h = harness({ projects: ['alpha'], operator: { git: { enabled: false } } });
+  const { reply } = await h.say('/git alpha');
+  assert.match(reply, /disabled/i);
+});
+
+test('/git names an unknown project the same way /status does', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const { reply } = await h.say('/git nope');
+  assert.match(reply, /No project matches "nope"/);
 });
 
 // ─────────────────────────── Phase 13 M3: lifecycle & classification ───────

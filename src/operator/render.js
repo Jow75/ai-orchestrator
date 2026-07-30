@@ -183,6 +183,67 @@ export function renderWorkspace(records, { missionReady, recentCount = 5 } = {})
   return lines.join('\n');
 }
 
+/**
+ * `/git [project]` — Phase 14 M1. Repository state, HEAD, recent commits,
+ * and (when tracked) ahead/behind — read-only, no diff, no file contents.
+ *
+ * @param {string} name
+ * @param {import('./gitVisibility.js').gitReport|null} report - Null when
+ *   `name`'s working directory is not a real git repository.
+ */
+export function renderGitStatus(name, report) {
+  if (!report) {
+    return [`${name}`, '', 'Not a git repository.'].join('\n');
+  }
+
+  const lines = [`${name}`, ''];
+  lines.push(`Branch: ${report.branch ?? 'detached HEAD'}`);
+
+  if (report.status) {
+    lines.push(report.status.dirty
+      ? `Status: 🔴 Dirty (${report.status.changedCount} changed)`
+      : 'Status: 🟢 Clean');
+  }
+
+  if (report.head) {
+    lines.push(`HEAD: ${report.head.hash}${report.head.subject ? ` — ${report.head.subject}` : ''}`);
+  } else {
+    lines.push('HEAD: no commits yet');
+  }
+
+  if (report.aheadBehind) {
+    lines.push(`Upstream: ${report.aheadBehind.ahead} ahead, ${report.aheadBehind.behind} behind`);
+  } else {
+    lines.push('Upstream: not tracked');
+  }
+
+  if (report.recentCommits.length) {
+    lines.push('', `Recent commits (${report.recentCommits.length}):`);
+    for (const commit of report.recentCommits) lines.push(`${commit.hash} ${commit.subject}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * `/git dirty` / `/git clean` — every registered project in that git state,
+ * across the whole registry (not just the active project). `records` is
+ * already filtered to the requested `kind` by the caller.
+ *
+ * @param {'dirty'|'clean'} kind
+ * @param {object[]} records - From `ProjectRegistry.list()`, pre-filtered.
+ */
+export function renderGitFilter(kind, records) {
+  const icon = kind === 'dirty' ? '🔴' : '🟢';
+  const label = kind === 'dirty' ? 'Dirty' : 'Clean';
+  if (!records.length) {
+    return `${icon} ${label} projects (0)\n\nNone.`;
+  }
+  const lines = [`${icon} ${label} projects (${records.length})`, ''];
+  for (const record of records) lines.push(`• ${record.name}`);
+  return lines.join('\n');
+}
+
 /** `/scan` — real, unregistered projects found under the configured roots. */
 export function renderScanResults({ candidates, rootsScanned, rootsMissing }, { roots } = {}) {
   if (!roots?.length) {

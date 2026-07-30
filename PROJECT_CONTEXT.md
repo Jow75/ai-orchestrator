@@ -110,9 +110,31 @@ distinctly from "actually broken" (needs hand-editing). Full reasoning in
 `docs/PHASE_14_PLAN.md`'s M0 section. 1219 → 1225 backend tests
 (`commandRouter.test.js` +6), zero regressions; 41/41 desktop tests
 unaffected. **Committed and tagged `v3.11.0`**, same standing practice as
-every prior milestone — **not yet pushed to `origin`**. M1–M8 sequencing
-unchanged (M1, M2, M8, M3, M4, M5, M6, M7 — see the plan's dependency
-graph).
+every prior milestone — **not yet pushed to `origin`**.
+
+**Phase 14 M1 — Git Visibility (`v3.12.0`) is DONE.** New `/git [project]`:
+branch, dirty/clean state (with a changed-file count), HEAD, up to 8 recent
+commit subjects, and ahead/behind the branch's own upstream when one is
+configured — reported honestly as "not tracked" rather than a fabricated
+`0 ahead, 0 behind` (the common case in this exact workspace, where most
+real projects are local-only). `/git dirty`/`/git clean` list every
+registered project in that git state, reusing `ProjectRegistry.list()`'s
+already-computed `git.dirty` field (the same one `/workspace`'s own
+clean/dirty counts sum) rather than re-shelling out. The single-project
+view needed more than the registry's own `gitInfo()` already returns, so it
+got a small dedicated module, `src/operator/gitVisibility.js` — kept
+separate from `progress/progressEngine.js`'s `gitBranch`/`gitDirty`/etc.,
+which exist to feed mission-progress snapshots, not the operator console.
+Reads via `configManager.getRawProject()`, not `getProject()`, so it works
+uniformly across all 23 real projects regardless of mission-readiness —
+the same reasoning M0's `commandWorkspace()` already applies. Kill switch:
+`operator.git.enabled`. Full reasoning in `docs/PHASE_14_PLAN.md`'s M1
+section. `gitVisibility.test.js` (new, 7 tests, against real throwaway git
+work trees), `commandRouter.test.js` (+8). 1225 → 1240 backend tests, zero
+regressions; 41/41 desktop tests unaffected. **Committed and tagged
+`v3.12.0`**, same standing practice as every prior milestone — **not yet
+pushed to `origin`**. M2–M8 sequencing unchanged (M2, M8, M3, M4, M5, M6,
+M7 — see the plan's dependency graph).
 
 **Phase 13 M6 — Remote File System (`v3.6.0`) is DONE.** The first new
 runtime dependency since baseline (`archiver`) and the first filesystem

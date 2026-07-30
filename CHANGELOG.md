@@ -3,6 +3,45 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.12.0] — 2026-07-30 — Phase 14 M1: Git Visibility
+
+Answers "what state is this repo actually in" from a phone, without a
+terminal. Kept intentionally narrow per the milestone's own scope: branch,
+dirty/clean state, HEAD, recent commit subjects, and (when tracked)
+ahead/behind — no diff, no file contents, no history browsing. Full design
+tradeoffs recorded in `docs/PHASE_14_PLAN.md`'s M1 section.
+
+### Added
+
+- **`/git [project]`** (`src/operator/commandRouter.js`, `renderGitStatus()`
+  in `render.js`) — repository check, branch, dirty/clean state (with a
+  changed-file count), HEAD (short hash + subject), up to 8 recent commits,
+  and ahead/behind the branch's own upstream when one is configured
+  (reported honestly as "not tracked" rather than a fabricated 0/0).
+  Read-only, no approval gate, matching `/status`. Kill switch:
+  `operator.git.enabled`.
+- **`/git dirty`, `/git clean`** — every registered project in that git
+  state, across the whole registry, not just the active project. Reuses
+  `ProjectRegistry.list()`'s already-computed `git.dirty` field (the same
+  one `/workspace`'s clean/dirty counts sum) rather than re-shelling out —
+  same reserved-keyword-before-project-name precedent `/projects classify`
+  and `/mission all` already established.
+- **`src/operator/gitVisibility.js`** — the real `git`-shelling module
+  behind the single-project view (`gitReport()`). Kept separate from
+  `progress/progressEngine.js`'s own `gitBranch`/`gitDirty`/etc., which
+  exist to feed mission-progress snapshots, not the operator console, and
+  don't compute a changed-file count, a batch of recent commits, or
+  ahead/behind. Uses `configManager.getRawProject()`, not `getProject()`,
+  so it works uniformly across every registered project regardless of
+  mission-readiness — the same reasoning `commandWorkspace()` (M0) already
+  applies.
+
+### Regression coverage
+
+- `gitVisibility.test.js` (new, 7 tests, against real throwaway git work
+  trees — no mocking of `git` itself), `commandRouter.test.js` (+8). 1225 →
+  1240 backend tests, zero regressions. 41/41 desktop tests unaffected.
+
 ## [3.11.0] — 2026-07-30 — Phase 14 M0: Workspace Overview
 
 The first Phase 14 milestone in its own numeric order (M9 shipped first, per

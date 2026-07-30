@@ -28,6 +28,7 @@ import { isEvidenceVerifier } from '../notifications/missionCard.js';
 import { parseCommand } from './commandGrammar.js';
 import { scanRoots } from './projectDiscovery.js';
 import { inspectProject, buildAutoMissionPrompt } from './projectInspector.js';
+import { gitReport } from './gitVisibility.js';
 import {
   archive, restore, hide, unhide, forget, classifyProposal,
 } from './projectLifecycleOps.js';
@@ -38,7 +39,7 @@ import {
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
   renderHelp, renderServiceStatus, renderScanResults, renderFileListing,
   renderFileInline, formatBytes, truncate, renderMissionAssignment, renderMissionBatch,
-  renderWorkspace,
+  renderWorkspace, renderGitStatus, renderGitFilter,
 } from './render.js';
 import {
   FileAccessError, listFiles, resolveWithinProject, looksBinary,
@@ -405,6 +406,7 @@ export class CommandRouter {
       case 'whoami': return this.commandWhoami(ctx);
       case 'status': return this.commandStatus(rest, ctx);
       case 'workspace': return this.commandWorkspace();
+      case 'git': return this.commandGit(rest, ctx);
       case 'start': return this.commandStart(rest, ctx);
       case 'tasks': return this.commandTasks(rest, ctx);
       case 'approvals': return this.commandApprovals();
@@ -537,6 +539,48 @@ export class CommandRouter {
       }
     }
     return { reply: renderWorkspace(records, { missionReady }) };
+  }
+
+  /**
+   * `/git [project]` — Phase 14 M1: branch, dirty/clean state, HEAD, recent
+   * commit subjects, and (when tracked) ahead/behind. Read-only, no diff, no
+   * file contents, no approval gate — same risk class as `/status`.
+   *
+   * `/git dirty` / `/git clean` list every registered project in that git
+   * state, the same reserved-keyword-before-project-name precedent
+   * `/projects classify` and `/mission all` already established.
+   *
+   * Uses `configManager.getRawProject()`, not `getProject()`: the latter
+   * throws on any project still missing a `promptFile` (most of the
+   * registry before Phase 14 M9), and git state has nothing to do with
+   * mission-readiness — the same reasoning `commandWorkspace()` and
+   * `existingProjectDirs()` already apply.
+   */
+  commandGit(rest, ctx) {
+    if (this.operatorConfig.git?.enabled === false) {
+      return { reply: 'Git visibility is disabled (operator.git.enabled: false).' };
+    }
+    const word = (rest ?? '').trim().toLowerCase();
+    if (word === 'dirty' || word === 'clean') return this.commandGitFilter(word);
+
+    const resolved = this.resolveTarget(rest, ctx);
+    if (resolved.reply) return { reply: resolved.reply };
+
+    const raw = this.configManager.getRawProject?.(resolved.project);
+    const workingDirectory = raw?.workingDirectory;
+    if (!workingDirectory || !fs.existsSync(workingDirectory)) {
+      return { reply: `${resolved.project} — folder not found (${workingDirectory ?? 'no workingDirectory set'}).` };
+    }
+
+    const report = gitReport(workingDirectory);
+    return { reply: renderGitStatus(resolved.project, report) };
+  }
+
+  /** `/git dirty` / `/git clean` — every registered project in that state. */
+  commandGitFilter(kind) {
+    const records = this.registry.list({ includeHidden: false })
+      .filter((r) => r.git && (kind === 'dirty' ? r.git.dirty : !r.git.dirty));
+    return { reply: renderGitFilter(kind, records) };
   }
 
   commandStart(rest, ctx) {
