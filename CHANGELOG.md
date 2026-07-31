@@ -3,6 +3,53 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.15.0] — 2026-07-31 — Phase 14 M3: Repository & Symbol Search
+
+New `/grep <pattern>` and `/symbol <name>` — a text-search primitive over
+the active project's real files, built on the exact same containment guard
+`/files`/`/file` already use (`fileAccess.js`'s `resolveWithinProject()`).
+`/symbol` is `/grep` with a language-aware-ish pattern (function/class/
+const/def/etc. declaration shapes) layered on top — explicitly "good
+enough to find a definition fast," not a real AST/ctags index, to avoid
+the new persistence layer that would represent. Full design tradeoffs in
+`docs/PHASE_14_PLAN.md`'s M3 section.
+
+### Added
+
+- **`/grep <pattern>`** (aliases `/search`, `/find`) — searches the active
+  project's real files. A pattern that parses as a valid regex is used as
+  one (case-insensitive); anything else falls back to a literal substring
+  match rather than refusing on a regex typo.
+- **`/symbol <name>`** — `/grep` with `buildSymbolPattern()` layered on
+  top: matches common declaration shapes across JS/TS, Python, Rust, and
+  Go-ish syntax. Case-sensitive (an identifier, not free text).
+- **`src/operator/repoSearch.js`** — the walker (`searchFiles()`) and
+  pattern builders. Reuses `fileAccess.js`'s `DEFAULT_IGNORE_DIRS` and
+  `looksBinary()` — no new traversal surface, no new binary-detection
+  logic. Two hard caps, both honestly reported when hit rather than
+  silently truncating: `MAX_MATCHES` (500 total matches per search) and
+  `MAX_FILES_SCANNED` (20,000 files walked) — the adversarial-scan
+  discipline the plan's own risk note asked for, applied to an unbounded
+  walk instead of M6's single-path read.
+- Kill switch: `operator.search.enabled`. New event: `search.performed`.
+
+### Deviated from the milestone's own working title
+
+- **No `[project]` argument.** `/grep <pattern> [project]` and
+  `/symbol <name> [project]` (the plan's own sketch) can't disambiguate a
+  free-text query from a free-text project name with no delimiter between
+  them — several real project names contain spaces ("THE FINISHER") — the
+  identical ambiguous-split problem Phase 14 M9 already hit and avoided
+  for the same reason. Both commands operate on the ACTIVE project only,
+  matching `/files`/`/file`'s existing design exactly: `/project <name>`
+  first, then search.
+
+### Regression coverage
+
+- `repoSearch.test.js` (new, 16 tests, real throwaway directories — no
+  mocking), `commandRouter.test.js` (+13). 1275 → 1304 backend tests, zero
+  regressions.
+
 ## [3.14.0] — 2026-07-31 — Phase 14 M8: Remote Configuration Completion
 
 Closes the remaining gap where changing notification channels or the

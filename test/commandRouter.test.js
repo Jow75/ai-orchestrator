@@ -1744,6 +1744,145 @@ test('/approvals mode is refused when operator.liveConfig is disabled', async ()
   assert.match(reply, /disabled/);
 });
 
+// ──────────────── Phase 14 M3: repository & symbol search ──────────────────
+
+test('/grep with no argument shows usage instead of searching', async () => {
+  const { say } = harness();
+  await say('/project alpha');
+  const { reply } = await say('/grep');
+  assert.match(reply, /Usage: \/grep <pattern>/);
+});
+
+test('/symbol with no argument shows usage instead of searching', async () => {
+  const { say } = harness();
+  await say('/project alpha');
+  const { reply } = await say('/symbol');
+  assert.match(reply, /Usage: \/symbol <name>/);
+});
+
+test('/grep refuses with no project selected, same message as /files', async () => {
+  const { say } = harness();
+  const { reply } = await say('/grep TODO');
+  assert.match(reply, /No project selected/);
+});
+
+test('/grep finds a real match in the active project\'s real files', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.mkdirSync(path.join(dir, 'src'));
+  fs.writeFileSync(path.join(dir, 'src', 'a.js'), 'const x = 1;\n// TODO: fix this later\n');
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/grep TODO');
+  assert.match(reply, /src\/a\.js:2/);
+  assert.match(reply, /TODO: fix this later/);
+  assert.match(reply, /1 match/);
+});
+
+test('/grep is case-insensitive by default', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(path.join(dir, 'a.js'), 'const HELLO = 1;\n');
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/grep hello');
+  assert.match(reply, /1 match/);
+});
+
+test('/grep reports no matches honestly rather than an error', async () => {
+  const h = harness();
+  await h.say('/project alpha');
+  const { reply } = await h.say('/grep something-nowhere-in-this-project');
+  assert.match(reply, /No matches/);
+});
+
+test('/grep and its aliases /search, /find all reach the same command', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(path.join(dir, 'a.js'), 'const NEEDLE = 1;\n');
+  await h.say('/project alpha');
+
+  const viaGrep = await h.say('/grep NEEDLE');
+  const viaSearch = await h.say('/search NEEDLE');
+  const viaFind = await h.say('/find NEEDLE');
+  assert.equal(viaGrep.reply, viaSearch.reply);
+  assert.equal(viaGrep.reply, viaFind.reply);
+});
+
+test('/grep <pattern> <page> pages results once the pattern is already more than one word', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  const lines = Array.from({ length: 25 }, (_, i) => `needle line ${i}`).join('\n');
+  fs.writeFileSync(path.join(dir, 'a.js'), lines);
+  await h.say('/project alpha');
+
+  const page1 = await h.say('/grep needle');
+  assert.match(page1.reply, /Page 1\/2/);
+  assert.match(page1.reply, /25 matches total/);
+
+  // Two-word input ("needle" + trailing digit "2") — the digit is read as a
+  // page only because more than one word preceded it (commandFiles()'s own
+  // convention), so this remains "search needle, page 2", not "search
+  // \"needle 2\"".
+  const page2 = await h.say('/grep needle 2');
+  assert.match(page2.reply, /Page 2\/2/);
+  assert.match(page2.reply, /needle line 20/);
+});
+
+test('/grep a single numeric word searches for it literally, never mistaken for a page number', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(path.join(dir, 'a.js'), 'const PORT = 500;\n');
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/grep 500');
+  assert.match(reply, /"500"/);
+  assert.match(reply, /1 match/);
+});
+
+test('/symbol finds a real declaration, not a mere mention', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(
+    path.join(dir, 'driverRegistry.js'),
+    'import { helper } from "./helper.js"; // mentions DriverRegistry in a comment\n\nexport class DriverRegistry {\n  constructor() {}\n}\n'
+  );
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/symbol DriverRegistry');
+  assert.match(reply, /driverRegistry\.js:3/);
+  assert.match(reply, /1 match/);
+});
+
+test('/grep and /symbol each log a search.performed event with the query and match count', async () => {
+  const h = harness();
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(path.join(dir, 'a.js'), 'const NEEDLE = 1;\n');
+  await h.say('/project alpha');
+
+  await h.say('/grep NEEDLE');
+  const logged = h.events.read({ types: ['search.performed'] });
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].payload.mode, 'grep');
+  assert.equal(logged[0].payload.query, 'NEEDLE');
+  assert.equal(logged[0].payload.matches, 1);
+  assert.equal(logged[0].payload.truncated, false);
+});
+
+test('/grep is refused when operator.search.enabled is false', async () => {
+  const { say } = harness({ operator: { search: { enabled: false } } });
+  await say('/project alpha');
+  const { reply } = await say('/grep TODO');
+  assert.match(reply, /disabled/);
+});
+
+test('/symbol is refused when operator.search.enabled is false', async () => {
+  const { say } = harness({ operator: { search: { enabled: false } } });
+  await say('/project alpha');
+  const { reply } = await say('/symbol Foo');
+  assert.match(reply, /disabled/);
+});
+
 // ────────────────────────────────── Phase 13 M6: remote file system ────────
 
 /** A project's real working directory, for tests that need to plant files. */

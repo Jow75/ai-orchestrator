@@ -84,6 +84,10 @@ export const EVENT_TYPES = Object.freeze([
   /** `/download-project` produced a ZIP of a project. */
   'project.downloaded',
 
+  // ── repository search (Phase 14 M3) ─────────────────────────────────────
+  /** `/grep` or `/symbol` searched a project's real files. */
+  'search.performed',
+
   // ── missions requested from an interface (M2 Priority 3) ─────────────────
   /** Free text became a mission request awaiting the owner's approval. */
   'mission.created',

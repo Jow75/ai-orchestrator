@@ -338,6 +338,24 @@ export const COMMANDS = Object.freeze([
     description: 'Read one file from the active project — inline if small, as an attachment if not.',
   },
   {
+    name: 'grep',
+    aliases: ['search', 'find'],
+    usage: '/grep <pattern>',
+    takesRest: true,
+    category: 'Search',
+    examples: ['/grep TODO', '/grep console\\.log'],
+    description: 'Search the active project\'s real files for text (a regex if it parses as one, otherwise a literal match). Case-insensitive.',
+  },
+  {
+    name: 'symbol',
+    aliases: [],
+    usage: '/symbol <name>',
+    takesRest: true,
+    category: 'Search',
+    examples: ['/symbol DriverRegistry'],
+    description: '/grep with a language-aware-ish pattern layered on top — finds where a function/class/const/etc. is likely DEFINED, not a real symbol index.',
+  },
+  {
     // Telegram's setMyCommands rejects any name outside [a-z0-9_]{1,32} — a
     // hyphen is not legal there, unlike every other place a command name
     // appears in this codebase. The owner's own directive wrote

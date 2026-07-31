@@ -30,6 +30,7 @@ import { scanRoots } from './projectDiscovery.js';
 import { inspectProject, buildAutoMissionPrompt } from './projectInspector.js';
 import { gitReport } from './gitVisibility.js';
 import { readLogTail } from './logVisibility.js';
+import { searchFiles, buildGrepPattern, buildSymbolPattern } from './repoSearch.js';
 import {
   archive, restore, hide, unhide, forget, classifyProposal,
 } from './projectLifecycleOps.js';
@@ -40,7 +41,7 @@ import {
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
   renderHelp, renderServiceStatus, renderScanResults, renderFileListing,
   renderFileInline, formatBytes, truncate, renderMissionAssignment, renderMissionBatch,
-  renderWorkspace, renderGitStatus, renderGitFilter, renderLogTail,
+  renderWorkspace, renderGitStatus, renderGitFilter, renderLogTail, renderSearchResults,
 } from './render.js';
 import {
   FileAccessError, listFiles, resolveWithinProject, looksBinary,
@@ -441,6 +442,8 @@ export class CommandRouter {
       case 'notify': return this.commandNotify(rest, ctx);
       case 'files': return this.commandFiles(rest, ctx);
       case 'file': return this.commandFile(rest, ctx);
+      case 'grep': return this.commandGrep(rest, ctx);
+      case 'symbol': return this.commandSymbol(rest, ctx);
       case 'download_project': return await this.commandDownloadProject(rest, ctx);
       default:
         return { reply: `"/${name}" is recognized but not implemented. This is a bug — please report it.` };
@@ -1571,6 +1574,66 @@ export class CommandRouter {
       payload: { path: rest, bytes: stat.size, mode: 'inline' },
     });
     return { reply: renderFileInline(rest, content) };
+  }
+
+  // --------------------------------------------------------------- search ---
+
+  /**
+   * Shared body of `/grep` and `/symbol` — Phase 14 M3. Both operate on the
+   * ACTIVE project only, deliberately with no `[project]` argument: a query
+   * and a project name are both free-form text with no delimiter between
+   * them, and several real project names contain spaces ("THE FINISHER") —
+   * the exact ambiguous-split problem Phase 14 M9 already ran into and
+   * avoided for the same reason (see `docs/PHASE_14_PLAN.md`'s M9 section).
+   * Select a project first with `/project <name>`, same as `/files`/`/file`.
+   *
+   * A trailing bare number is a page, but ONLY once the query is already
+   * more than one word — mirrors `commandFiles()`'s identical convention and
+   * accepts the identical, already-shipped tradeoff: a literally-numeric
+   * one-word query (`/grep 500`) is never misread as an empty query plus a
+   * page number.
+   */
+  runSearch(rest, ctx, { label, buildPattern }) {
+    if (this.operatorConfig.search?.enabled === false) {
+      return { reply: 'Repository search is disabled (operator.search.enabled: false).' };
+    }
+    const words = (rest ?? '').trim().split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      return { reply: `Usage: /${label} <${label === 'symbol' ? 'name' : 'pattern'}>.` };
+    }
+    let page = 1;
+    if (words.length > 1 && /^\d+$/.test(words.at(-1))) page = Number(words.pop());
+    const query = words.join(' ');
+
+    const located = this.activeProjectRoot(ctx);
+    if (located.reply) return { reply: located.reply };
+
+    const regex = buildPattern(query);
+
+    let results;
+    try {
+      results = searchFiles(located.root, regex, { page });
+    } catch (error) {
+      return this.fileErrorReply(error, { project: located.project, path: query, actor: ctx.actor });
+    }
+
+    this.events?.append({
+      type: 'search.performed',
+      project: located.project,
+      actor: ctx.actor,
+      payload: { mode: label, query, matches: results.total, truncated: results.truncated },
+    });
+    return { reply: renderSearchResults(located.project, label, query, results) };
+  }
+
+  /** `/grep <pattern>` — see `runSearch()`. */
+  commandGrep(rest, ctx) {
+    return this.runSearch(rest, ctx, { label: 'grep', buildPattern: buildGrepPattern });
+  }
+
+  /** `/symbol <name>` — see `runSearch()`. */
+  commandSymbol(rest, ctx) {
+    return this.runSearch(rest, ctx, { label: 'symbol', buildPattern: buildSymbolPattern });
   }
 
   /**

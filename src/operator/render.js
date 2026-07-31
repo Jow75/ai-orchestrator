@@ -747,9 +747,35 @@ export function renderLogTail(project, tail) {
   return lines.join('\n');
 }
 
+/**
+ * `/grep <pattern>` / `/symbol <name>` — Phase 14 M3. Both share this
+ * renderer; the only difference is the label the caller passes in (`grep`
+ * vs `symbol`) and the query text shown back, so a reply always confirms
+ * what was actually searched for.
+ */
+export function renderSearchResults(project, label, query, results) {
+  const lines = [`🔎 ${label} "${query}" — ${project}`, ''];
+  if (!results.matches.length) {
+    lines.push(results.total ? '(nothing on this page)' : 'No matches.');
+  }
+  for (const match of results.matches) {
+    lines.push(`${match.file}:${match.line}`);
+    lines.push(`  ${match.text}`);
+  }
+  lines.push('');
+  lines.push(results.pageCount > 1
+    ? `Page ${results.page}/${results.pageCount} · ${results.total} match${results.total === 1 ? '' : 'es'} total`
+    : `${results.total} match${results.total === 1 ? '' : 'es'}`);
+  if (results.truncated) {
+    lines.push(`Stopped early after scanning ${results.filesScanned} files — narrow your pattern to see more.`);
+  }
+  return lines.join('\n');
+}
+
 export default {
   relativeTime, renderProjectLine, renderProjectList, renderProjectDetail,
   renderTasks, renderApprovals, renderMissionProposal, renderMissionRequests,
   renderEvents, renderConfirmation, renderPhaseUpdate, renderServiceStatus,
   renderHelp, truncate, formatBytes, renderFileListing, renderFileInline,
+  renderSearchResults,
 };

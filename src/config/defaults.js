@@ -500,6 +500,18 @@ export const ORCHESTRATOR_DEFAULTS = {
     log: {
       enabled: true,
     },
+    /**
+     * Phase 14 M3: `/grep <pattern>`, `/symbol <name>` — a text-search
+     * primitive over the active project's real files, built on the same
+     * `fileAccess.js` containment guard `/files`/`/file` already use. Read-
+     * only, no approval gate — same risk class as `/files`/`/file`, but the
+     * plan's own risk note calls this the highest-blast-radius new surface
+     * Phase 14 adds (an unbounded scan, not just a single-path read), which
+     * is why it gets its own switch rather than reusing `operator.files`.
+     */
+    search: {
+      enabled: true,
+    },
     /** Phase 13 M6: `/download-project` sizing and exclusions. */
     download: {
       /**
