@@ -124,9 +124,11 @@ export const COMMANDS = Object.freeze([
   {
     name: 'approvals',
     aliases: ['pending'],
-    usage: '/approvals',
+    usage: '/approvals [mode [conservative|balanced|autonomous]]',
+    takesRest: true,
     category: 'Decisions',
-    description: 'Every decision waiting on you, across all projects.',
+    examples: ['/approvals mode', '/approvals mode autonomous'],
+    description: 'Every decision waiting on you, across all projects. "mode" shows or sets the global approval mode.',
   },
   {
     name: 'missions',
@@ -307,6 +309,15 @@ export const COMMANDS = Object.freeze([
     category: 'Configuration',
     examples: ['/safemode on', '/safemode off'],
     description: 'Global read-only override: while on, every project runs headless-read-only regardless of its own permissionMode.',
+  },
+  {
+    name: 'notify',
+    aliases: [],
+    usage: '/notify [status|telegram on|off|email on|off|discord on|off|webhook on|off|severity <info|warning|critical>]',
+    takesRest: true,
+    category: 'Configuration',
+    examples: ['/notify', '/notify telegram off', '/notify severity warning'],
+    description: 'Show or change which notification channels are enabled and the minimum severity that reaches them.',
   },
   {
     name: 'files',

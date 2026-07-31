@@ -1,6 +1,6 @@
 {
   "name": "ai-orchestrator",
-  "version": "3.13.0",
+  "version": "3.14.0",
   "description": "Autonomous supervisor for AI coding agents (Claude Code today, more engines tomorrow). Launches, monitors, recovers, and resumes long-running AI sessions without ever interrupting healthy work.",
   "main": "src/index.js",
   "type": "module",

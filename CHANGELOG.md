@@ -3,6 +3,45 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.14.0] — 2026-07-31 — Phase 14 M8: Remote Configuration Completion
+
+Closes the remaining gap where changing notification channels or the
+approval mode required editing `config/local.json` by hand on the machine.
+Same shape as `/safemode`/`/model`: a `LIVE_MUTABLE_PATHS`-allowlisted,
+no-restart config patch via the existing `LiveConfigLayer` — no new
+persistence, no new architecture. Full design tradeoffs recorded in
+`docs/PHASE_14_PLAN.md`'s M8 section.
+
+### Added
+
+- **`/notify [status]`** (`src/operator/commandRouter.js`) — which
+  notification channels (Telegram/email/Discord/webhook) are enabled, and
+  the minimum severity.
+- **`/notify <telegram|email|discord|webhook> on|off`** — enable or disable
+  one channel. Deliberately narrow: credentials (botToken, chatId, SMTP
+  host/user/pass) are never set, changed, or displayed remotely — same
+  boundary this codebase already draws for `nvidia.apiKey`, real secrets
+  stay a `config/local.json` edit.
+- **`/notify severity <info|warning|critical>`** — the global minimum
+  severity a notification must have to send at all.
+- **`/approvals mode [conservative|balanced|autonomous]`** — extends the
+  existing `/approvals` command (still lists pending decisions with no
+  argument) with a subcommand to show or set the global approval mode. A
+  project's own `approvals.mode` override, if it has one, still wins for
+  that project.
+- New `LIVE_MUTABLE_PATHS` entries (`src/config/liveConfig.js`):
+  `notifications.telegram.enabled`, `notifications.email.enabled`,
+  `notifications.discord.enabled`, `notifications.webhook.enabled`
+  (`notifications.minSeverity` and `approvals.mode` were already
+  allowlisted from earlier milestones).
+- New event types: `notifications.channel-changed`,
+  `notifications.severity-changed`, `approvals.mode-changed`.
+
+### Regression coverage
+
+- `commandRouter.test.js` (+17). 1258 → 1275 backend tests, zero
+  regressions.
+
 ## [3.13.0] — 2026-07-30 — Phase 14 M2: Log Visibility
 
 Answers "what actually happened, in the system's own words" from a phone —

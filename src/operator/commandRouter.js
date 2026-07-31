@@ -121,6 +121,14 @@ export class CommandRouter {
     return this.config.operator ?? {};
   }
 
+  get notificationsConfig() {
+    return this.config.notifications ?? {};
+  }
+
+  get approvalsConfig() {
+    return this.config.approvals ?? {};
+  }
+
   /**
    * Handle one inbound message.
    *
@@ -412,7 +420,7 @@ export class CommandRouter {
       case 'git': return this.commandGit(rest, ctx);
       case 'start': return this.commandStart(rest, ctx);
       case 'tasks': return this.commandTasks(rest, ctx);
-      case 'approvals': return this.commandApprovals();
+      case 'approvals': return this.commandApprovals(rest, ctx);
       case 'missions': return this.commandMissions(ctx);
       case 'service': return await this.commandService();
       case 'events': return this.commandEvents(rest, ctx);
@@ -430,6 +438,7 @@ export class CommandRouter {
       case 'provider': return this.commandProvider(ctx);
       case 'model': return this.commandModel(rest, ctx);
       case 'safemode': return this.commandSafeMode(rest, ctx);
+      case 'notify': return this.commandNotify(rest, ctx);
       case 'files': return this.commandFiles(rest, ctx);
       case 'file': return this.commandFile(rest, ctx);
       case 'download_project': return await this.commandDownloadProject(rest, ctx);
@@ -648,12 +657,50 @@ export class CommandRouter {
     return { reply: renderTasks(resolved.project, this.taskQueue.load(resolved.project)) };
   }
 
-  commandApprovals() {
-    return {
-      reply: renderApprovals(this.approvalStore.pendingAll(), {
-        simulated: this.registry.simulatedNames(),
-      }),
-    };
+  /**
+   * `/approvals` — every pending decision, unchanged since Phase 12 M2.
+   * `/approvals mode [conservative|balanced|autonomous]` — Phase 14 M8: show
+   * or set the global approval mode via the same live-config mechanism
+   * `/safemode`/`/model` already use. A project's own `approvals.mode`
+   * override (if it has one) still wins for that project — this only
+   * changes the machine-wide default every project without an override falls
+   * back to.
+   */
+  commandApprovals(rest, ctx) {
+    const words = (rest ?? '').trim().split(/\s+/).filter(Boolean);
+    if (words[0]?.toLowerCase() !== 'mode') {
+      return {
+        reply: renderApprovals(this.approvalStore.pendingAll(), {
+          simulated: this.registry.simulatedNames(),
+        }),
+      };
+    }
+
+    if (this.operatorConfig.liveConfig?.enabled === false) {
+      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
+    }
+    if (!this.liveConfig) {
+      return { reply: 'This interface cannot change configuration from here.' };
+    }
+
+    const valid = ['conservative', 'balanced', 'autonomous'];
+    const current = this.approvalsConfig.mode || 'balanced';
+    const value = (words[1] ?? '').trim().toLowerCase();
+    if (!value) {
+      return { reply: `Approval mode: ${current}\nValid modes: ${valid.join(', ')}. /approvals mode <mode> to change.` };
+    }
+    if (!valid.includes(value)) {
+      return { reply: `"${value}" is not a valid approval mode. Valid: ${valid.join(', ')}.` };
+    }
+    if (value === current) {
+      return { reply: `Approval mode is already "${current}".` };
+    }
+
+    this.liveConfig.applyPatch({ 'approvals.mode': value });
+    this.events?.append({
+      type: 'approvals.mode-changed', actor: ctx.actor, payload: { mode: value, previousMode: current },
+    });
+    return { reply: `Approval mode set to "${value}". Applies to new decisions from now on — decisions already pending are unaffected.` };
   }
 
   commandMissions(ctx) {
@@ -1283,6 +1330,90 @@ export class CommandRouter {
       reply: next
         ? '🔒 Safe Mode ON. New missions on every project run headless-read-only until /safemode off. Already-running missions are unaffected.'
         : 'Safe Mode OFF. New missions use each project\'s own permissionMode again.',
+    };
+  }
+
+  /**
+   * `/notify [status|telegram on|off|email on|off|discord on|off|webhook on|off|severity <level>]`
+   * — Phase 14 M8. The last of the settings an owner used to have to reach
+   * `config/local.json` by hand for: which channels are enabled, and the
+   * minimum severity that reaches any of them. Same shape and same
+   * isolation guarantee as `/safemode`/`/model` — a live-config patch, never
+   * a restart, never touching an in-flight mission.
+   *
+   * Deliberately narrow: this only ever flips `<channel>.enabled` and
+   * `minSeverity`. Credentials (botToken, chatId, SMTP host/user/pass) are
+   * never set, changed, or displayed here — same boundary this codebase
+   * already draws for `nvidia.apiKey`: real secrets stay a `config/
+   * local.json` edit, never a chat message.
+   */
+  commandNotify(rest, ctx) {
+    if (this.operatorConfig.liveConfig?.enabled === false) {
+      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
+    }
+    if (!this.liveConfig) {
+      return { reply: 'This interface cannot change configuration from here.' };
+    }
+
+    const CHANNELS = ['telegram', 'email', 'discord', 'webhook'];
+    const trimmed = (rest ?? '').trim();
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    const first = (words[0] ?? '').toLowerCase();
+
+    if (!first || first === 'status') {
+      const cfg = this.notificationsConfig;
+      const lines = ['🔔 Notifications', ''];
+      for (const channel of CHANNELS) {
+        const label = channel[0].toUpperCase() + channel.slice(1);
+        lines.push(`${label}: ${cfg[channel]?.enabled ? 'Enabled' : 'Disabled'}`);
+      }
+      lines.push('');
+      lines.push(`Minimum severity: ${cfg.minSeverity || 'info'}`);
+      return { reply: lines.join('\n') };
+    }
+
+    if (CHANNELS.includes(first)) {
+      const label = first[0].toUpperCase() + first.slice(1);
+      const arg = (words[1] ?? '').toLowerCase();
+      if (arg !== 'on' && arg !== 'off') {
+        return { reply: `Usage: /notify ${first} on, or /notify ${first} off.` };
+      }
+      const next = arg === 'on';
+      const current = Boolean(this.notificationsConfig[first]?.enabled);
+      if (next === current) {
+        return { reply: `${label} notifications are already ${next ? 'on' : 'off'}.` };
+      }
+      this.liveConfig.applyPatch({ [`notifications.${first}.enabled`]: next });
+      this.events?.append({
+        type: 'notifications.channel-changed',
+        actor: ctx.actor,
+        payload: { channel: first, enabled: next },
+      });
+      return { reply: `${label} notifications ${next ? 'ON' : 'OFF'}.` };
+    }
+
+    if (first === 'severity') {
+      const levels = ['info', 'warning', 'critical'];
+      const level = (words[1] ?? '').toLowerCase();
+      if (!levels.includes(level)) {
+        return { reply: `Usage: /notify severity <${levels.join('|')}>.` };
+      }
+      const current = this.notificationsConfig.minSeverity || 'info';
+      if (level === current) {
+        return { reply: `Minimum severity is already "${level}".` };
+      }
+      this.liveConfig.applyPatch({ 'notifications.minSeverity': level });
+      this.events?.append({
+        type: 'notifications.severity-changed',
+        actor: ctx.actor,
+        payload: { severity: level, previousSeverity: current },
+      });
+      return { reply: `Minimum notification severity set to "${level}".` };
+    }
+
+    return {
+      reply: 'Usage: /notify, /notify telegram on|off, /notify email on|off, ' +
+        '/notify discord on|off, /notify webhook on|off, or /notify severity <info|warning|critical>.',
     };
   }
 

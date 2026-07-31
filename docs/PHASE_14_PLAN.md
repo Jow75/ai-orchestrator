@@ -137,10 +137,16 @@ Per the owner's 2026-07-30 direction, formally re-evaluate the still-deferred `d
 **Depends on:** conceptually on M1–M6 existing, since M4's original scope overlaps less with them now than it did in 2026-07-28.
 **Risk:** N/A — this milestone is a decision point, not an implementation.
 
-### M8 — Remote Configuration Completion
-Closes owner directive #11's remaining gap: `/notify [tune|test] ...` and an approval-mode equivalent, mirroring the exact pattern `/safemode` established in the 2026-07-30 reconciliation pass (a `LIVE_MUTABLE_PATHS`-allowlisted, live-mutable config flag, isolated from in-flight missions the same way `/model` already is).
+### M8 — Remote Configuration Completion — SHIPPED, `v3.14.0`
+Closes owner directive #11's remaining gap: notification channels and the approval mode required editing `config/local.json` by hand. Mirrors the exact pattern `/safemode` established in the 2026-07-30 reconciliation pass (a `LIVE_MUTABLE_PATHS`-allowlisted, live-mutable config flag, isolated from in-flight missions the same way `/model` already is).
+
+**Shipped shape (deviates from the original sketch above in two ways):**
+- `/notify [status|<telegram|email|discord|webhook> on|off|severity <level>]` — **no `tune`/`test` subcommand.** Sending a real test notification is an action with a side effect outside this command's own state (an actual message lands in a channel), which is a different risk class than every other setting this milestone touches; deferred rather than folded in.
+- The approval-mode equivalent is `/approvals mode [conservative|balanced|autonomous]`, a subcommand on the existing `/approvals` command — **not a new top-level `/approval` command.** `APPROVE`/`REJECT`/`MODIFY`/`DONE` are already decision verbs in this grammar (`commandGrammar.js`'s `parseDecisionText` check runs before any command match), so a new near-homophone command risked exactly the kind of shadowing that grammar file's own design notes warn against. Reusing `/approvals` (plural, already Decisions-category) with a `mode` sub-word follows the same convention `/roots add/remove` and `/projects classify` already established. `/approvals` with no argument is unchanged — still lists pending decisions.
+
+Deliberately narrow scope, confirmed with the owner before implementation: only `<channel>.enabled` and `minSeverity`/`mode` are remotely settable. Credentials (`botToken`, `chatId`, SMTP `host`/`user`/`pass`) are never set, changed, or displayed remotely — same boundary this codebase already draws for `nvidia.apiKey`. Kill switch: `operator.liveConfig.enabled` (the same one `/roots`/`/model`/`/safemode` already share — no new switch, this is the same capability class). New events: `notifications.channel-changed`, `notifications.severity-changed`, `approvals.mode-changed`.
 **Depends on:** nothing new; reuses the M4 (Phase 13) live-config layer directly.
-**Risk:** low — same shape as `/safemode`, already proven.
+**Risk (realized):** low, as predicted — no new mutation mechanism, no new kill switch, four new `LIVE_MUTABLE_PATHS` entries plus two already-allowlisted from earlier milestones. 1258 → 1275 backend tests, zero regressions.
 
 ### M9 — Remote Mission-Readiness (`promptFile` assignment) — SHIPPED, `v3.10.0`
 Closes the gap found fresh in the 2026-07-30 acceptance review: 19 of 23 real registered projects have no `promptFile` and today the only fix is hand-editing `config/projects/<name>.json` outside the operator interface entirely.
@@ -191,7 +197,7 @@ Recommended ship order by value/risk (not a hard dependency chain): **M9, M0, M1
 - **Single source of truth:** the daemon remains the only writer of registry/event-store state; every new command reads through the same `ProjectRegistry`/`EventStore` every existing command uses.
 - **Registry-based discovery:** no new command hardcodes a project name or path; everything resolves through the active-project context the same way `/status`/`/files` do today.
 - **Provider abstraction:** M6's mission templates submit objectives, not driver-specific instructions — they work identically regardless of which `AIDriver` a project uses, exactly like a free-form mission request does today.
-- **Event-driven architecture:** every new command that changes state (M8, M9) emits a new, specific event type, following the existing `eventTypes.js` pattern (e.g., `project.notifyprefs-changed`, `project.mission-assigned`) — nothing is a silent mutation.
+- **Event-driven architecture:** every new command that changes state (M8, M9) emits a new, specific event type, following the existing `eventTypes.js` pattern (e.g., `notifications.channel-changed`, `approvals.mode-changed`, `project.mission-assigned`) — nothing is a silent mutation.
 - **Centralized security:** every new filesystem-touching command (M2, M3, M4) goes through the one existing `fileAccess.js` guard, not a new one — a second path-traversal implementation would itself be a new architectural surface and is explicitly rejected as an approach.
 - **Honest reporting:** M6's mission templates are subject to the same "no invented estimates," real-artifact-only reporting discipline as every other mission — a `/review` that didn't actually read the diff must say so, not produce a plausible-sounding fabrication (this is the same discipline the 2026-07-30 review's own live testing verified is already enforced for ordinary missions).
 - **Explicit validation:** every milestone above ships with the same discipline every Phase 12/13 milestone used — unit tests, then live validation against a real project through the real operator CLI bridge (or real Telegram, if available), with defects disclosed rather than patched around quietly.

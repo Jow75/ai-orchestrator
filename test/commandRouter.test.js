@@ -1610,6 +1610,140 @@ test('/safemode is refused when operator.liveConfig is disabled', async () => {
   assert.match(reply, /disabled/);
 });
 
+// ──────────────── Phase 14 M8: remote configuration completion ─────────────
+
+test('/notify with no argument shows every channel and the minimum severity', async () => {
+  const { say } = harness();
+  const { reply } = await say('/notify');
+  assert.match(reply, /Telegram: Disabled/);
+  assert.match(reply, /Email: Disabled/);
+  assert.match(reply, /Discord: Disabled/);
+  assert.match(reply, /Webhook: Disabled/);
+  assert.match(reply, /Minimum severity: info/);
+});
+
+test('/notify status is the same as /notify with no argument', async () => {
+  const { say } = harness();
+  assert.equal((await say('/notify')).reply, (await say('/notify status')).reply);
+});
+
+test('/notify telegram on enables it; /notify then reflects it, live, no restart', async () => {
+  const { say, events } = harness();
+  const set = await say('/notify telegram on');
+  assert.match(set.reply, /Telegram notifications ON/);
+
+  const check = await say('/notify');
+  assert.match(check.reply, /Telegram: Enabled/);
+
+  const logged = events.read({ types: ['notifications.channel-changed'] });
+  assert.equal(logged.length, 1);
+  assert.deepEqual(logged[0].payload, { channel: 'telegram', enabled: true });
+});
+
+test('/notify telegram on twice says it is already on instead of re-writing config', async () => {
+  const { say, events } = harness();
+  await say('/notify telegram on');
+  const { reply } = await say('/notify telegram on');
+  assert.match(reply, /already on/);
+  assert.equal(events.read({ types: ['notifications.channel-changed'] }).length, 1);
+});
+
+test('/notify email off says it is already off by default without writing config', async () => {
+  const { say, events } = harness();
+  const { reply } = await say('/notify email off');
+  assert.match(reply, /already off/);
+  assert.equal(events.read({ types: ['notifications.channel-changed'] }).length, 0);
+});
+
+test('/notify discord on and /notify webhook on each toggle their own channel independently', async () => {
+  const { say } = harness();
+  await say('/notify discord on');
+  const { reply } = await say('/notify');
+  assert.match(reply, /Discord: Enabled/);
+  assert.match(reply, /Webhook: Disabled/);
+});
+
+test('/notify <channel> refuses an argument that is not on/off', async () => {
+  const { say } = harness();
+  const { reply } = await say('/notify telegram maybe');
+  assert.match(reply, /Usage: \/notify telegram/);
+});
+
+test('/notify severity warning changes the minimum severity', async () => {
+  const { say, events } = harness();
+  const set = await say('/notify severity warning');
+  assert.match(set.reply, /Minimum notification severity set to "warning"/);
+
+  const check = await say('/notify');
+  assert.match(check.reply, /Minimum severity: warning/);
+
+  const logged = events.read({ types: ['notifications.severity-changed'] });
+  assert.equal(logged.length, 1);
+  assert.deepEqual(logged[0].payload, { severity: 'warning', previousSeverity: 'info' });
+});
+
+test('/notify severity refuses an unknown level', async () => {
+  const { say } = harness();
+  const { reply } = await say('/notify severity urgent');
+  assert.match(reply, /Usage: \/notify severity/);
+});
+
+test('/notify refuses an unrecognized word', async () => {
+  const { say } = harness();
+  const { reply } = await say('/notify sms on');
+  assert.match(reply, /Usage: \/notify/);
+});
+
+test('/notify is refused when operator.liveConfig is disabled', async () => {
+  const { say } = harness({ operator: { liveConfig: { enabled: false } } });
+  const { reply } = await say('/notify');
+  assert.match(reply, /disabled/);
+});
+
+test('/approvals with no argument still lists pending decisions, unaffected by mode', async () => {
+  const { say } = harness();
+  const { reply } = await say('/approvals');
+  assert.doesNotMatch(reply, /Approval mode/);
+});
+
+test('/approvals mode with no argument shows the current mode', async () => {
+  const { say } = harness();
+  const { reply } = await say('/approvals mode');
+  assert.match(reply, /Approval mode: balanced/);
+});
+
+test('/approvals mode autonomous changes it; /approvals mode then reflects it, live, no restart', async () => {
+  const { say, events } = harness();
+  const set = await say('/approvals mode autonomous');
+  assert.match(set.reply, /Approval mode set to "autonomous"/);
+
+  const check = await say('/approvals mode');
+  assert.match(check.reply, /Approval mode: autonomous/);
+
+  const logged = events.read({ types: ['approvals.mode-changed'] });
+  assert.equal(logged.length, 1);
+  assert.deepEqual(logged[0].payload, { mode: 'autonomous', previousMode: 'balanced' });
+});
+
+test('/approvals mode balanced when already balanced says so instead of re-writing config', async () => {
+  const { say, events } = harness();
+  const { reply } = await say('/approvals mode balanced');
+  assert.match(reply, /already "balanced"/);
+  assert.equal(events.read({ types: ['approvals.mode-changed'] }).length, 0);
+});
+
+test('/approvals mode refuses an unknown mode', async () => {
+  const { say } = harness();
+  const { reply } = await say('/approvals mode owner-gate');
+  assert.match(reply, /not a valid approval mode/);
+});
+
+test('/approvals mode is refused when operator.liveConfig is disabled', async () => {
+  const { say } = harness({ operator: { liveConfig: { enabled: false } } });
+  const { reply } = await say('/approvals mode autonomous');
+  assert.match(reply, /disabled/);
+});
+
 // ────────────────────────────────── Phase 13 M6: remote file system ────────
 
 /** A project's real working directory, for tests that need to plant files. */

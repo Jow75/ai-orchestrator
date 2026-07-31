@@ -9,7 +9,8 @@ were added in the 2026-07-30 reconciliation pass (`v3.9.0`); `/mission` and
 14 M0 (`v3.11.0`); `/git`, `/git dirty`, and `/git clean` in Phase 14 M1
 (`v3.12.0`); `/log` in Phase 14 M2 (`v3.13.0`) — which also freed the `log`
 alias off `/events` (see the System section below), since the two commands
-read genuinely different things and the name was needed for the real one.
+read genuinely different things and the name was needed for the real one;
+`/notify` and `/approvals mode` were added in Phase 14 M8 (`v3.14.0`).
 
 This is the guide to *operating* AI-Orchestrator remotely. For deciding
 individual approvals, see [REMOTE_APPROVALS.md](REMOTE_APPROVALS.md); for
@@ -61,7 +62,7 @@ added later can accidentally become reachable.
 
 ## The commands
 
-34 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
+35 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
 — both read from the one `COMMANDS` array in `src/operator/commandGrammar.js`,
 so this table and the bot's own `/help` cannot drift apart.
 
@@ -101,7 +102,7 @@ What is waiting on you.
 
 | Command | What it does |
 | --- | --- |
-| `/approvals` | Every decision waiting on you, across all projects |
+| `/approvals [mode [mode]]` | Every decision waiting on you, across all projects. `mode` shows or sets the global approval mode (Phase 14 M8) |
 | `/missions` | Mission requests you raised and have not answered |
 | `/confirm <code>` · `/cancel [code]` | Answer a ⚠️ prompt |
 
@@ -135,14 +136,19 @@ M4; `/import all` — reconciliation pass, 2026-07-30).
 
 ### Configuration
 
-The machine-wide default provider/model (Phase 13 M5), plus the global
-Safe Mode override (reconciliation pass, 2026-07-30).
+The machine-wide default provider/model (Phase 13 M5), the global Safe Mode
+override (reconciliation pass, 2026-07-30), and notification
+channels/severity plus approval mode (Phase 14 M8) — the last of the
+settings that used to require editing `config/local.json` by hand.
 
 | Command | What it does |
 | --- | --- |
 | `/provider` | Current default provider/model, known drivers, and capabilities |
 | `/model [name\|default]` | Show or set the default model. Never interrupts an active mission |
 | `/safemode [on\|off]` | Global override: while on, every project runs headless-read-only regardless of its own `permissionMode`. Never interrupts an active mission |
+| `/notify [status]` | Which notification channels (Telegram/email/Discord/webhook) are enabled, and the minimum severity |
+| `/notify <channel> on\|off` | Enable or disable one channel: `telegram`, `email`, `discord`, or `webhook`. Credentials still live only in `config/local.json` |
+| `/notify severity <info\|warning\|critical>` | Set the global minimum severity a notification must have to send at all |
 
 ### Files
 
@@ -171,6 +177,9 @@ A few less-obvious ones in practice:
 /roots add D:\Development
 /model claude-sonnet-5           (or: /model default)
 /safemode on                     (or: /safemode off)
+/notify telegram off             (or: /notify telegram on)
+/notify severity warning
+/approvals mode autonomous
 /download-project Remote Work
 ```
 

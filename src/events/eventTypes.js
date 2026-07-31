@@ -70,6 +70,14 @@ export const EVENT_TYPES = Object.freeze([
   /** `/safemode on|off` — global override forcing headless-read-only. */
   'operator.safemode-changed',
 
+  // ── remote configuration completion (Phase 14 M8) ───────────────────────
+  /** `/notify <channel> on|off` — a notification channel was enabled/disabled. */
+  'notifications.channel-changed',
+  /** `/notify severity <level>` — the global minimum notification severity changed. */
+  'notifications.severity-changed',
+  /** `/approvals mode <mode>` — the global approval mode changed. */
+  'approvals.mode-changed',
+
   // ── remote file system (Phase 13 M6) ────────────────────────────────────
   /** `/files` or `/file` read something from a project's real filesystem. */
   'file.served',

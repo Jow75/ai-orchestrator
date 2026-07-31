@@ -29,6 +29,10 @@ export const LIVE_MUTABLE_PATHS = Object.freeze([
   'operator.defaultProvider',
   'operator.safeMode',
   'notifications.minSeverity',
+  'notifications.telegram.enabled',
+  'notifications.email.enabled',
+  'notifications.discord.enabled',
+  'notifications.webhook.enabled',
   'approvals.mode',
 ]);
 
