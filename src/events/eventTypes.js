@@ -84,8 +84,8 @@ export const EVENT_TYPES = Object.freeze([
   /** `/download-project` produced a ZIP of a project. */
   'project.downloaded',
 
-  // ── repository search (Phase 14 M3) ─────────────────────────────────────
-  /** `/grep` or `/symbol` searched a project's real files. */
+  // ── repository search (Phase 14 M3, +/todos in M4) ──────────────────────
+  /** `/grep`, `/symbol`, or `/todos` searched a project's real files. */
   'search.performed',
 
   // ── read-only visibility (Phase 14 cleanup pass) ────────────────────────

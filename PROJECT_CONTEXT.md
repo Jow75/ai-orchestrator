@@ -12,7 +12,16 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-30. **Phase 12 (M1→M3, plus the M2.1/M2.2 response
+**Last updated:** 2026-07-31. **Phase 14 status: M9/M0/M1/M2/M8/M3
+(`v3.10.0`→`v3.15.0`) plus an unnumbered pre-M4 cleanup pass (`v3.16.0`)
+are all SHIPPED, COMMITTED, and TAGGED. M4 — TODO/FIXME Discovery
+(`v3.17.0`, new `/todos`/`/todo`) — is IMPLEMENTED, TESTED, DOCUMENTED, and
+LIVE-VALIDATED but NOT YET COMMITTED**, stopped deliberately for the
+owner's own review rather than auto-committed. See the dedicated Phase 14
+paragraphs below and the memory file `ai-orchestrator-phase14-m4-shipped.md`
+for full detail. Nothing in Phase 14 has been pushed to `origin` yet.
+
+**Phase 12 (M1→M3, plus the M2.1/M2.2 response
 milestones) and Phase 13 M1→M7 are DONE and PUSHED to GitHub** — `main` and
 all 12 tags `v2.8.0`→`v3.7.0` are on `origin` (`github.com/Jow75/ai-
 orchestrator`) as of the 2026-07-29 consolidation review
@@ -167,6 +176,69 @@ regressions; 41/41 desktop tests unaffected. **Committed and tagged
 pushed to `origin`**. M2–M8 sequencing unchanged (M2, M8, M3, M4, M5, M6,
 M7 — see the plan's dependency graph).
 
+**Phase 14 M8 — Remote Configuration Completion (`v3.14.0`) is DONE.** New
+`/notify [status|<telegram|email|discord|webhook> on|off|severity <level>]`
+and `/approvals mode [conservative|balanced|autonomous]` (a subcommand on
+the existing `/approvals`, not a new top-level command — `APPROVE`/
+`REJECT`/etc. are already decision verbs in this grammar). Only
+`<channel>.enabled`/`minSeverity`/`mode` are remotely settable; credentials
+(bot tokens, SMTP creds) are never set or shown remotely. Reuses the
+existing `LiveConfigLayer`/allowlist unchanged. 1258 → 1275 backend tests.
+**Committed and tagged `v3.14.0`**, not yet pushed.
+
+**Phase 14 M3 — Repository & Symbol Search (`v3.15.0`) is DONE.** New
+`/grep <pattern>` (aliases `/search`, `/find`) and `/symbol <name>`, built
+on new `src/operator/repoSearch.js`'s `searchFiles()` — reuses
+`fileAccess.js`'s containment guard directly, no new traversal surface.
+Deliberately dropped the plan's own `[project]` argument (same ambiguous
+free-text-query-vs-free-text-project-name problem M9 already solved the
+same way): both commands operate on the active project only. Two hard,
+honestly-reported caps (`MAX_MATCHES` 500, `MAX_FILES_SCANNED` 20,000).
+1275 → 1304 backend tests. Live-validated against `calculator-proof`
+through the CLI operator bridge — real matches, real pagination, and the
+`MAX_MATCHES` cap genuinely hit live by an adversarial one-character query.
+**Committed and tagged `v3.15.0`**, not yet pushed.
+
+**Pre-M4 architecture cleanup pass (`v3.16.0`) is DONE.** Before starting
+M4, a directed review of M9/M0/M1/M2/M8/M3 together found and fixed two
+duplication patterns (pagination math tripled across three modules;
+"trailing bare number is a page" parsing and the pagination footer each
+tripled; kill-switch boilerplate at a dozen call sites — all now shared
+helpers in `fileAccess.js`/`commandRouter.js`/`render.js`) and five
+inconsistencies (`/git` was the one surface skipping the shared
+containment guard; three different wordings for a missing project folder;
+a duplicated literal string; `/workspace`/`/git`/`/log` emitted no event
+on success; a naming-convention drift in `gitVisibility.js`). No
+owner-visible behavior changed except `/git`'s wording and three new
+`*.viewed` events. 1304 → 1314 backend tests. **Committed and tagged
+`v3.16.0`**, not yet pushed.
+
+**Phase 14 M4 — TODO/FIXME Discovery (`v3.17.0`) is IMPLEMENTED, TESTED,
+DOCUMENTED, and LIVE-VALIDATED — NOT YET COMMITTED**, per an explicit
+instruction to stop for the owner's own review after validation rather
+than auto-commit as every prior milestone did. New `/todos [project]`
+(alias `/todo`) — a pre-canned `/grep` reusing `searchFiles()` directly,
+expanded per an owner-relayed recommendation to nine annotation tags
+(`TODO`, `FIXME`, `BUG`, `HACK`, `XXX`, `NOTE`, `OPTIMIZE`, `REVIEW`,
+`DEPRECATED` — `repoSearch.js`'s new `ANNOTATION_TAGS`), each result
+labelled with the specific tag that matched. Deliberately case-sensitive
+(unlike `/grep`) so ordinary prose containing words like "note"/"review"/
+"hack"/"bug" is never mistaken for an annotation. Unlike `/grep`/`/symbol`,
+it DOES accept an optional `[project]` argument — there is no owner-typed
+query to create the ambiguous-split problem that forced those two onto the
+active project only, so it resolves a named-or-active project exactly like
+`/git`/`/log`. Reuses the `search.performed` event (`mode: 'todos'`) rather
+than adding a new type — this is not a new capability, just a canned
+`/grep`. 1314 → 1334 backend tests, zero regressions. Live-validated
+against `THE FINISHER` (a real project name containing spaces) through the
+CLI operator bridge: 29 real matches across `.py`/`.md`/`.txt` files,
+correctly tagged and paginated, correctly excluding the project's own
+`.venv`/`__pycache__` noise. Full write-up in the memory file
+`ai-orchestrator-phase14-m4-shipped.md`. **Awaiting the owner's review
+before commit + tag.** M5, M6, M7 remain, per the plan's dependency graph
+(a "Telegram Command Expansion" pass between M4 and M5 was also floated
+but not yet decided).
+
 **Phase 13 M6 — Remote File System (`v3.6.0`) is DONE.** The first new
 runtime dependency since baseline (`archiver`) and the first filesystem
 surface exposed remotely — treated as security-sensitive, not just a
@@ -253,10 +325,14 @@ but `/import` only ever took one path at a time. Shipped `/import all`
 ran it live, taking the registry from 6 to 23 real projects. 1178 → 1194
 backend tests. Full report: `docs/PHASE_13_RECONCILIATION_2026-07-30.md`.
 
-**Phase 13 M9 is done** — see the top of this file. **NEXT: Phase 14
-planning decision** (owner go-ahead on scope/order + Phase 12 M4's
-disposition), then the still-outstanding push of `v3.8.0`/`v3.9.0` to
-`origin` whenever the owner is ready. See `docs/PHASE_14_PLAN.md`.
+**Phase 13 M9 is done** — see the top of this file. Phase 14 M9/M0/M1/M2/
+M8/M3 plus the pre-M4 cleanup pass have since shipped, committed, and
+tagged (`v3.10.0`→`v3.16.0`); M4 (`v3.17.0`) is implemented, tested, and
+live-validated but awaiting the owner's review before commit — see the top
+of this file for current status. **NEXT once M4 is reviewed:** M5 (Test/
+Verification Visibility), then M6/M7 per `docs/PHASE_14_PLAN.md`'s
+dependency graph — plus the still-outstanding push of everything back to
+`v3.8.0` through `v3.17.0` to `origin` whenever the owner is ready.
 
 ---
 
@@ -614,13 +690,22 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 13 M8 — Bot Experience & Discoverability | ✅ done | `v3.8.0` |
 | Reconciliation pass (classification migration, `/import all`, Safe Mode) | ✅ done | `v3.9.0` |
 | Phase 13 M9 — Public Release Prep | ✅ done | (audited `v3.9.0`, no version of its own) |
+| Phase 14 M9 — Remote Mission-Readiness | ✅ done | `v3.10.0` |
+| Phase 14 M0 — Workspace Overview | ✅ done | `v3.11.0` |
+| Phase 14 M1 — Git Visibility | ✅ done | `v3.12.0` |
+| Phase 14 M2 — Log Visibility | ✅ done | `v3.13.0` |
+| Phase 14 M8 — Remote Configuration Completion | ✅ done | `v3.14.0` |
+| Phase 14 M3 — Repository & Symbol Search | ✅ done | `v3.15.0` |
+| Phase 14 cleanup pass (pre-M4 architecture review) | ✅ done | `v3.16.0` |
+| Phase 14 M4 — TODO/FIXME Discovery | ⏳ implemented, awaiting review | `v3.17.0` (not yet committed) |
 
-**Test suite (current, 2026-07-30):** 1194/1194 backend (+20 Phase 13 M1,
-+31 M2, +34 M3, +17 M4, +26 M5, +55 M6, +18 M7, +5 M8, +16 reconciliation
-pass) + 41 desktop — the 919/919 figure above was the Phase 12
-M2.1 snapshot; Phase 12 M2.2 and M3 each
-added more (see
-CHANGELOG for the exact per-release deltas).
+**Test suite (current, 2026-07-31):** 1334/1334 backend (was 1194/1194 at
+the Phase 13 M9 acceptance review: +20 Phase 13 M1, +31 M2, +34 M3, +17 M4,
++26 M5, +55 M6, +18 M7, +5 M8, +16 reconciliation pass; then Phase 14 added
++25 M9, +6 M0, +15 M1, +18 M2, +17 M8, +29 M3, +10 cleanup pass, +20 M4) +
+41 desktop — the 919/919 figure above was the Phase 12 M2.1 snapshot;
+Phase 12 M2.2 and M3 each added more (see CHANGELOG for the exact
+per-release deltas).
 
 The user's master prompt arc (desktop app → multi-agent → autonomous
 project management) completed at Phase 10; the stated intent at the time

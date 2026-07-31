@@ -30,7 +30,9 @@ import { scanRoots } from './projectDiscovery.js';
 import { inspectProject, buildAutoMissionPrompt } from './projectInspector.js';
 import { gitReport } from './gitVisibility.js';
 import { readLogTail } from './logVisibility.js';
-import { searchFiles, buildGrepPattern, buildSymbolPattern } from './repoSearch.js';
+import {
+  searchFiles, buildGrepPattern, buildSymbolPattern, buildTodoPattern, matchedTag,
+} from './repoSearch.js';
 import {
   archive, restore, hide, unhide, forget, classifyProposal,
 } from './projectLifecycleOps.js';
@@ -42,6 +44,7 @@ import {
   renderHelp, renderServiceStatus, renderScanResults, renderFileListing,
   renderFileInline, formatBytes, truncate, renderMissionAssignment, renderMissionBatch,
   renderWorkspace, renderGitStatus, renderGitFilter, renderLogTail, renderSearchResults,
+  renderTodoResults,
 } from './render.js';
 import {
   FileAccessError, listFiles, resolveWithinProject, looksBinary,
@@ -454,6 +457,7 @@ export class CommandRouter {
       case 'file': return this.commandFile(rest, ctx);
       case 'grep': return this.commandGrep(rest, ctx);
       case 'symbol': return this.commandSymbol(rest, ctx);
+      case 'todos': return this.commandTodos(rest, ctx);
       case 'download_project': return await this.commandDownloadProject(rest, ctx);
       default:
         return { reply: `"/${name}" is recognized but not implemented. This is a bug — please report it.` };
@@ -1629,6 +1633,58 @@ export class CommandRouter {
   /** `/symbol <name>` — see `runSearch()`. */
   commandSymbol(rest, ctx) {
     return this.runSearch(rest, ctx, { label: 'symbol', buildPattern: buildSymbolPattern });
+  }
+
+  /**
+   * `/todos [project] [page]` — Phase 14 M4: a pre-canned `/grep` for common
+   * engineering annotations (`repoSearch.js`'s `ANNOTATION_TAGS` — TODO,
+   * FIXME, BUG, HACK, XXX, NOTE, OPTIMIZE, REVIEW, DEPRECATED), reusing
+   * `searchFiles()` directly — no new traversal surface, no new capability
+   * underneath it (see `docs/PHASE_14_PLAN.md` M4).
+   *
+   * Unlike `/grep`/`/symbol`, this command DOES accept an optional
+   * `[project]` argument: there is no owner-typed query here to
+   * disambiguate against a free-text project name (the pattern is fixed),
+   * so the ambiguous-split problem that forced `/grep`/`/symbol` onto the
+   * active project only simply does not apply — the same reasoning
+   * `/git`/`/log` already rely on for their own `[project]` argument. Reads
+   * via `getRawProject()`, not `getProject()`, so it works uniformly across
+   * every registered project regardless of mission-readiness, exactly like
+   * `/git`/`/log`/`/workspace` already do.
+   */
+  commandTodos(rest, ctx) {
+    const disabled = this.guardEnabled('search', 'Repository search');
+    if (disabled) return disabled;
+
+    const { page, rest: projectRest } = this.splitTrailingPage(rest);
+    const resolved = this.resolveTarget(projectRest, ctx);
+    if (resolved.reply) return { reply: resolved.reply };
+
+    const raw = this.configManager.getRawProject?.(resolved.project);
+    const workingDirectory = raw?.workingDirectory;
+    if (!workingDirectory) {
+      return { reply: `${resolved.project} — no workingDirectory set.` };
+    }
+
+    let results;
+    try {
+      results = searchFiles(workingDirectory, buildTodoPattern(), { page });
+    } catch (error) {
+      if (!(error instanceof FileAccessError)) throw error;
+      return { reply: `${resolved.project} — ${error.message}` };
+    }
+    results = {
+      ...results,
+      matches: results.matches.map((match) => ({ ...match, tag: matchedTag(match.text) })),
+    };
+
+    this.events?.append({
+      type: 'search.performed',
+      project: resolved.project,
+      actor: ctx.actor,
+      payload: { mode: 'todos', matches: results.total, truncated: results.truncated },
+    });
+    return { reply: renderTodoResults(resolved.project, results) };
   }
 
   /**

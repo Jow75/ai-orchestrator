@@ -781,10 +781,35 @@ export function renderSearchResults(project, label, query, results) {
   return lines.join('\n');
 }
 
+/**
+ * `/todos [project]` — Phase 14 M4. Same compact "file:line" shape as
+ * `renderSearchResults()`, plus which specific annotation tag fired on each
+ * line (`match.tag`, set by the caller via `repoSearch.js`'s `matchedTag()`
+ * before this renders — one shared pattern can't otherwise tell them apart).
+ * No query is echoed in the header, unlike `/grep`/`/symbol`: the pattern is
+ * fixed, so there is nothing owner-typed to confirm back.
+ */
+export function renderTodoResults(project, results) {
+  const lines = [`📝 todos — ${project}`, ''];
+  if (!results.matches.length) {
+    lines.push(results.total ? '(nothing on this page)' : 'No annotations found.');
+  }
+  for (const match of results.matches) {
+    lines.push(`${match.file}:${match.line}${match.tag ? `  [${match.tag}]` : ''}`);
+    lines.push(`  ${match.text}`);
+  }
+  lines.push('');
+  lines.push(renderPageFooter(results, { singular: 'match', plural: 'matches' }));
+  if (results.truncated) {
+    lines.push(`Stopped early after scanning ${results.filesScanned} files — clean some up, or page through the rest.`);
+  }
+  return lines.join('\n');
+}
+
 export default {
   relativeTime, renderProjectLine, renderProjectList, renderProjectDetail,
   renderTasks, renderApprovals, renderMissionProposal, renderMissionRequests,
   renderEvents, renderConfirmation, renderPhaseUpdate, renderServiceStatus,
   renderHelp, truncate, formatBytes, renderFileListing, renderFileInline,
-  renderSearchResults,
+  renderSearchResults, renderTodoResults,
 };

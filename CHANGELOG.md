@@ -3,6 +3,47 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.17.0] — 2026-07-31 — Phase 14 M4: TODO/FIXME Discovery
+
+`/todos [project]` (alias `/todo`) — a pre-canned `/grep` for common
+engineering annotations, built entirely on M3's `searchFiles()` primitive:
+no new traversal surface, no new capability, just a friendlier front end.
+Kill switch: reuses `operator.search.enabled` (the same one `/grep`/`/symbol`
+already share).
+
+- **Nine tags, not three.** The milestone's own working title said
+  `TODO|FIXME|XXX`; shipped scope is wider — `TODO`, `FIXME`, `BUG`, `HACK`,
+  `XXX`, `NOTE`, `OPTIMIZE`, `REVIEW`, `DEPRECATED` (`repoSearch.js`'s new
+  `ANNOTATION_TAGS`) — common engineering-annotation conventions, not just
+  the two best-known ones. Each result is labelled with the specific tag
+  that fired (`matchedTag()`), since one shared pattern can't otherwise
+  tell a `TODO` from a `FIXME` apart.
+- **Deliberately case-sensitive**, unlike `/grep`'s own case-insensitive
+  default. `NOTE`, `REVIEW`, `HACK`, and `BUG` are all ordinary English
+  words; matching them case-insensitively would flag prose ("this needs
+  review", "a hack to work around a real bug") as if it were an annotation.
+  The engineering convention this targets is written upper-case by
+  near-universal habit, so requiring it costs nothing in practice.
+- **One deviation from `/grep`/`/symbol`'s own precedent, and the mirror
+  image of it:** `/todos` DOES accept an optional `[project]` argument.
+  `/grep`/`/symbol` dropped theirs (Phase 14 M3) because a free-text query
+  and a free-text project name can't be told apart with no delimiter
+  between them. `/todos` has no owner-typed query — the pattern is fixed —
+  so that ambiguity never arises, and it resolves a named-or-active project
+  the same way `/git`/`/log` already do (including reading via
+  `getRawProject()`, so it works on any registered project regardless of
+  mission-readiness).
+- Reuses `search.performed` rather than adding a fourth event type — this
+  genuinely is the same capability as `/grep`/`/symbol` (a `mode: 'todos'`
+  payload distinguishes it), not a new one, matching how `/grep`/`/symbol`
+  already share one event via their own `mode` field.
+
+`repoSearch.test.js` (+6 for `buildTodoPattern`/`matchedTag`),
+`commandRouter.test.js` (+14). 1314 → **1334** backend tests, zero
+regressions.
+**Depends on:** M3. **Risk (realized):** low, as predicted — inherited
+M3's guard, added no new surface.
+
 ## [3.16.0] — 2026-07-31 — Phase 14 cleanup pass: pre-M4 architecture review
 
 Before starting M4, an independent architecture pass reviewed M9/M0/M1/M2/

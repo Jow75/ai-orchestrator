@@ -11,7 +11,8 @@ were added in the 2026-07-30 reconciliation pass (`v3.9.0`); `/mission` and
 alias off `/events` (see the System section below), since the two commands
 read genuinely different things and the name was needed for the real one;
 `/notify` and `/approvals mode` were added in Phase 14 M8 (`v3.14.0`);
-`/grep` and `/symbol` were added in Phase 14 M3 (`v3.15.0`).
+`/grep` and `/symbol` were added in Phase 14 M3 (`v3.15.0`); `/todos` was
+added in Phase 14 M4 (`v3.17.0`).
 
 This is the guide to *operating* AI-Orchestrator remotely. For deciding
 individual approvals, see [REMOTE_APPROVALS.md](REMOTE_APPROVALS.md); for
@@ -63,7 +64,7 @@ added later can accidentally become reachable.
 
 ## The commands
 
-37 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
+38 commands today, grouped exactly the way `/help` groups them (Phase 13 M8)
 — both read from the one `COMMANDS` array in `src/operator/commandGrammar.js`,
 so this table and the bot's own `/help` cannot drift apart.
 
@@ -163,19 +164,20 @@ Read-only remote inspection (Phase 13 M6).
 
 ### Search
 
-A text-search primitive over the active project's real files (Phase 14 M3). No `[project]` argument — same reason `/files`/`/file` have none: select one first with `/project <name>`.
+A text-search primitive over the active project's real files (Phase 14 M3). `/grep`/`/symbol` take no `[project]` argument — same reason `/files`/`/file` have none: select one first with `/project <name>`. `/todos` (Phase 14 M4) is the exception — its pattern is fixed, not owner-typed, so there is nothing to disambiguate against a project name, and it accepts one optionally, the same as `/git`/`/log`.
 
 | Command | What it does |
 | --- | --- |
 | `/grep <pattern>` | Search the active project's real files. A valid regex is used as one (case-insensitive); anything else falls back to a literal match |
 | `/symbol <name>` | `/grep` with a language-aware-ish pattern layered on top — finds where a function/class/const/etc. is likely DEFINED, not a real symbol index. Case-sensitive |
+| `/todos [project]` | A pre-canned `/grep` for common engineering annotations — `TODO`, `FIXME`, `BUG`, `HACK`, `XXX`, `NOTE`, `OPTIMIZE`, `REVIEW`, `DEPRECATED` — labelled with the specific tag that fired on each line. Case-sensitive; a mention of "note" or "review" in ordinary prose is not flagged |
 
 Plus the decision grammar, unchanged since Phase 10:
 `APPROVE A7` · `REJECT A7 [why]` · `MODIFY A7 <changes>` · `DONE A7`.
 
 Aliases exist where they are natural — `/ls`, `/use`, `/cd`, `/queue`,
 `/activity`, `/logs`, `/yes`, `/no`, `/rescan`, `/dir`, `/cat`, `/zip`,
-`/search`, `/find`. The leading `/` is optional
+`/search`, `/find`, `/todo`. The leading `/` is optional
 for a bare command (`projects`, `status calculator`), and prose that merely
 *starts* with a command word ("status update: the importer is done…") is
 treated as prose, not a command.
@@ -193,6 +195,7 @@ A few less-obvious ones in practice:
 /approvals mode autonomous
 /grep TODO
 /symbol DriverRegistry
+/todos Remote Work
 /download-project Remote Work
 ```
 

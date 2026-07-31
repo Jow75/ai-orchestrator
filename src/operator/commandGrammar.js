@@ -356,6 +356,15 @@ export const COMMANDS = Object.freeze([
     description: '/grep with a language-aware-ish pattern layered on top — finds where a function/class/const/etc. is likely DEFINED, not a real symbol index.',
   },
   {
+    name: 'todos',
+    aliases: ['todo'],
+    usage: '/todos [project]',
+    takesRest: true,
+    category: 'Search',
+    examples: ['/todos', '/todos calculator-proof'],
+    description: 'A pre-canned /grep for common engineering annotations (TODO, FIXME, BUG, HACK, XXX, NOTE, OPTIMIZE, REVIEW, DEPRECATED) in the active (or named) project, file:line.',
+  },
+  {
     // Telegram's setMyCommands rejects any name outside [a-z0-9_]{1,32} — a
     // hyphen is not legal there, unlike every other place a command name
     // appears in this codebase. The owner's own directive wrote

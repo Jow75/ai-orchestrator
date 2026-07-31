@@ -13,6 +13,7 @@ import path from 'node:path';
 import { FileAccessError } from '../src/operator/fileAccess.js';
 import {
   escapeRegExp, buildGrepPattern, buildSymbolPattern, searchFiles,
+  ANNOTATION_TAGS, buildTodoPattern, matchedTag,
 } from '../src/operator/repoSearch.js';
 
 function tmpProject(files = {}) {
@@ -67,6 +68,43 @@ test('buildSymbolPattern does not match an unrelated identifier or a mere mentio
 test('buildSymbolPattern is case-sensitive, unlike buildGrepPattern', () => {
   const regex = buildSymbolPattern('DriverRegistry');
   assert.equal(regex.test('class driverregistry {'), false);
+});
+
+// ── buildTodoPattern / matchedTag (Phase 14 M4) ──────────────────────────
+
+test('buildTodoPattern matches every default annotation tag as a whole word', () => {
+  const regex = buildTodoPattern();
+  for (const tag of ANNOTATION_TAGS) {
+    assert.equal(regex.test(`// ${tag}: something`), true, `expected ${tag} to match`);
+  }
+});
+
+test('buildTodoPattern is case-sensitive — lowercase prose is not mistaken for an annotation', () => {
+  const regex = buildTodoPattern();
+  assert.equal(regex.test('please note that this needs review'), false);
+  assert.equal(regex.test('this is a hack to work around a bug'), false);
+});
+
+test('buildTodoPattern does not match a tag as a substring of a longer word', () => {
+  const regex = buildTodoPattern();
+  assert.equal(regex.test('const NOTEBOOK = {}'), false);
+  assert.equal(regex.test('function HACKATHON() {}'), false);
+});
+
+test('buildTodoPattern accepts a narrower custom tag list', () => {
+  const regex = buildTodoPattern(['TODO', 'FIXME']);
+  assert.equal(regex.test('// TODO: later'), true);
+  assert.equal(regex.test('// BUG: nope, not in this list'), false);
+});
+
+test('matchedTag reports which specific tag fired on a matched line', () => {
+  assert.equal(matchedTag('// TODO: fix this'), 'TODO');
+  assert.equal(matchedTag('// FIXME: memory leak'), 'FIXME');
+  assert.equal(matchedTag('// DEPRECATED: use the new API'), 'DEPRECATED');
+});
+
+test('matchedTag returns null for a line that matches none of the tags', () => {
+  assert.equal(matchedTag('const x = 1;'), null);
 });
 
 // ── searchFiles ───────────────────────────────────────────────────────────

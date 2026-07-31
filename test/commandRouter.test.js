@@ -1919,6 +1919,148 @@ test('/symbol is refused when operator.search.enabled is false', async () => {
   assert.match(reply, /disabled/);
 });
 
+// ─────────────────────────── Phase 14 M4: TODO/FIXME discovery ─────────────
+
+test('/todos refuses with no project selected and none named, same as /git/log', async () => {
+  const { say } = harness();
+  const { reply } = await say('/todos');
+  assert.match(reply, /No project selected/);
+});
+
+test('/todos with no argument uses the active project, like /git and /log', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(path.join(dir, 'a.js'), '// TODO: wire this up\n');
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/todos');
+
+  assert.match(reply, /alpha/);
+  assert.match(reply, /a\.js:1/);
+});
+
+test('/todos <project> names a project directly, unlike /grep/symbol', async () => {
+  const h = harness({ projects: ['alpha', 'beta'] });
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(path.join(dir, 'a.js'), '// TODO: wire this up\n');
+
+  const { reply } = await h.say('/todos alpha');
+
+  assert.match(reply, /alpha/);
+  assert.match(reply, /a\.js:1/);
+});
+
+test('/todos finds every default annotation tag, each labelled with the specific tag that fired', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(
+    path.join(dir, 'a.js'),
+    '// TODO: handle reconnect\n// FIXME: memory leak\n// HACK: temporary workaround\n// NOTE: migration required\n',
+  );
+
+  const { reply } = await h.say('/todos alpha');
+
+  assert.match(reply, /\[TODO\]/);
+  assert.match(reply, /\[FIXME\]/);
+  assert.match(reply, /\[HACK\]/);
+  assert.match(reply, /\[NOTE\]/);
+  assert.match(reply, /4 matches/);
+});
+
+test('/todos is case-sensitive — ordinary prose mentioning "note"/"review"/"hack"/"bug" is not flagged', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(
+    path.join(dir, 'a.js'),
+    '// please note that this needs review before the hack becomes a real bug\n',
+  );
+
+  const { reply } = await h.say('/todos alpha');
+
+  assert.match(reply, /No annotations found/);
+});
+
+test('/todos reports no matches honestly rather than an error', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const { reply } = await h.say('/todos alpha');
+  assert.match(reply, /No annotations found/);
+});
+
+test('/todos and its alias /todo reach the same command', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(path.join(dir, 'a.js'), '// TODO: wire this up\n');
+
+  const viaTodos = await h.say('/todos alpha');
+  const viaTodo = await h.say('/todo alpha');
+  assert.equal(viaTodos.reply, viaTodo.reply);
+});
+
+test('/todos <project> <page> paginates like /log: a trailing bare number is a page once a project name precedes it', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const dir = workDirOf(h, 'alpha');
+  const lines = Array.from({ length: 25 }, (_, i) => `// TODO: item ${i}`).join('\n');
+  fs.writeFileSync(path.join(dir, 'a.js'), lines);
+
+  const page1 = await h.say('/todos alpha');
+  assert.match(page1.reply, /Page 1\/2/);
+  assert.match(page1.reply, /item 0/);
+
+  const page2 = await h.say('/todos alpha 2');
+  assert.match(page2.reply, /Page 2\/2/);
+  assert.match(page2.reply, /item 20/);
+});
+
+test('/todos 40 treats a lone bare number as a project name, not a page — matching /log\'s rule', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const { reply } = await h.say('/todos 40');
+  assert.match(reply, /No project matches "40"/);
+});
+
+test('/todos works on a project missing a promptFile — independent of mission-readiness, same as /git/log', async () => {
+  const h = discoveryHarness();
+  const dir = mkCandidate(h.rootsDir, 'no-mission-yet');
+  fs.writeFileSync(path.join(dir, 'a.js'), '// TODO: wire this up\n');
+  await h.say(`/import ${dir}`);
+
+  const { reply } = await h.say('/todos no-mission-yet');
+
+  assert.match(reply, /a\.js:1/);
+});
+
+test('/todos logs a search.performed event with mode "todos"', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const dir = workDirOf(h, 'alpha');
+  fs.writeFileSync(path.join(dir, 'a.js'), '// TODO: wire this up\n');
+
+  await h.say('/todos alpha');
+  const logged = h.events.read({ types: ['search.performed'] });
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].payload.mode, 'todos');
+  assert.equal(logged[0].payload.matches, 1);
+  assert.equal(logged[0].payload.truncated, false);
+});
+
+test('/todos is refused when operator.search.enabled is false', async () => {
+  const h = harness({ projects: ['alpha'], operator: { search: { enabled: false } } });
+  const { reply } = await h.say('/todos alpha');
+  assert.match(reply, /disabled/i);
+});
+
+test('/todos names an unknown project the same way /status does', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const { reply } = await h.say('/todos nope');
+  assert.match(reply, /No project matches "nope"/);
+});
+
+test('/todos on a project whose workingDirectory has vanished reuses fileAccess.js\'s own guard message', async () => {
+  const h = harness({ projects: ['alpha'] });
+  fs.rmSync(path.join(h.root, 'work', 'alpha'), { recursive: true, force: true });
+  const { reply } = await h.say('/todos alpha');
+  assert.match(reply, /alpha/);
+  assert.match(reply, /folder does not exist on disk/);
+});
+
 // ────────────────────────────────── Phase 13 M6: remote file system ────────
 
 /** A project's real working directory, for tests that need to plant files. */

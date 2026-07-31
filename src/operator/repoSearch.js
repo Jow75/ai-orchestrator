@@ -1,5 +1,6 @@
 /**
- * repoSearch.js — Phase 14 M3: `/grep <pattern>` and `/symbol <name>`.
+ * repoSearch.js — Phase 14 M3: `/grep <pattern>` and `/symbol <name>`; Phase
+ * 14 M4 adds `/todos <tags>` as a third pattern builder on the same walker.
  *
  * A text-search primitive over the active project's real files, built on the
  * exact same containment guard `/files`/`/file` already use
@@ -9,7 +10,9 @@
  * AST/ctags index — deliberately scoped as "good enough to find a
  * definition fast," since a persisted symbol index would be exactly the kind
  * of new architecture Phase 14 is meant to avoid (see docs/PHASE_14_PLAN.md
- * M3).
+ * M3). `/todos` is the identical idea applied to a fixed pattern instead of
+ * owner-typed text — a pre-canned `/grep` for common engineering annotations
+ * (see `ANNOTATION_TAGS`), not a fourth capability.
  *
  * The plan's own risk note calls this "the highest-blast-radius new surface
  * this phase adds" and asks for the same adversarial discipline M6's
@@ -61,6 +64,53 @@ export function buildGrepPattern(pattern) {
   } catch {
     return new RegExp(escapeRegExp(pattern), 'i');
   }
+}
+
+/**
+ * Engineering annotation tags common enough across mainstream conventions to
+ * be worth a canned scan for — `/todos` (Phase 14 M4) is a pre-canned
+ * `/grep` for these, not a new capability: same `searchFiles()` walk, same
+ * guard, same caps, just a fixed pattern instead of owner-typed text.
+ * Deliberately UPPERCASE-only (`buildTodoPattern()` below has no `i` flag) —
+ * matching case-insensitively would turn ordinary English prose containing
+ * words like "note", "review", "hack", or "bug" into false positives, while
+ * the engineering-annotation convention this targets is written upper-case
+ * by near-universal habit.
+ */
+export const ANNOTATION_TAGS = Object.freeze([
+  'TODO', 'FIXME', 'BUG', 'HACK', 'XXX', 'NOTE', 'OPTIMIZE', 'REVIEW', 'DEPRECATED',
+]);
+
+/**
+ * Build the `/todos` search pattern: any of `tags`, whole-word, matched
+ * anywhere on a line. Does not require a comment marker to precede it —
+ * parsing every language's own comment syntax would be new capability, not
+ * a canned search, so a tag inside a string literal can also match; the
+ * same accepted tradeoff `buildSymbolPattern()` documents for its own
+ * regex-not-a-parser scope. Case-sensitive; see `ANNOTATION_TAGS`.
+ *
+ * @param {string[]} [tags]
+ * @returns {RegExp}
+ */
+export function buildTodoPattern(tags = ANNOTATION_TAGS) {
+  return new RegExp(`\\b(?:${tags.join('|')})\\b`);
+}
+
+/**
+ * Which of `tags` fired on one already-matched line — used only to label a
+ * `/todos` result with its specific tag, since one shared pattern can't
+ * otherwise tell a caller which alternative matched. Checked in `tags`'
+ * own order; a line naming more than one tag (rare) reports the first.
+ *
+ * @param {string} text
+ * @param {string[]} [tags]
+ * @returns {string|null}
+ */
+export function matchedTag(text, tags = ANNOTATION_TAGS) {
+  for (const tag of tags) {
+    if (new RegExp(`\\b${tag}\\b`).test(text)) return tag;
+  }
+  return null;
 }
 
 /**
@@ -202,5 +252,6 @@ export function searchFiles(projectRoot, regex, {
 
 export default {
   DEFAULT_SEARCH_PAGE_SIZE, MAX_MATCHES, MAX_FILES_SCANNED, MAX_SEARCH_FILE_BYTES,
-  escapeRegExp, buildGrepPattern, buildSymbolPattern, searchFiles,
+  ANNOTATION_TAGS,
+  escapeRegExp, buildGrepPattern, buildSymbolPattern, buildTodoPattern, matchedTag, searchFiles,
 };
