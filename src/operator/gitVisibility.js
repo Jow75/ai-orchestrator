@@ -15,9 +15,9 @@ import { execFileSync } from 'node:child_process';
 const GIT_TIMEOUT_MS = 15_000;
 
 /** One bounded, never-throwing git invocation. Null on any failure. */
-function git(dir, args) {
+function git(projectRoot, args) {
   try {
-    return execFileSync('git', ['-C', dir, ...args], {
+    return execFileSync('git', ['-C', projectRoot, ...args], {
       encoding: 'utf8',
       timeout: GIT_TIMEOUT_MS,
       windowsHide: true,
@@ -28,9 +28,9 @@ function git(dir, args) {
   }
 }
 
-/** Whether `dir` is inside a real git work tree. */
-export function isGitRepo(dir) {
-  return git(dir, ['rev-parse', '--is-inside-work-tree']) === 'true';
+/** Whether `projectRoot` is inside a real git work tree. */
+export function isGitRepo(projectRoot) {
+  return git(projectRoot, ['rev-parse', '--is-inside-work-tree']) === 'true';
 }
 
 /**
@@ -41,8 +41,8 @@ export function isGitRepo(dir) {
  * resolves the ref itself, not a commit, and fails cleanly on detached HEAD
  * (not a symbolic ref at all) — exactly the case that should read as null.
  */
-function currentBranch(dir) {
-  return git(dir, ['symbolic-ref', '--short', 'HEAD']);
+function currentBranch(projectRoot) {
+  return git(projectRoot, ['symbolic-ref', '--short', 'HEAD']);
 }
 
 /**
@@ -50,23 +50,23 @@ function currentBranch(dir) {
  * changed (staged + unstaged + untracked — one line per file in porcelain
  * output). Null when not a repo.
  */
-function workingTreeStatus(dir) {
-  const output = git(dir, ['status', '--porcelain']);
+function workingTreeStatus(projectRoot) {
+  const output = git(projectRoot, ['status', '--porcelain']);
   if (output === null) return null;
   const changedCount = output.length ? output.split('\n').length : 0;
   return { dirty: changedCount > 0, changedCount };
 }
 
 /** Short hash + subject of HEAD, or null when there is no commit yet. */
-function headInfo(dir) {
-  const hash = git(dir, ['rev-parse', '--short', 'HEAD']);
+function headInfo(projectRoot) {
+  const hash = git(projectRoot, ['rev-parse', '--short', 'HEAD']);
   if (!hash) return null;
-  return { hash, subject: git(dir, ['log', '-1', '--pretty=%s']) ?? '' };
+  return { hash, subject: git(projectRoot, ['log', '-1', '--pretty=%s']) ?? '' };
 }
 
 /** Up to `count` most recent commits, newest first, as `{hash, subject}`. Empty when none. */
-function recentCommits(dir, count) {
-  const output = git(dir, ['log', `-${count}`, '--pretty=%h\t%s']);
+function recentCommits(projectRoot, count) {
+  const output = git(projectRoot, ['log', `-${count}`, '--pretty=%h\t%s']);
   if (!output) return [];
   return output.split('\n').filter(Boolean).map((line) => {
     const [hash, ...rest] = line.split('\t');
@@ -79,8 +79,8 @@ function recentCommits(dir, count) {
  * configured — very common for local-only work — reported as "not tracked"
  * by the caller rather than a fabricated 0/0.
  */
-function aheadBehind(dir) {
-  const output = git(dir, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']);
+function aheadBehind(projectRoot) {
+  const output = git(projectRoot, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']);
   if (output === null) return null;
   const [behind, ahead] = output.split(/\s+/).map(Number);
   if (!Number.isFinite(ahead) || !Number.isFinite(behind)) return null;
@@ -88,21 +88,22 @@ function aheadBehind(dir) {
 }
 
 /**
- * Everything `/git [project]` shows, one shell-out batch. Null when `dir` is
- * not a real git work tree at all — distinct from the individual fields
- * being null for a more specific reason (no commits yet, no upstream).
+ * Everything `/git [project]` shows, one shell-out batch. Null when
+ * `projectRoot` is not a real git work tree at all — distinct from the
+ * individual fields being null for a more specific reason (no commits yet,
+ * no upstream).
  *
- * @param {string} dir - A project's real working directory.
+ * @param {string} projectRoot - A project's real working directory.
  * @param {{commitCount?: number}} [options]
  */
-export function gitReport(dir, { commitCount = 8 } = {}) {
-  if (!isGitRepo(dir)) return null;
+export function gitReport(projectRoot, { commitCount = 8 } = {}) {
+  if (!isGitRepo(projectRoot)) return null;
   return {
-    branch: currentBranch(dir),
-    head: headInfo(dir),
-    status: workingTreeStatus(dir),
-    recentCommits: recentCommits(dir, commitCount),
-    aheadBehind: aheadBehind(dir),
+    branch: currentBranch(projectRoot),
+    head: headInfo(projectRoot),
+    status: workingTreeStatus(projectRoot),
+    recentCommits: recentCommits(projectRoot, commitCount),
+    aheadBehind: aheadBehind(projectRoot),
   };
 }
 

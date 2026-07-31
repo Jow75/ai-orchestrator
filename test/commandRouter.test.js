@@ -1139,6 +1139,14 @@ test('/workspace on an empty registry says so plainly', async () => {
   assert.match(reply, /No projects are defined yet/);
 });
 
+test('/workspace logs a workspace.viewed event (cleanup pass: reads were silent before)', async () => {
+  const h = harness({ projects: ['alpha'] });
+  await h.say('/workspace');
+  const logged = h.events.read({ types: ['workspace.viewed'] });
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].payload.projects, 1);
+});
+
 // ─────────────────────────────────────── Phase 14 M1: /git ─────────────────
 
 test('/git on a project with no repository says so plainly', async () => {
@@ -1222,6 +1230,24 @@ test('/git names an unknown project the same way /status does', async () => {
   assert.match(reply, /No project matches "nope"/);
 });
 
+test('/git logs a git.viewed event (cleanup pass: reads were silent before)', async () => {
+  const h = harness({ projects: ['alpha'] });
+  makeRepo(path.join(h.root, 'work', 'alpha'));
+  await h.say('/git alpha');
+  const logged = h.events.read({ types: ['git.viewed'] });
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].project, 'alpha');
+  assert.equal(logged[0].payload.isRepo, true);
+});
+
+test('/git on a project whose workingDirectory has vanished reuses fileAccess.js\'s own guard message', async () => {
+  const h = harness({ projects: ['alpha'] });
+  fs.rmSync(path.join(h.root, 'work', 'alpha'), { recursive: true, force: true });
+  const { reply } = await h.say('/git alpha');
+  assert.match(reply, /alpha/);
+  assert.match(reply, /folder does not exist on disk/);
+});
+
 // ───────────────────────────── Phase 14 M2: log visibility ─────────────────
 
 /** Appends one winston-shaped JSON log line to today's real log file. */
@@ -1294,6 +1320,16 @@ test('/log 40 treats a lone bare number as a project name, not a page — matchi
   const h = harness({ projects: ['alpha'] });
   const { reply } = await h.say('/log 40');
   assert.match(reply, /No project matches "40"/);
+});
+
+test('/log logs a log.viewed event (cleanup pass: reads were silent before)', async () => {
+  const h = harness({ projects: ['alpha'] });
+  writeLogLine(h.paths, { level: 'info', project: 'alpha', message: 'from the active project' });
+  await h.say('/log alpha');
+  const logged = h.events.read({ types: ['log.viewed'] });
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].project, 'alpha');
+  assert.equal(logged[0].payload.found, true);
 });
 
 test('/log is refused when operator.log is disabled', async () => {

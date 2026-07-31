@@ -17,6 +17,7 @@ import path from 'node:path';
 import {
   FileAccessError, resolveWithinProject, listFiles, looksBinary,
   estimateArchiveSize, createProjectArchive, pruneOldDownloads,
+  paginate, missingFolderDetail,
 } from '../src/operator/fileAccess.js';
 
 function tmpProject() {
@@ -178,6 +179,41 @@ test('listFiles refuses to list a FILE as though it were a directory', () => {
 test('listFiles inherits the same traversal guard', () => {
   const root = tmpProject();
   assert.throws(() => listFiles(root, '../../etc'), FileAccessError);
+});
+
+// ─────────────────────────────────────────────────────────────── paginate ─
+// Cleanup pass: this used to be hand-rolled identically in listFiles(),
+// repoSearch.js's searchFiles(), and logVisibility.js's readLogTail().
+
+test('paginate clamps an out-of-range page into bounds', () => {
+  assert.equal(paginate(25, { page: 99, pageSize: 10 }).page, 3);
+  assert.equal(paginate(25, { page: 0, pageSize: 10 }).page, 1);
+  assert.equal(paginate(25, { page: -5, pageSize: 10 }).page, 1);
+});
+
+test('paginate computes pageCount and slice bounds for a partial last page', () => {
+  const paged = paginate(25, { page: 1, pageSize: 10 });
+  assert.equal(paged.pageCount, 3);
+  assert.deepEqual([paged.start, paged.end], [0, 10]);
+});
+
+test('paginate never produces a zero pageSize even when asked to', () => {
+  assert.equal(paginate(5, { pageSize: 0 }).pageSize, 1);
+});
+
+test('paginate honors maxPageSize as an upper bound on the requested pageSize', () => {
+  assert.equal(paginate(500, { pageSize: 1000, maxPageSize: 100 }).pageSize, 100);
+  assert.equal(paginate(500, { pageSize: 10, maxPageSize: 100 }).pageSize, 10, 'a smaller request is left alone');
+});
+
+// ────────────────────────────────────────────────────── missingFolderDetail
+test('missingFolderDetail names the real path when one was given', () => {
+  assert.equal(missingFolderDetail('C:/gone'), 'folder does not exist on disk: C:/gone');
+});
+
+test('missingFolderDetail falls back to "not set" for an empty/undefined path', () => {
+  assert.equal(missingFolderDetail(''), 'folder does not exist on disk: not set');
+  assert.equal(missingFolderDetail(undefined), 'folder does not exist on disk: not set');
 });
 
 // ──────────────────────────────────────────────────────────── looksBinary ─

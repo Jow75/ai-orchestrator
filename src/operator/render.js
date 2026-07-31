@@ -678,6 +678,23 @@ export function formatBytes(bytes) {
 }
 
 /**
+ * "Page X/Y · N <noun> total" once paginated, else just "N <noun>" — the
+ * shared footer every paginated reply (`/files`, `/log`, `/grep`/`/symbol`)
+ * ends with, done once instead of once per renderer.
+ *
+ * @param {{page: number, pageCount: number, total: number}} paging
+ * @param {{singular?: string, plural?: string}} noun - `plural` alone (no
+ *   `singular`) means the noun is never singularized regardless of count —
+ *   `/files`' own "entries" has never had a singular form shown.
+ */
+function renderPageFooter({ page, pageCount, total }, { singular, plural = `${singular}s` } = {}) {
+  const noun = total === 1 && singular ? singular : plural;
+  return pageCount > 1
+    ? `Page ${page}/${pageCount} · ${total} ${noun} total`
+    : `${total} ${noun}`;
+}
+
+/**
  * `/files` — one directory level, Explorer-style. Directories are listed
  * with a trailing `/` and no size (their size is not measured — a full
  * recursive walk for a number nobody asked for is exactly the unbounded
@@ -694,11 +711,7 @@ export function renderFileListing(project, listing) {
       : `📄 ${entry.name}  (${formatBytes(entry.size ?? 0)})`);
   }
   lines.push('');
-  if (listing.pageCount > 1) {
-    lines.push(`Page ${listing.page}/${listing.pageCount} · ${listing.total} entries total`);
-  } else {
-    lines.push(`${listing.total} entries`);
-  }
+  lines.push(renderPageFooter(listing, { plural: 'entries' }));
   lines.push(listing.path === '.'
     ? 'Read one: /file <name>'
     : `Read one: /file ${listing.path}/<name>`);
@@ -741,9 +754,7 @@ export function renderLogTail(project, tail) {
     lines.push(`${when} ${icon} ${entry.message}`);
   }
   lines.push('');
-  lines.push(tail.pageCount > 1
-    ? `Page ${tail.page}/${tail.pageCount} · ${tail.total} lines total`
-    : `${tail.total} line${tail.total === 1 ? '' : 's'}`);
+  lines.push(renderPageFooter(tail, { singular: 'line' }));
   return lines.join('\n');
 }
 
@@ -763,9 +774,7 @@ export function renderSearchResults(project, label, query, results) {
     lines.push(`  ${match.text}`);
   }
   lines.push('');
-  lines.push(results.pageCount > 1
-    ? `Page ${results.page}/${results.pageCount} · ${results.total} match${results.total === 1 ? '' : 'es'} total`
-    : `${results.total} match${results.total === 1 ? '' : 'es'}`);
+  lines.push(renderPageFooter(results, { singular: 'match', plural: 'matches' }));
   if (results.truncated) {
     lines.push(`Stopped early after scanning ${results.filesScanned} files — narrow your pattern to see more.`);
   }

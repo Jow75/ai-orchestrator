@@ -88,6 +88,17 @@ export const EVENT_TYPES = Object.freeze([
   /** `/grep` or `/symbol` searched a project's real files. */
   'search.performed',
 
+  // ── read-only visibility (Phase 14 cleanup pass) ────────────────────────
+  // M0/M1/M2 shipped without these — every other read-only surface (`/files`,
+  // `/grep`) already honors router rule 4 ("every real outcome becomes an
+  // event"); these three close that gap rather than leaving reads silent.
+  /** `/workspace` rolled up the registry. */
+  'workspace.viewed',
+  /** `/git [project]` reported one project's git state. */
+  'git.viewed',
+  /** `/log [project]` tailed the orchestrator log. */
+  'log.viewed',
+
   // ── missions requested from an interface (M2 Priority 3) ─────────────────
   /** Free text became a mission request awaiting the owner's approval. */
   'mission.created',

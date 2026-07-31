@@ -21,7 +21,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_IGNORE_DIRS, looksBinary, resolveWithinProject } from './fileAccess.js';
+import {
+  DEFAULT_IGNORE_DIRS, looksBinary, resolveWithinProject, paginate,
+} from './fileAccess.js';
 
 /** Match rows per page of `/grep`/`/symbol` output. */
 export const DEFAULT_SEARCH_PAGE_SIZE = 20;
@@ -186,15 +188,12 @@ export function searchFiles(projectRoot, regex, {
   }
 
   const total = matches.length;
-  const clampedPageSize = Math.max(1, pageSize);
-  const pageCount = Math.max(1, Math.ceil(total / clampedPageSize));
-  const clampedPage = Math.min(Math.max(1, page), pageCount);
-  const start = (clampedPage - 1) * clampedPageSize;
+  const paged = paginate(total, { page, pageSize });
 
   return {
-    matches: matches.slice(start, start + clampedPageSize),
-    page: clampedPage,
-    pageCount,
+    matches: matches.slice(paged.start, paged.end),
+    page: paged.page,
+    pageCount: paged.pageCount,
     total,
     filesScanned,
     truncated,

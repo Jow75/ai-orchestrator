@@ -45,7 +45,7 @@ import {
 } from './render.js';
 import {
   FileAccessError, listFiles, resolveWithinProject, looksBinary,
-  estimateArchiveSize, createProjectArchive, pruneOldDownloads,
+  estimateArchiveSize, createProjectArchive, pruneOldDownloads, missingFolderDetail,
 } from './fileAccess.js';
 import { MAX_DOCUMENT_BYTES } from '../notifications/channels/telegram.js';
 
@@ -65,6 +65,16 @@ export const DEFAULT_EVENT_COUNT = 12;
 
 /** Upper bound on `/events <n>`, so one message cannot become a wall of text. */
 export const MAX_EVENT_COUNT = 40;
+
+/**
+ * Shared by `/whoami` and `activeProjectRoot()` (the guard behind `/files`,
+ * `/file`, `/grep`, `/symbol`) — both need "there is no active project" and
+ * neither accepts a project name as part of their own argument, so neither
+ * can offer `resolveTarget()`'s "or name one directly" alternative.
+ * `resolveTarget()` itself (used by `/status`, `/git`, `/log`, …) keeps its
+ * own longer message on purpose, since it CAN take a name inline.
+ */
+const NO_ACTIVE_PROJECT_REPLY = 'No project selected. /projects then /project <name>.';
 
 export class CommandRouter {
   /**
@@ -417,7 +427,7 @@ export class CommandRouter {
       case 'project': return this.commandSelect(rest, ctx);
       case 'whoami': return this.commandWhoami(ctx);
       case 'status': return this.commandStatus(rest, ctx);
-      case 'workspace': return this.commandWorkspace();
+      case 'workspace': return this.commandWorkspace(ctx);
       case 'git': return this.commandGit(rest, ctx);
       case 'start': return this.commandStart(rest, ctx);
       case 'tasks': return this.commandTasks(rest, ctx);
@@ -519,7 +529,7 @@ export class CommandRouter {
 
   commandWhoami(ctx) {
     const active = this.activeProject(ctx);
-    if (!active) return { reply: 'No project selected. /projects then /project <name>.' };
+    if (!active) return { reply: NO_ACTIVE_PROJECT_REPLY };
     const entry = this.context.get(ctx.channel, ctx.chatId);
     return {
       reply: `Active project: ${active}\nSelected: ${entry?.selectedAt ?? 'unknown'}`,
@@ -542,10 +552,9 @@ export class CommandRouter {
    * the misconfigured/missing-folder projects this rollup still has to
    * count, so it can't be used here either.
    */
-  commandWorkspace() {
-    if (this.operatorConfig.workspace?.enabled === false) {
-      return { reply: 'Workspace overview is disabled (operator.workspace.enabled: false).' };
-    }
+  commandWorkspace(ctx) {
+    const disabled = this.guardEnabled('workspace', 'Workspace overview');
+    if (disabled) return disabled;
     const records = this.registry.list({ includeHidden: false });
     const missionReady = new Set();
     for (const record of records) {
@@ -554,6 +563,9 @@ export class CommandRouter {
         missionReady.add(record.name);
       }
     }
+    this.events?.append({
+      type: 'workspace.viewed', actor: ctx?.actor, payload: { projects: records.length, missionReady: missionReady.size },
+    });
     return { reply: renderWorkspace(records, { missionReady }) };
   }
 
@@ -571,11 +583,17 @@ export class CommandRouter {
    * registry before Phase 14 M9), and git state has nothing to do with
    * mission-readiness — the same reasoning `commandWorkspace()` and
    * `existingProjectDirs()` already apply.
+   *
+   * The "does this folder actually exist" check reuses `fileAccess.js`'s
+   * own `resolveWithinProject()` (called with `''`, i.e. "the root itself")
+   * rather than a bespoke `fs.existsSync()` — the same real-path check
+   * `/files`/`/file`/`/grep`/`/symbol` already rely on, so a dangling
+   * symlink or junction is caught here exactly as it would be there,
+   * instead of this command being the one surface with a weaker guard.
    */
   commandGit(rest, ctx) {
-    if (this.operatorConfig.git?.enabled === false) {
-      return { reply: 'Git visibility is disabled (operator.git.enabled: false).' };
-    }
+    const disabled = this.guardEnabled('git', 'Git visibility');
+    if (disabled) return disabled;
     const word = (rest ?? '').trim().toLowerCase();
     if (word === 'dirty' || word === 'clean') return this.commandGitFilter(word);
 
@@ -584,11 +602,21 @@ export class CommandRouter {
 
     const raw = this.configManager.getRawProject?.(resolved.project);
     const workingDirectory = raw?.workingDirectory;
-    if (!workingDirectory || !fs.existsSync(workingDirectory)) {
-      return { reply: `${resolved.project} — folder not found (${workingDirectory ?? 'no workingDirectory set'}).` };
+    if (!workingDirectory) {
+      return { reply: `${resolved.project} — no workingDirectory set.` };
+    }
+    let realRoot;
+    try {
+      realRoot = resolveWithinProject(workingDirectory, '');
+    } catch (error) {
+      if (!(error instanceof FileAccessError)) throw error;
+      return { reply: `${resolved.project} — ${error.message}` };
     }
 
-    const report = gitReport(workingDirectory);
+    const report = gitReport(realRoot);
+    this.events?.append({
+      type: 'git.viewed', project: resolved.project, actor: ctx.actor, payload: { isRepo: Boolean(report) },
+    });
     return { reply: renderGitStatus(resolved.project, report) };
   }
 
@@ -617,22 +645,21 @@ export class CommandRouter {
    * activity, not this project's, so they are correctly excluded.
    */
   commandLog(rest, ctx) {
-    if (this.operatorConfig.log?.enabled === false) {
-      return { reply: 'Log visibility is disabled (operator.log.enabled: false).' };
-    }
+    const disabled = this.guardEnabled('log', 'Log visibility');
+    if (disabled) return disabled;
     if (!this.paths?.logsDir) {
       return { reply: 'This interface cannot read the log from here.' };
     }
 
-    const words = (rest ?? '').trim().split(/\s+/).filter(Boolean);
-    let page = 1;
-    if (words.length > 1 && /^\d+$/.test(words.at(-1))) page = Number(words.pop());
-    const projectRest = words.join(' ');
+    const { page, rest: projectRest } = this.splitTrailingPage(rest);
 
     const resolved = this.resolveTarget(projectRest, ctx);
     if (resolved.reply) return { reply: resolved.reply };
 
     const tail = readLogTail(this.paths.logsDir, resolved.project, { page });
+    this.events?.append({
+      type: 'log.viewed', project: resolved.project, actor: ctx.actor, payload: { page, found: Boolean(tail) },
+    });
     return { reply: renderLogTail(resolved.project, tail) };
   }
 
@@ -679,12 +706,8 @@ export class CommandRouter {
       };
     }
 
-    if (this.operatorConfig.liveConfig?.enabled === false) {
-      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
-    }
-    if (!this.liveConfig) {
-      return { reply: 'This interface cannot change configuration from here.' };
-    }
+    const disabled = this.guardLiveConfig();
+    if (disabled) return disabled;
 
     const valid = ['conservative', 'balanced', 'autonomous'];
     const current = this.approvalsConfig.mode || 'balanced';
@@ -842,9 +865,8 @@ export class CommandRouter {
    * `/scan`'s output maps 1:1 onto `/import <path>`.
    */
   commandImport(rest, ctx) {
-    if (this.operatorConfig.discovery?.enabled === false) {
-      return { reply: 'Discovery is disabled (operator.discovery.enabled: false).' };
-    }
+    const disabled = this.guardEnabled('discovery', 'Discovery');
+    if (disabled) return disabled;
     if (!rest) {
       return { reply: 'Usage: /import <path> [as <name>], or /import all. Try /scan to see candidates.' };
     }
@@ -957,7 +979,7 @@ export class CommandRouter {
     }
     const workingDirectory = raw.workingDirectory;
     if (!workingDirectory || !fs.existsSync(workingDirectory)) {
-      return { ok: false, reason: `working directory does not exist: ${workingDirectory ?? '(none set)'}` };
+      return { ok: false, reason: missingFolderDetail(workingDirectory) };
     }
 
     const detected = inspectProject(workingDirectory);
@@ -1001,9 +1023,8 @@ export class CommandRouter {
    * replace one.
    */
   commandMission(rest, ctx) {
-    if (this.operatorConfig.mission?.enabled === false) {
-      return { reply: 'Mission auto-detection is disabled (operator.mission.enabled: false).' };
-    }
+    const disabled = this.guardEnabled('mission', 'Mission auto-detection');
+    if (disabled) return disabled;
     if (rest && rest.trim().toLowerCase() === 'all') {
       return this.commandMissionAll(ctx);
     }
@@ -1103,9 +1124,8 @@ export class CommandRouter {
    * so none of them go through prepareDestructive()/ConfirmationStore).
    */
   mutateClassification(rest, ctx, { fn, verb, to, eventType }) {
-    if (this.operatorConfig.lifecycle?.enabled === false) {
-      return { reply: 'Lifecycle operations are disabled (operator.lifecycle.enabled: false).' };
-    }
+    const disabled = this.guardEnabled('lifecycle', 'Lifecycle operations');
+    if (disabled) return disabled;
     const resolved = this.resolveTarget(rest, ctx);
     if (resolved.reply) return { reply: resolved.reply };
     const { project } = resolved;
@@ -1128,12 +1148,8 @@ export class CommandRouter {
    * "what /scan looks at").
    */
   commandRoots(rest, ctx) {
-    if (this.operatorConfig.liveConfig?.enabled === false) {
-      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
-    }
-    if (!this.liveConfig) {
-      return { reply: 'This interface cannot change configuration from here.' };
-    }
+    const disabled = this.guardLiveConfig();
+    if (disabled) return disabled;
     const trimmed = (rest ?? '').trim();
     if (!trimmed) return { reply: this.renderRoots() };
 
@@ -1244,12 +1260,8 @@ export class CommandRouter {
    * mission, new missions inherit the change" needs no special-casing here.
    */
   commandModel(rest, ctx) {
-    if (this.operatorConfig.liveConfig?.enabled === false) {
-      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
-    }
-    if (!this.liveConfig) {
-      return { reply: 'This interface cannot change configuration from here.' };
-    }
+    const disabled = this.guardLiveConfig();
+    if (disabled) return disabled;
 
     const trimmed = (rest ?? '').trim();
     if (!trimmed) {
@@ -1301,12 +1313,8 @@ export class CommandRouter {
    * only the next one to start.
    */
   commandSafeMode(rest, ctx) {
-    if (this.operatorConfig.liveConfig?.enabled === false) {
-      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
-    }
-    if (!this.liveConfig) {
-      return { reply: 'This interface cannot change configuration from here.' };
-    }
+    const disabled = this.guardLiveConfig();
+    if (disabled) return disabled;
 
     const trimmed = (rest ?? '').trim().toLowerCase();
     const current = Boolean(this.operatorConfig.safeMode);
@@ -1351,12 +1359,8 @@ export class CommandRouter {
    * local.json` edit, never a chat message.
    */
   commandNotify(rest, ctx) {
-    if (this.operatorConfig.liveConfig?.enabled === false) {
-      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
-    }
-    if (!this.liveConfig) {
-      return { reply: 'This interface cannot change configuration from here.' };
-    }
+    const disabled = this.guardLiveConfig();
+    if (disabled) return disabled;
 
     const CHANNELS = ['telegram', 'email', 'discord', 'webhook'];
     const trimmed = (rest ?? '').trim();
@@ -1437,7 +1441,7 @@ export class CommandRouter {
   activeProjectRoot(ctx) {
     const active = this.activeProject(ctx);
     if (!active) {
-      return { reply: 'No project selected. /projects then /project <name>.' };
+      return { reply: NO_ACTIVE_PROJECT_REPLY };
     }
     let project;
     try {
@@ -1482,16 +1486,12 @@ export class CommandRouter {
    * matches how the command is actually going to be typed in practice.
    */
   commandFiles(rest, ctx) {
-    if (this.operatorConfig.files?.enabled === false) {
-      return { reply: 'File access is disabled (operator.files.enabled: false).' };
-    }
+    const disabled = this.guardEnabled('files', 'File access');
+    if (disabled) return disabled;
     const located = this.activeProjectRoot(ctx);
     if (located.reply) return { reply: located.reply };
 
-    const words = (rest ?? '').trim().split(/\s+/).filter(Boolean);
-    let page = 1;
-    if (words.length > 1 && /^\d+$/.test(words.at(-1))) page = Number(words.pop());
-    const subPath = words.join(' ');
+    const { page, rest: subPath } = this.splitTrailingPage(rest);
 
     let listing;
     try {
@@ -1515,9 +1515,8 @@ export class CommandRouter {
    * truncated either way (see fileAccess.js and docs/PHASE_13_M6_REPORT.md).
    */
   commandFile(rest, ctx) {
-    if (this.operatorConfig.files?.enabled === false) {
-      return { reply: 'File access is disabled (operator.files.enabled: false).' };
-    }
+    const disabled = this.guardEnabled('files', 'File access');
+    if (disabled) return disabled;
     if (!rest) return { reply: 'Usage: /file <path>. Try /files to see what is there.' };
     const located = this.activeProjectRoot(ctx);
     if (located.reply) return { reply: located.reply };
@@ -1594,16 +1593,12 @@ export class CommandRouter {
    * page number.
    */
   runSearch(rest, ctx, { label, buildPattern }) {
-    if (this.operatorConfig.search?.enabled === false) {
-      return { reply: 'Repository search is disabled (operator.search.enabled: false).' };
-    }
-    const words = (rest ?? '').trim().split(/\s+/).filter(Boolean);
-    if (!words.length) {
+    const disabled = this.guardEnabled('search', 'Repository search');
+    if (disabled) return disabled;
+    const { page, rest: query } = this.splitTrailingPage(rest);
+    if (!query) {
       return { reply: `Usage: /${label} <${label === 'symbol' ? 'name' : 'pattern'}>.` };
     }
-    let page = 1;
-    if (words.length > 1 && /^\d+$/.test(words.at(-1))) page = Number(words.pop());
-    const query = words.join(' ');
 
     const located = this.activeProjectRoot(ctx);
     if (located.reply) return { reply: located.reply };
@@ -1643,9 +1638,8 @@ export class CommandRouter {
    * fast rather than after minutes of streaming.
    */
   async commandDownloadProject(rest, ctx) {
-    if (this.operatorConfig.files?.enabled === false) {
-      return { reply: 'File access is disabled (operator.files.enabled: false).' };
-    }
+    const disabled = this.guardEnabled('files', 'File access');
+    if (disabled) return disabled;
     if (!this.paths?.downloadsDir) {
       return { reply: 'This interface cannot generate downloads from here.' };
     }
@@ -1786,9 +1780,8 @@ export class CommandRouter {
     }
 
     if (name === 'forget') {
-      if (this.operatorConfig.lifecycle?.enabled === false) {
-        return { reply: 'Lifecycle operations are disabled (operator.lifecycle.enabled: false).' };
-      }
+      const disabled = this.guardEnabled('lifecycle', 'Lifecycle operations');
+      if (disabled) return disabled;
       const holder = this.supervisor.holderOf(project);
       if (holder) {
         return { reply: `${project} has a mission running (pid ${holder.pid}). /stop it first, then /forget it.` };
@@ -1932,6 +1925,52 @@ export class CommandRouter {
   /** The project this channel is pointed at, or null. */
   activeProject(ctx) {
     return this.context.activeProject(ctx.channel, ctx.chatId);
+  }
+
+  /**
+   * `null` when `operatorConfig[key].enabled` isn't explicitly `false`, else
+   * the `{reply}` refusal every kill switch already worded the same way —
+   * shared instead of re-typed at each of the dozen call sites that gate a
+   * whole command on one boolean.
+   */
+  guardEnabled(key, label) {
+    if (this.operatorConfig[key]?.enabled === false) {
+      return { reply: `${label} is disabled (operator.${key}.enabled: false).` };
+    }
+    return null;
+  }
+
+  /**
+   * The two-check guard every live-config-writing command (`/roots`,
+   * `/model`, `/safemode`, `/notify`, `/approvals mode`) opens with: the
+   * `operator.liveConfig` kill switch, then whether this interface even has
+   * a `LiveConfigLayer` to write through (a bare standalone process has
+   * none). `null` when both pass.
+   */
+  guardLiveConfig() {
+    if (this.operatorConfig.liveConfig?.enabled === false) {
+      return { reply: 'Live configuration is disabled (operator.liveConfig.enabled: false).' };
+    }
+    if (!this.liveConfig) {
+      return { reply: 'This interface cannot change configuration from here.' };
+    }
+    return null;
+  }
+
+  /**
+   * Split a trailing bare number off `rest` as a page number — but only once
+   * more than one word already precedes it, so a single numeric word/query
+   * ("/files 2024", "/grep 500") is never misread as an empty argument plus
+   * a page. Shared by every paginated command (`/files`, `/log`, `/grep`,
+   * `/symbol`) — they all typed this identical split out separately before.
+   *
+   * @returns {{page: number, rest: string}}
+   */
+  splitTrailingPage(rest) {
+    const words = (rest ?? '').trim().split(/\s+/).filter(Boolean);
+    let page = 1;
+    if (words.length > 1 && /^\d+$/.test(words.at(-1))) page = Number(words.pop());
+    return { page, rest: words.join(' ') };
   }
 
   /**

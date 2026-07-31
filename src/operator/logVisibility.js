@@ -19,6 +19,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { paginate } from './fileAccess.js';
 
 /** Lines shown per page when no explicit count is given. */
 export const DEFAULT_LOG_LINES = 20;
@@ -103,16 +104,13 @@ export function readLogTail(logsDir, project, { page = 1, pageSize = DEFAULT_LOG
     .reverse();
 
   const total = lines.length;
-  const clampedPageSize = Math.max(1, Math.min(pageSize, MAX_LOG_LINES));
-  const pageCount = Math.max(1, Math.ceil(total / clampedPageSize));
-  const clampedPage = Math.min(Math.max(1, page), pageCount);
-  const start = (clampedPage - 1) * clampedPageSize;
+  const paged = paginate(total, { page, pageSize, maxPageSize: MAX_LOG_LINES });
 
   return {
     file: path.basename(file),
-    lines: lines.slice(start, start + clampedPageSize),
-    page: clampedPage,
-    pageCount,
+    lines: lines.slice(paged.start, paged.end),
+    page: paged.page,
+    pageCount: paged.pageCount,
     total,
   };
 }

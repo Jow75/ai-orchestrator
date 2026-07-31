@@ -3,6 +3,75 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.16.0] — 2026-07-31 — Phase 14 cleanup pass: pre-M4 architecture review
+
+Before starting M4, an independent architecture pass reviewed M9/M0/M1/M2/
+M8/M3 together and asked two questions: what got duplicated across six
+milestones' worth of new commands, and what inconsistencies would get more
+expensive to unwind once M4-M7 add three more commands on the same pattern.
+It found two real duplication patterns and five inconsistencies — all fixed
+here, no new commands, no new architecture.
+
+### Duplication removed
+
+- **Pagination math** ("clamp page → slice") was hand-rolled identically in
+  `fileAccess.js`'s `listFiles()`, `repoSearch.js`'s `searchFiles()`, and
+  `logVisibility.js`'s `readLogTail()`. Extracted to `fileAccess.js`'s new
+  `paginate()`, reused by all three (`logVisibility.js`'s own extra
+  `MAX_LOG_LINES` cap becomes `paginate()`'s `maxPageSize` option).
+- **The "trailing bare number is a page" arg-parsing trick** was copy-pasted
+  three times in `commandRouter.js` (`/files`, `/log`, `/grep`+`/symbol`) —
+  each doc comment even said "mirrors commandFiles()'s identical
+  convention" without ever factoring it out. Extracted to
+  `CommandRouter.splitTrailingPage()`.
+- **The pagination footer** ("Page X/Y · N total") was tripled in
+  `render.js`. Extracted to a private `renderPageFooter()`, reused by
+  `renderFileListing`/`renderLogTail`/`renderSearchResults` — byte-identical
+  output, including each renderer's own singular/plural quirk (`/files`'
+  "entries" never singularizes; `/log`/`/grep` do).
+- **Kill-switch boilerplate** (`if (config.X?.enabled === false) return
+  {reply: '... disabled ...'}`) was repeated at a dozen call sites.
+  Extracted to `CommandRouter.guardEnabled(key, label)`; the extra
+  two-check `liveConfig` + `this.liveConfig` pair five live-config commands
+  each opened with became `guardLiveConfig()`.
+
+### Inconsistencies fixed
+
+- **`/git` (M1) was the one surface that skipped `fileAccess.js`'s
+  containment guard** — it hand-rolled its own `fs.existsSync()` instead of
+  reusing `resolveWithinProject()`, the same real-path check `/files`/
+  `/file`/`/grep`/`/symbol` already rely on. Now reuses it directly, so a
+  dangling symlink or junction is caught here exactly as it would be there.
+- **Three different messages for "this project's folder isn't on disk"**
+  across `fileAccess.js`, `/git`, and `/mission` unified behind a new
+  shared `missingFolderDetail()`.
+- **Two duplicate literal copies of "no project selected"** (`/whoami` and
+  `activeProjectRoot()`, the guard behind `/files`/`/file`/`/grep`/
+  `/symbol`) collapsed to one constant. `resolveTarget()`'s own longer
+  message (used by `/status`, `/git`, `/log`, …) is left as-is on purpose —
+  it can accept a project name inline where the other two cannot, so it
+  genuinely needs to say more.
+- **`/workspace`, `/git`, and `/log` emitted no event on success**, the one
+  gap in this codebase's own router rule 4 ("every real outcome becomes an
+  event") among six milestones — `/files` and `/grep` already honored it.
+  New `workspace.viewed`/`git.viewed`/`log.viewed` events close it.
+- **Naming drift**: `gitVisibility.js` called its directory parameter `dir`
+  everywhere `repoSearch.js`/`fileAccess.js` call the same concept
+  `projectRoot`. Renamed throughout for consistency.
+
+No command's behavior changed for the owner — same replies, same
+pagination, same kill switches, same guard semantics — except `/git`'s
+"folder not found" wording, now `missingFolderDetail()`'s phrasing, and the
+three commands above that now log an event they previously didn't.
+
+1304 → **1314** backend tests (`fileAccess.test.js` +6 for `paginate()`/
+`missingFolderDetail()`, `commandRouter.test.js` +4 for the three new
+events and `/git`'s guard-reuse message), zero regressions. Full suite
+re-run fresh immediately before the commit — one transient failure in
+`workerExit.test.js` (a real-fork/IPC timing test, unrelated to any file
+this pass touched) reproduced under this machine's ambient node.exe load
+and cleared on isolated re-run; the final full run was clean at 1314/1314.
+
 ## [3.15.0] — 2026-07-31 — Phase 14 M3: Repository & Symbol Search
 
 New `/grep <pattern>` and `/symbol <name>` — a text-search primitive over

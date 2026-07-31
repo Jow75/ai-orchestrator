@@ -75,6 +75,43 @@ function escapesRoot(root, resolved) {
 }
 
 /**
+ * The one fact "this project's folder isn't on disk" reduces to, shared by
+ * every caller that needs to say it — this module's own throws below, plus
+ * `/git` and `/mission` elsewhere, which used to each word it slightly
+ * differently. Callers prepend their own lead-in ("This project's ", a
+ * project name, or nothing) since the right subject depends on context.
+ *
+ * @param {string} [dir]
+ * @returns {string}
+ */
+export function missingFolderDetail(dir) {
+  return `folder does not exist on disk: ${dir || 'not set'}`;
+}
+
+/**
+ * Shared page math — clamp `pageSize`, compute how many pages `total` items
+ * make, clamp the requested `page` into range, and return the slice bounds.
+ * The identical "clamp → slice" arithmetic every paginated command
+ * (`/files`, `/log`, `/grep`/`/symbol`) needs, done once instead of once per
+ * module.
+ *
+ * @param {number} total
+ * @param {{page?: number, pageSize?: number, maxPageSize?: number}} [options]
+ *   `maxPageSize` additionally caps `pageSize` itself (used by `/log`, so one
+ *   page can never become a wall of text regardless of what was requested).
+ * @returns {{page: number, pageCount: number, pageSize: number, start: number, end: number}}
+ */
+export function paginate(total, { page = 1, pageSize = DEFAULT_PAGE_SIZE, maxPageSize } = {}) {
+  const clampedPageSize = Math.max(1, maxPageSize ? Math.min(pageSize, maxPageSize) : pageSize);
+  const pageCount = Math.max(1, Math.ceil(total / clampedPageSize));
+  const clampedPage = Math.min(Math.max(1, page), pageCount);
+  const start = (clampedPage - 1) * clampedPageSize;
+  return {
+    page: clampedPage, pageCount, pageSize: clampedPageSize, start, end: start + clampedPageSize,
+  };
+}
+
+/**
  * Resolve `relativePath` against a project's real, on-disk root, refusing
  * anything that would land outside it. See the module docstring for the
  * two-layer algorithm.
@@ -90,7 +127,7 @@ export function resolveWithinProject(projectRoot, relativePath) {
   try {
     realRoot = fs.realpathSync(projectRoot);
   } catch {
-    throw new FileAccessError(`This project's folder does not exist on disk: ${projectRoot}`);
+    throw new FileAccessError(`This project's ${missingFolderDetail(projectRoot)}`);
   }
 
   const raw = String(relativePath ?? '').trim();
@@ -167,16 +204,13 @@ export function listFiles(projectRoot, subPath, {
     .sort((a, b) => (a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : a.name.localeCompare(b.name)));
 
   const total = rows.length;
-  const clampedPageSize = Math.max(1, pageSize);
-  const pageCount = Math.max(1, Math.ceil(total / clampedPageSize));
-  const clampedPage = Math.min(Math.max(1, page), pageCount);
-  const start = (clampedPage - 1) * clampedPageSize;
+  const paged = paginate(total, { page, pageSize });
 
   return {
     path: subPath ? String(subPath).trim().replace(/\\/g, '/') : '.',
-    entries: rows.slice(start, start + clampedPageSize),
-    page: clampedPage,
-    pageCount,
+    entries: rows.slice(paged.start, paged.end),
+    page: paged.page,
+    pageCount: paged.pageCount,
     total,
   };
 }
@@ -214,7 +248,7 @@ export function looksBinary(filePath) {
  */
 export function estimateArchiveSize(projectRoot, { ignore = DEFAULT_IGNORE_DIRS } = {}) {
   if (!fs.existsSync(projectRoot)) {
-    throw new FileAccessError(`This project's folder does not exist on disk: ${projectRoot}`);
+    throw new FileAccessError(`This project's ${missingFolderDetail(projectRoot)}`);
   }
   let bytes = 0;
   let files = 0;
@@ -263,7 +297,7 @@ export async function createProjectArchive(projectRoot, projectName, { downloads
     // readdir-glob treats an ENOENT cwd as "zero matches", not an error — left
     // unchecked, this would silently produce a valid, complete-looking, EMPTY
     // zip for a project whose folder has vanished, instead of failing clearly.
-    throw new FileAccessError(`This project's folder does not exist on disk: ${projectRoot}`);
+    throw new FileAccessError(`This project's ${missingFolderDetail(projectRoot)}`);
   }
   fs.mkdirSync(downloadsDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -337,5 +371,5 @@ export function pruneOldDownloads(downloadsDir, maxAgeMs) {
 export default {
   DEFAULT_IGNORE_DIRS, DEFAULT_PAGE_SIZE, FileAccessError,
   resolveWithinProject, listFiles, looksBinary, estimateArchiveSize,
-  createProjectArchive, pruneOldDownloads,
+  createProjectArchive, pruneOldDownloads, missingFolderDetail, paginate,
 };
