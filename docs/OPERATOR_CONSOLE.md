@@ -12,7 +12,8 @@ alias off `/events` (see the System section below), since the two commands
 read genuinely different things and the name was needed for the real one;
 `/notify` and `/approvals mode` were added in Phase 14 M8 (`v3.14.0`);
 `/grep` and `/symbol` were added in Phase 14 M3 (`v3.15.0`); `/todos` was
-added in Phase 14 M4 (`v3.17.0`).
+added in Phase 14 M4 (`v3.17.0`); `/review`, `/architecture`, `/docgen`,
+and `/refactor` were added in Phase 14 M6 (`v3.18.0`).
 
 This is the guide to *operating* AI-Orchestrator remotely. For deciding
 individual approvals, see [REMOTE_APPROVALS.md](REMOTE_APPROVALS.md); for
@@ -172,12 +173,23 @@ A text-search primitive over the active project's real files (Phase 14 M3). `/gr
 | `/symbol <name>` | `/grep` with a language-aware-ish pattern layered on top — finds where a function/class/const/etc. is likely DEFINED, not a real symbol index. Case-sensitive |
 | `/todos [project]` | A pre-canned `/grep` for common engineering annotations — `TODO`, `FIXME`, `BUG`, `HACK`, `XXX`, `NOTE`, `OPTIMIZE`, `REVIEW`, `DEPRECATED` — labelled with the specific tag that fired on each line. Case-sensitive; a mention of "note" or "review" in ordinary prose is not flagged |
 
+### Engineering
+
+The "Class B" capability (Phase 14 M6): AI actually reasoning about the code, not a deterministic read. None of these run anything themselves — each proposes a mission request through the exact same two-gate approval every free-form message already goes through (see [Asking for work](#asking-for-work)). `/review`/`/architecture` take `[project]`; `/docgen`/`/refactor` do not — same reason `/grep`/`/symbol` don't: a free-text path or description can't be told apart from a free-text project name, so select one first with `/project <name>`.
+
+| Command | What it does |
+| --- | --- |
+| `/review [project]` | Propose a code-review mission. Current uncommitted diff if the project is dirty, the most recent commit(s) if clean, the whole project if it's not a git repo. Read-only objective |
+| `/architecture [project]` (alias `/arch`) | Propose a mission to summarize the project's structure and major components. Read-only objective |
+| `/docgen <path>` | Propose a mission to draft documentation for a file or module in the active project. The path is checked against the project's real files before the request is raised — a typo is refused immediately, not turned into an approvable request for nothing |
+| `/refactor <description>` | Propose a refactor PLAN for the active project — a proposal only. The objective explicitly tells the agent not to implement it, even once its plan is approved; building it is a separate, later request |
+
 Plus the decision grammar, unchanged since Phase 10:
 `APPROVE A7` · `REJECT A7 [why]` · `MODIFY A7 <changes>` · `DONE A7`.
 
 Aliases exist where they are natural — `/ls`, `/use`, `/cd`, `/queue`,
 `/activity`, `/logs`, `/yes`, `/no`, `/rescan`, `/dir`, `/cat`, `/zip`,
-`/search`, `/find`, `/todo`. The leading `/` is optional
+`/search`, `/find`, `/todo`, `/arch`. The leading `/` is optional
 for a bare command (`projects`, `status calculator`), and prose that merely
 *starts* with a command word ("status update: the importer is done…") is
 treated as prose, not a command.
@@ -197,6 +209,9 @@ A few less-obvious ones in practice:
 /symbol DriverRegistry
 /todos Remote Work
 /download-project Remote Work
+/review Remote Work
+/docgen src/index.js
+/refactor extract the retry logic into its own module
 ```
 
 ---

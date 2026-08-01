@@ -3,6 +3,83 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.18.0] — 2026-08-01 — Phase 14 M6: AI-Assisted Engineering Mission Templates
+
+Four new commands — `/review [project]`, `/architecture [project]` (alias
+`/arch`), `/docgen <path>`, `/refactor <description>` — deliver the "Class B"
+capability from `docs/PHASE_14_PLAN.md` §1: AI actually reasoning about the
+code, which has no deterministic shortcut. None of them are a new execution
+path. Each is a fixed, reviewed objective (`src/operator/missionTemplates.js`)
+submitted through the *exact* same `MissionRequestStore.create()` → two-gate-
+approval → supervised-worker pipeline every free-form mission request already
+uses — the owner still approves gate 1 ("work on this at all?") and gate 2
+("accept this plan?") before anything is written. `commandRouter.js`'s new
+`submitMissionTemplate()` is shared by all four commands AND by
+`handleFreeText()` itself, which now delegates to it instead of duplicating
+the same five lines a third time.
+
+- **`/review [project]`** — the one template that reads anything: it calls
+  M1's `gitVisibility.gitReport()` purely to pick which of three FIXED
+  wordings applies (no repo → whole-project review; clean repo → review the
+  most recent commit(s); dirty repo → review the current uncommitted
+  changes). It never invents or embeds a diff itself — the mission that
+  eventually runs has full read access and is told to run `git diff`/
+  `git log` on its own. Read-only objective either way.
+- **`/architecture [project]`** — one fixed objective, no branching: summarize
+  the project's structure and major components. Read-only.
+- **`/docgen <path>`** and **`/refactor <description>`** deliberately have
+  **no `[project]` argument** — the same ambiguous-split problem M3
+  (`/grep`/`/symbol`) hit first: a free-text path or description and a
+  free-text project name can't be told apart with no delimiter between them.
+  Both operate on the active project only, selected first with
+  `/project <name>`, exactly like `/grep`/`/symbol`/`/files`/`/file`.
+  `/docgen`'s path is validated with `fileAccess.js`'s `resolveWithinProject()`
+  (the same guard `/file` uses) BEFORE it becomes part of a mission
+  objective, so a typo is refused immediately rather than turning into an
+  approvable request for a path that does not exist.
+- **`/refactor` is a proposal only, for this first-pass version of the
+  command** — its objective explicitly tells the agent not to implement
+  anything, even after its plan is approved at the plan gate; actually
+  building a refactor is a separate, later mission request. The two-gate
+  flow already stops execution before any plan is approved, but the
+  objective says so anyway, because "propose, don't implement" is this
+  command's entire point, not an incidental side effect of the gate
+  existing.
+- `/review` and `/architecture` reuse the exact `/git`-style project
+  resolution (`getRawProject()` + `resolveWithinProject(root, '')`), so both
+  work uniformly across every registered project regardless of
+  mission-readiness — the same fix the pre-M4 cleanup pass made to `/git`
+  itself.
+- No new event type: `mission.created` gained one new payload field,
+  `template` (`'review'|'architecture'|'docgen'|'refactor'|null` — `null` for
+  genuine free text), the same "shared event, one field distinguishes the
+  source" pattern `/grep`/`/symbol`/`/todos` already established for
+  `search.performed`.
+- New kill switch, `operator.missionTemplates.enabled` — its own switch
+  rather than reusing another, since four new commands that create mission
+  requests is real new surface area even though the execution path
+  underneath is unchanged.
+
+`test/missionTemplates.test.js` (new, 7 tests, real throwaway git work
+trees), `commandRouter.test.js` (+35, mirroring `/todos`' own coverage:
+kill switch, unknown project, vanished working directory,
+mission-readiness independence, "starts NOTHING", event logging).
+1334 → **1376** backend tests, zero regressions. Live-validated through
+the CLI operator bridge against `calculator-proof` (a real, dirty,
+no-commits-yet repo — `/review` correctly selected the "current
+uncommitted changes" wording) and `THE FINISHER` (a real project name
+containing spaces, via `/arch`): all four commands, `/docgen`'s
+nonexistent-path refusal, and `/help`'s new Engineering section all
+confirmed against the real daemon. `/service` showed 0/3 missions running
+throughout; every validation mission request was cancelled afterward.
+**Depends on:** M1 (`/review`'s git-context selection), M3/M4 (the
+ambiguous-`[project]`-argument precedent `/docgen`/`/refactor` follow).
+**Risk (realized):** low-to-medium, as predicted — no new execution
+mechanism, but four new commands writing mission-request state; mitigated
+by treating each template as reviewed, versioned text and reusing every
+existing guard (`fileAccess.js`, `gitVisibility.js`) rather than adding new
+ones.
+
 ## [3.17.0] — 2026-07-31 — Phase 14 M4: TODO/FIXME Discovery
 
 `/todos [project]` (alias `/todo`) — a pre-canned `/grep` for common

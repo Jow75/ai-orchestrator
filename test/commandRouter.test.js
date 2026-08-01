@@ -2061,6 +2061,232 @@ test('/todos on a project whose workingDirectory has vanished reuses fileAccess.
   assert.match(reply, /folder does not exist on disk/);
 });
 
+// ──────────────── Phase 14 M6: AI-assisted engineering mission templates ────
+
+/** Turns a project's real working directory into a real git repo. */
+function gitInit(dir, { dirty = false } = {}) {
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], {
+    stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
+  });
+  git('init', '-b', 'main');
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'user.name', 'Test');
+  git('add', '.');
+  git('commit', '-m', 'first commit');
+  if (dirty) fs.writeFileSync(path.join(dir, 'uncommitted.txt'), 'wip');
+}
+
+for (const [command, template] of [['review', 'review'], ['architecture', 'architecture']]) {
+  test(`/${command} refuses with no project selected and none named, same as /git/todos`, async () => {
+    const { say } = harness();
+    const { reply } = await say(`/${command}`);
+    assert.match(reply, /No project selected/);
+  });
+
+  test(`/${command} with no argument proposes a mission for the active project`, async () => {
+    const h = harness({ projects: ['alpha'] });
+    await h.say('/project alpha');
+
+    const { reply } = await h.say(`/${command}`);
+
+    assert.match(reply, /Mission M1/);
+    assert.match(reply, /APPROVE M1/);
+  });
+
+  test(`/${command} <project> names a project directly, like /git/todos`, async () => {
+    const h = harness({ projects: ['alpha', 'beta'] });
+    const { reply } = await h.say(`/${command} beta`);
+    assert.match(reply, /Mission M1 — beta/);
+  });
+
+  test(`/${command} creates a proposal and starts NOTHING, same guarantee as free text`, async () => {
+    const h = harness({ projects: ['alpha'] });
+    await h.say('/project alpha');
+
+    await h.say(`/${command}`);
+
+    assert.deepEqual(h.supervisor.started, [], 'no worker was started');
+    assert.equal(h.taskQueue.load('alpha'), null, 'nothing was queued');
+  });
+
+  test(`/${command} logs a mission.created event tagged with its template`, async () => {
+    const h = harness({ projects: ['alpha'] });
+    await h.say('/project alpha');
+
+    await h.say(`/${command}`);
+
+    const logged = h.events.read({ types: ['mission.created'] });
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0].payload.template, template);
+  });
+
+  test(`/${command} is refused when operator.missionTemplates.enabled is false`, async () => {
+    const h = harness({ projects: ['alpha'], operator: { missionTemplates: { enabled: false } } });
+    const { reply } = await h.say(`/${command} alpha`);
+    assert.match(reply, /disabled/i);
+  });
+
+  test(`/${command} works on a project missing a promptFile — independent of mission-readiness`, async () => {
+    const h = discoveryHarness();
+    const dir = mkCandidate(h.rootsDir, 'no-mission-yet');
+    await h.say(`/import ${dir}`);
+
+    const { reply } = await h.say(`/${command} no-mission-yet`);
+
+    assert.match(reply, /Mission M1/);
+  });
+
+  test(`/${command} names an unknown project the same way /status does`, async () => {
+    const h = harness({ projects: ['alpha'] });
+    const { reply } = await h.say(`/${command} nope`);
+    assert.match(reply, /No project matches "nope"/);
+  });
+
+  test(`/${command} on a project whose workingDirectory has vanished reuses fileAccess.js's own guard message`, async () => {
+    const h = harness({ projects: ['alpha'] });
+    fs.rmSync(path.join(h.root, 'work', 'alpha'), { recursive: true, force: true });
+    const { reply } = await h.say(`/${command} alpha`);
+    assert.match(reply, /folder does not exist on disk/);
+  });
+}
+
+test('/review on a non-git project asks for a whole-project review', async () => {
+  const h = harness({ projects: ['alpha'] });
+  await h.say('/project alpha');
+  const { reply } = await h.say('/review');
+  assert.match(reply, /not a git repository/);
+});
+
+test('/review on a dirty git project asks for the uncommitted diff', async () => {
+  const h = harness({ projects: ['alpha'] });
+  gitInit(workDirOf(h, 'alpha'), { dirty: true });
+  await h.say('/project alpha');
+  const { reply } = await h.say('/review');
+  assert.match(reply, /current uncommitted changes/);
+});
+
+test('/review on a clean git project asks for the recent commit(s)', async () => {
+  const h = harness({ projects: ['alpha'] });
+  gitInit(workDirOf(h, 'alpha'), { dirty: false });
+  await h.say('/project alpha');
+  const { reply } = await h.say('/review');
+  assert.match(reply, /most recent commit/);
+});
+
+test('/architecture always proposes the same fixed summary objective', async () => {
+  const h = harness({ projects: ['alpha'] });
+  await h.say('/project alpha');
+  const { reply } = await h.say('/architecture');
+  assert.match(reply, /components\/modules/);
+});
+
+test('/architecture and its alias /arch reach the same command', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const viaLong = await h.say('/architecture alpha');
+  const viaAlias = await h.say('/arch alpha');
+  assert.equal(viaLong.reply.replace(/M\d+/g, 'M#'), viaAlias.reply.replace(/M\d+/g, 'M#'));
+});
+
+test('/docgen with no argument shows usage instead of proposing anything', async () => {
+  const h = harness({ projects: ['alpha'] });
+  await h.say('/project alpha');
+  const { reply } = await h.say('/docgen');
+  assert.match(reply, /Usage: \/docgen/);
+});
+
+test('/docgen refuses with no project selected, same as /file', async () => {
+  const { say } = harness();
+  const { reply } = await say('/docgen src/index.js');
+  assert.match(reply, /No project selected/);
+});
+
+test('/docgen <path> on a real file proposes a mission naming that exact path', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const dir = workDirOf(h, 'alpha');
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'index.js'), 'module.exports = {};\n');
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/docgen src/index.js');
+
+  assert.match(reply, /Mission M1/);
+  assert.match(reply, /src\/index\.js/);
+});
+
+test('/docgen accepts a directory (a "module"), not just a single file', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const dir = workDirOf(h, 'alpha');
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'index.js'), 'module.exports = {};\n');
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/docgen src');
+
+  assert.match(reply, /Mission M1/);
+});
+
+test('/docgen on a path that escapes the project is refused, not "fixed"', async () => {
+  const h = harness({ projects: ['alpha'] });
+  await h.say('/project alpha');
+  const { reply } = await h.say('/docgen ../../etc/passwd');
+  assert.match(reply, /resolves outside the project/);
+});
+
+test('/docgen on a nonexistent path is a clear "not found"', async () => {
+  const h = harness({ projects: ['alpha'] });
+  await h.say('/project alpha');
+  const { reply } = await h.say('/docgen nope.js');
+  assert.match(reply, /does not exist in this project/);
+});
+
+test('/docgen is refused when operator.missionTemplates.enabled is false', async () => {
+  const h = harness({ projects: ['alpha'], operator: { missionTemplates: { enabled: false } } });
+  await h.say('/project alpha');
+  const { reply } = await h.say('/docgen src/index.js');
+  assert.match(reply, /disabled/i);
+});
+
+test('/refactor with no argument shows usage instead of proposing anything', async () => {
+  const h = harness({ projects: ['alpha'] });
+  await h.say('/project alpha');
+  const { reply } = await h.say('/refactor');
+  assert.match(reply, /Usage: \/refactor/);
+});
+
+test('/refactor refuses with no project selected, same as /docgen', async () => {
+  const { say } = harness();
+  const { reply } = await say('/refactor split this into modules');
+  assert.match(reply, /No project selected/);
+});
+
+test('/refactor <description> proposes a PLAN-ONLY mission naming the description', async () => {
+  const h = harness({ projects: ['alpha'] });
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/refactor extract the retry logic into its own module');
+
+  assert.match(reply, /Mission M1/);
+  assert.match(reply, /extract the retry logic into its own module/);
+  assert.match(reply, /Do NOT implement/);
+});
+
+test('/refactor creates a proposal and starts NOTHING — no implementation happens on this message', async () => {
+  const h = harness({ projects: ['alpha'] });
+  await h.say('/project alpha');
+
+  await h.say('/refactor split this into modules');
+
+  assert.deepEqual(h.supervisor.started, [], 'no worker was started');
+  assert.equal(h.taskQueue.load('alpha'), null, 'nothing was queued');
+});
+
+test('/refactor is refused when operator.missionTemplates.enabled is false', async () => {
+  const h = harness({ projects: ['alpha'], operator: { missionTemplates: { enabled: false } } });
+  await h.say('/project alpha');
+  const { reply } = await h.say('/refactor split this into modules');
+  assert.match(reply, /disabled/i);
+});
+
 // ────────────────────────────────── Phase 13 M6: remote file system ────────
 
 /** A project's real working directory, for tests that need to plant files. */

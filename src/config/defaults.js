@@ -512,6 +512,21 @@ export const ORCHESTRATOR_DEFAULTS = {
     search: {
       enabled: true,
     },
+    /**
+     * Phase 14 M6: `/review`, `/architecture`, `/docgen`, `/refactor` — the
+     * "Class B" capability from docs/PHASE_14_PLAN.md §1: a fixed, reviewed
+     * mission-prompt template submitted through the SAME mission-request →
+     * two-gate-approval → supervised-worker pipeline every free-form mission
+     * already uses (`src/operator/missionTemplates.js` builds the objective
+     * text; `submitMissionTemplate()` in commandRouter.js does the actual
+     * submitting). Not a new execution path, but real enough new surface
+     * area (four new commands that create mission requests) to earn its own
+     * switch, following this codebase's one-switch-per-new-capability
+     * convention.
+     */
+    missionTemplates: {
+      enabled: true,
+    },
     /** Phase 13 M6: `/download-project` sizing and exclusions. */
     download: {
       /**

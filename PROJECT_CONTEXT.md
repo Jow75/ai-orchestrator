@@ -12,14 +12,18 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-07-31. **Phase 14 status: M9/M0/M1/M2/M8/M3
-(`v3.10.0`→`v3.15.0`) plus an unnumbered pre-M4 cleanup pass (`v3.16.0`)
-are all SHIPPED, COMMITTED, and TAGGED. M4 — TODO/FIXME Discovery
-(`v3.17.0`, new `/todos`/`/todo`) — is IMPLEMENTED, TESTED, DOCUMENTED, and
-LIVE-VALIDATED but NOT YET COMMITTED**, stopped deliberately for the
-owner's own review rather than auto-committed. See the dedicated Phase 14
-paragraphs below and the memory file `ai-orchestrator-phase14-m4-shipped.md`
-for full detail. Nothing in Phase 14 has been pushed to `origin` yet.
+**Last updated:** 2026-08-01. **Phase 14 status: M9/M0/M1/M2/M8/M3/M4
+(`v3.10.0`→`v3.17.0`) plus an unnumbered pre-M4 cleanup pass (`v3.16.0`)
+are all SHIPPED, COMMITTED, and TAGGED — M4 was reviewed and accepted by
+the owner on 2026-08-01 (see `ai-orchestrator-phase14-m4-shipped.md`), who
+also directed that M6 (AI-Assisted Engineering Mission Templates) ship
+next, ahead of M5, following the plan's own dependency graph which lists
+M5 as independent (see `docs/PHASE_14_PLAN.md`'s "Actual order deviated
+once" note). **M6 (`v3.18.0` — new `/review`, `/architecture`, `/docgen`,
+`/refactor`) is IMPLEMENTED, TESTED, DOCUMENTED, and LIVE-VALIDATED —
+NOT YET COMMITTED**, per the same "stop for the owner's own review after
+validation" workflow M4 used. See the dedicated Phase 14 paragraphs below.
+Nothing in Phase 14 has been pushed to `origin` yet.
 
 **Phase 12 (M1→M3, plus the M2.1/M2.2 response
 milestones) and Phase 13 M1→M7 are DONE and PUSHED to GitHub** — `main` and
@@ -213,10 +217,11 @@ owner-visible behavior changed except `/git`'s wording and three new
 `*.viewed` events. 1304 → 1314 backend tests. **Committed and tagged
 `v3.16.0`**, not yet pushed.
 
-**Phase 14 M4 — TODO/FIXME Discovery (`v3.17.0`) is IMPLEMENTED, TESTED,
-DOCUMENTED, and LIVE-VALIDATED — NOT YET COMMITTED**, per an explicit
-instruction to stop for the owner's own review after validation rather
-than auto-commit as every prior milestone did. New `/todos [project]`
+**Phase 14 M4 — TODO/FIXME Discovery (`v3.17.0`) is DONE.** Reviewed and
+accepted by the owner on 2026-08-01 with no requested changes (two
+enhancements — `/todos TODO`-style tag filtering, and a `/todos --summary`
+count view — noted explicitly as future work, not required for this
+milestone). New `/todos [project]`
 (alias `/todo`) — a pre-canned `/grep` reusing `searchFiles()` directly,
 expanded per an owner-relayed recommendation to nine annotation tags
 (`TODO`, `FIXME`, `BUG`, `HACK`, `XXX`, `NOTE`, `OPTIMIZE`, `REVIEW`,
@@ -234,10 +239,60 @@ against `THE FINISHER` (a real project name containing spaces) through the
 CLI operator bridge: 29 real matches across `.py`/`.md`/`.txt` files,
 correctly tagged and paginated, correctly excluding the project's own
 `.venv`/`__pycache__` noise. Full write-up in the memory file
-`ai-orchestrator-phase14-m4-shipped.md`. **Awaiting the owner's review
-before commit + tag.** M5, M6, M7 remain, per the plan's dependency graph
-(a "Telegram Command Expansion" pass between M4 and M5 was also floated
-but not yet decided).
+`ai-orchestrator-phase14-m4-shipped.md`. **Committed and tagged `v3.17.0`**
+on 2026-08-01, immediately after the owner's review and explicit
+instruction to do so. M5, M7 remain (M6 shipped next — see below — per the
+owner's own direction to prioritize it over M5).
+
+**Phase 14 M6 — AI-Assisted Engineering Mission Templates (`v3.18.0`) is
+IMPLEMENTED, TESTED, DOCUMENTED, and LIVE-VALIDATED — NOT YET COMMITTED**,
+per the same "stop for the owner's own review after validation" workflow
+M4 used. Four new commands — `/review [project]`,
+`/architecture [project]` (alias `/arch`), `/docgen <path>`,
+`/refactor <description>` — deliver the "Class B" capability from
+`docs/PHASE_14_PLAN.md` §1 (AI actually reasoning about the code) as
+syntactic sugar over the SAME mission-request → two-gate-approval →
+supervised-worker pipeline every free-form message already uses — no new
+execution path. New `src/operator/missionTemplates.js` holds the four
+fixed, reviewed objective builders; `commandRouter.js`'s new
+`submitMissionTemplate()` is the one place a template becomes a real
+request, shared with `handleFreeText()` itself (refactored to call it
+instead of duplicating the same logic a third time). `/docgen`/`/refactor`
+deliberately have no `[project]` argument — the same ambiguous free-text-
+argument-vs-free-text-project-name problem M3's `/grep`/`/symbol` hit
+first, solved the same way (active project only, select one first with
+`/project <name>`); `/review`/`/architecture` keep `[project]`, resolved
+the same way `/git` does. `/review` is the one template that reads
+anything real: it calls M1's `gitReport()` purely to pick which of three
+fixed wordings applies (no repo / clean repo / dirty repo) — it never
+invents a diff itself. `/refactor`'s objective explicitly tells the agent
+not to implement anything, even once its own plan is approved at the plan
+gate — this command's deliverable is the proposal itself, for this
+first-pass version. No new event type: `mission.created` gained a
+`template` payload field rather than inventing one, the same "shared
+event, one field" pattern `/grep`/`/symbol`/`/todos` established for
+`search.performed`. New kill switch: `operator.missionTemplates.enabled`.
+`missionTemplates.test.js` (new, 7 tests, real throwaway git work trees),
+`commandRouter.test.js` (+35, mirroring `/todos`' own coverage). 1334 →
+1376 backend tests, zero regressions. Live-validated against
+`calculator-proof` (a real, dirty, no-commits-yet repo — correctly picked
+the "current uncommitted changes" review wording) and `THE FINISHER` (a
+real project name containing spaces, exercised via `/arch`) through the
+CLI operator bridge: all four commands produced real mission proposals
+with the expected wording, `/docgen` correctly refused a nonexistent path
+before creating a request, and `/help`'s new Engineering section rendered
+correctly. Required a daemon restart mid-validation (the running service
+had M4-era code loaded; `daemon stop` then a fresh `serve` picked up
+`v3.18.0`) — same "the daemon's own long-lived router doesn't hot-reload"
+fact Phase 13 M8's live pass already established. Hit the documented Git
+Bash `/`-mangling gotcha at the very start (a `/whoami` and `/cancel M17`
+typed from Git Bash both silently became real mission-request text on
+`calculator-proof`, M17/M18); caught immediately, both cancelled before
+approval, nothing written, switched to PowerShell for the rest of the
+pass. All 5 validation-only mission requests (M19–M23) were cancelled
+after confirming `/service` showed 0/3 missions running throughout —
+"creates a proposal and starts NOTHING" held for real, not just in tests.
+M5, M7 remain.
 
 **Phase 13 M6 — Remote File System (`v3.6.0`) is DONE.** The first new
 runtime dependency since baseline (`archiver`) and the first filesystem
@@ -326,13 +381,13 @@ ran it live, taking the registry from 6 to 23 real projects. 1178 → 1194
 backend tests. Full report: `docs/PHASE_13_RECONCILIATION_2026-07-30.md`.
 
 **Phase 13 M9 is done** — see the top of this file. Phase 14 M9/M0/M1/M2/
-M8/M3 plus the pre-M4 cleanup pass have since shipped, committed, and
-tagged (`v3.10.0`→`v3.16.0`); M4 (`v3.17.0`) is implemented, tested, and
-live-validated but awaiting the owner's review before commit — see the top
-of this file for current status. **NEXT once M4 is reviewed:** M5 (Test/
-Verification Visibility), then M6/M7 per `docs/PHASE_14_PLAN.md`'s
+M8/M3/M4 plus the pre-M4 cleanup pass have since shipped, committed, and
+tagged (`v3.10.0`→`v3.17.0`); M6 (`v3.18.0`) is implemented, tested, and
+documented, live validation and owner review still pending before commit —
+see the top of this file for current status. **NEXT once M6 is reviewed:**
+M5 (Test/Verification Visibility), then M7 per `docs/PHASE_14_PLAN.md`'s
 dependency graph — plus the still-outstanding push of everything back to
-`v3.8.0` through `v3.17.0` to `origin` whenever the owner is ready.
+`v3.8.0` through `v3.18.0` to `origin` whenever the owner is ready.
 
 ---
 
@@ -697,13 +752,14 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 14 M8 — Remote Configuration Completion | ✅ done | `v3.14.0` |
 | Phase 14 M3 — Repository & Symbol Search | ✅ done | `v3.15.0` |
 | Phase 14 cleanup pass (pre-M4 architecture review) | ✅ done | `v3.16.0` |
-| Phase 14 M4 — TODO/FIXME Discovery | ⏳ implemented, awaiting review | `v3.17.0` (not yet committed) |
+| Phase 14 M4 — TODO/FIXME Discovery | ✅ done | `v3.17.0` |
+| Phase 14 M6 — AI-Assisted Engineering Mission Templates | ⏳ implemented, tested, live-validated, awaiting review | `v3.18.0` (not yet committed) |
 
-**Test suite (current, 2026-07-31):** 1334/1334 backend (was 1194/1194 at
+**Test suite (current, 2026-08-01):** 1376/1376 backend (was 1194/1194 at
 the Phase 13 M9 acceptance review: +20 Phase 13 M1, +31 M2, +34 M3, +17 M4,
 +26 M5, +55 M6, +18 M7, +5 M8, +16 reconciliation pass; then Phase 14 added
-+25 M9, +6 M0, +15 M1, +18 M2, +17 M8, +29 M3, +10 cleanup pass, +20 M4) +
-41 desktop — the 919/919 figure above was the Phase 12 M2.1 snapshot;
++25 M9, +6 M0, +15 M1, +18 M2, +17 M8, +29 M3, +10 cleanup pass, +20 M4,
++42 M6) + 41 desktop — the 919/919 figure above was the Phase 12 M2.1 snapshot;
 Phase 12 M2.2 and M3 each added more (see CHANGELOG for the exact
 per-release deltas).
 

@@ -100,7 +100,13 @@ export const EVENT_TYPES = Object.freeze([
   'log.viewed',
 
   // ── missions requested from an interface (M2 Priority 3) ─────────────────
-  /** Free text became a mission request awaiting the owner's approval. */
+  /**
+   * A mission request was raised, awaiting the owner's approval — from
+   * free text (payload `template: null`) or from one of Phase 14 M6's
+   * canned templates (payload `template: 'review'|'architecture'|'docgen'|
+   * 'refactor'`). Same event either way: a template is reviewed, versioned
+   * objective text, not a different kind of request.
+   */
   'mission.created',
   /** The owner approved the request; work is authorized to begin. */
   'mission.approved',

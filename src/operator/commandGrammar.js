@@ -365,6 +365,42 @@ export const COMMANDS = Object.freeze([
     description: 'A pre-canned /grep for common engineering annotations (TODO, FIXME, BUG, HACK, XXX, NOTE, OPTIMIZE, REVIEW, DEPRECATED) in the active (or named) project, file:line.',
   },
   {
+    name: 'review',
+    aliases: [],
+    usage: '/review [project]',
+    takesRest: true,
+    category: 'Engineering',
+    examples: ['/review', '/review calculator-proof'],
+    description: 'Propose a code-review mission for the active (or named) project — current diff if dirty, recent commits if clean, whole project if not a git repo. Read-only objective.',
+  },
+  {
+    name: 'architecture',
+    aliases: ['arch'],
+    usage: '/architecture [project]',
+    takesRest: true,
+    category: 'Engineering',
+    examples: ['/architecture', '/architecture calculator-proof'],
+    description: "Propose a mission to summarize the active (or named) project's structure and major components. Read-only objective.",
+  },
+  {
+    name: 'docgen',
+    aliases: [],
+    usage: '/docgen <path>',
+    takesRest: true,
+    category: 'Engineering',
+    examples: ['/docgen src/index.js'],
+    description: 'Propose a mission to draft documentation for a file or module in the active project.',
+  },
+  {
+    name: 'refactor',
+    aliases: [],
+    usage: '/refactor <description>',
+    takesRest: true,
+    category: 'Engineering',
+    examples: ['/refactor extract the retry logic into its own module'],
+    description: 'Propose a refactor PLAN for the active project — a proposal only, never an implementation.',
+  },
+  {
     // Telegram's setMyCommands rejects any name outside [a-z0-9_]{1,32} — a
     // hyphen is not legal there, unlike every other place a command name
     // appears in this codebase. The owner's own directive wrote

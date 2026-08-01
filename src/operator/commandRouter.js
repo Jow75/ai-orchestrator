@@ -34,6 +34,9 @@ import {
   searchFiles, buildGrepPattern, buildSymbolPattern, buildTodoPattern, matchedTag,
 } from './repoSearch.js';
 import {
+  buildReviewObjective, buildArchitectureObjective, buildDocgenObjective, buildRefactorObjective,
+} from './missionTemplates.js';
+import {
   archive, restore, hide, unhide, forget, classifyProposal,
 } from './projectLifecycleOps.js';
 import { DEFAULT_CLASSIFICATION } from '../config/projectClassification.js';
@@ -458,6 +461,10 @@ export class CommandRouter {
       case 'grep': return this.commandGrep(rest, ctx);
       case 'symbol': return this.commandSymbol(rest, ctx);
       case 'todos': return this.commandTodos(rest, ctx);
+      case 'review': return this.commandReview(rest, ctx);
+      case 'architecture': return this.commandArchitecture(rest, ctx);
+      case 'docgen': return this.commandDocgen(rest, ctx);
+      case 'refactor': return this.commandRefactor(rest, ctx);
       case 'download_project': return await this.commandDownloadProject(rest, ctx);
       default:
         return { reply: `"/${name}" is recognized but not implemented. This is a bug — please report it.` };
@@ -1687,6 +1694,138 @@ export class CommandRouter {
     return { reply: renderTodoResults(resolved.project, results) };
   }
 
+  // ------------------------------------------------- mission templates (M6) --
+
+  /**
+   * A named-or-active project's real, on-disk root — or a `{reply}`
+   * refusal — shared by `/review` and `/architecture`. Same shape as
+   * `/git`'s own guard: `getRawProject()` (not `getProject()`) so this
+   * works uniformly regardless of mission-readiness, then
+   * `resolveWithinProject(root, '')` for the actual on-disk existence check,
+   * reusing `fileAccess.js`'s one guard rather than a bespoke
+   * `fs.existsSync()` — the exact fix the pre-M4 cleanup pass made to
+   * `/git` itself.
+   *
+   * @returns {{project?: string, root?: string, reply?: string}}
+   */
+  namedProjectRoot(rest, ctx) {
+    const resolved = this.resolveTarget(rest, ctx);
+    if (resolved.reply) return { reply: resolved.reply };
+    const raw = this.configManager.getRawProject?.(resolved.project);
+    if (!raw?.workingDirectory) {
+      return { reply: `${resolved.project} — no workingDirectory set.` };
+    }
+    try {
+      return { project: resolved.project, root: resolveWithinProject(raw.workingDirectory, '') };
+    } catch (error) {
+      if (!(error instanceof FileAccessError)) throw error;
+      return { reply: `${resolved.project} — ${error.message}` };
+    }
+  }
+
+  /**
+   * Submit a canned objective as a mission request — the exact same gate-1
+   * proposal `handleFreeText()` raises for an owner-typed message, just with
+   * fixed, reviewed text instead. See docs/PHASE_14_PLAN.md §1 "Class B" and
+   * M6: this is syntactic sugar over the mission-request path, not a new
+   * execution mechanism — every guarantee (two-gate approval, event
+   * logging, checkpoint/artifact reporting) applies exactly as it would to
+   * any other mission. Reuses `mission.created` rather than a new event
+   * type, the same "shared event, one field distinguishes the source"
+   * pattern `/grep`/`/symbol`/`/todos` already established for
+   * `search.performed`.
+   *
+   * @param {string} project
+   * @param {string} objective
+   * @param {string} template - Which command produced this (for the event).
+   * @param {object} ctx
+   */
+  submitMissionTemplate(project, objective, template, ctx) {
+    const request = this.requests.create({
+      project,
+      objective,
+      by: ctx.from,
+      via: ctx.channel,
+      context: this.missionContextFor(project),
+    });
+    if (!request) {
+      return { reply: 'Mission requests are unavailable (no request store is configured).' };
+    }
+    this.events?.append({
+      type: 'mission.created',
+      project,
+      actor: ctx.actor,
+      payload: { id: request.id, objective: truncate(objective, 200), template },
+    });
+    return { reply: renderMissionProposal(request) };
+  }
+
+  /**
+   * `/review [project]` — Phase 14 M6: proposes a code-review mission.
+   * `missionTemplates.js`'s `buildReviewObjective()` reads the project's
+   * real git state (M1's `gitReport()`) only to pick which fixed template
+   * variant applies — this command never invents a diff of its own.
+   */
+  commandReview(rest, ctx) {
+    const disabled = this.guardEnabled('missionTemplates', 'AI-assisted mission templates');
+    if (disabled) return disabled;
+    const located = this.namedProjectRoot(rest, ctx);
+    if (located.reply) return { reply: located.reply };
+    return this.submitMissionTemplate(located.project, buildReviewObjective(located.root), 'review', ctx);
+  }
+
+  /**
+   * `/architecture [project]` — Phase 14 M6: proposes an architecture-
+   * summary mission. One fixed objective; nothing to branch on.
+   */
+  commandArchitecture(rest, ctx) {
+    const disabled = this.guardEnabled('missionTemplates', 'AI-assisted mission templates');
+    if (disabled) return disabled;
+    const located = this.namedProjectRoot(rest, ctx);
+    if (located.reply) return { reply: located.reply };
+    return this.submitMissionTemplate(located.project, buildArchitectureObjective(), 'architecture', ctx);
+  }
+
+  /**
+   * `/docgen <path>` — Phase 14 M6: proposes a documentation mission for one
+   * file or module. Active project only, deliberately with no `[project]`
+   * argument — a path and a project name are both free-form text with no
+   * delimiter between them, the exact ambiguity `/grep`/`/symbol` (Phase 14
+   * M3) already hit and avoided the same way. `rest` is validated with
+   * `resolveWithinProject()` (the same guard `/file` uses) before it ever
+   * becomes part of a mission objective, so a typo is refused here rather
+   * than turning into an approvable request for a path that does not exist.
+   */
+  commandDocgen(rest, ctx) {
+    const disabled = this.guardEnabled('missionTemplates', 'AI-assisted mission templates');
+    if (disabled) return disabled;
+    if (!rest) return { reply: 'Usage: /docgen <path>. Try /files to see what is there.' };
+    const located = this.activeProjectRoot(ctx);
+    if (located.reply) return { reply: located.reply };
+    try {
+      resolveWithinProject(located.root, rest);
+    } catch (error) {
+      return this.fileErrorReply(error, { project: located.project, path: rest, actor: ctx.actor });
+    }
+    return this.submitMissionTemplate(located.project, buildDocgenObjective(rest), 'docgen', ctx);
+  }
+
+  /**
+   * `/refactor <description>` — Phase 14 M6: proposes a refactor PLAN, never
+   * an implementation (see `missionTemplates.js`'s `buildRefactorObjective()`
+   * for why the objective says so explicitly). Active project only, for the
+   * same reason `/docgen` is: `description` is free text with no way to
+   * delimit it from a free-text project name.
+   */
+  commandRefactor(rest, ctx) {
+    const disabled = this.guardEnabled('missionTemplates', 'AI-assisted mission templates');
+    if (disabled) return disabled;
+    if (!rest) return { reply: 'Usage: /refactor <description>.' };
+    const located = this.activeProjectRoot(ctx);
+    if (located.reply) return { reply: located.reply };
+    return this.submitMissionTemplate(located.project, buildRefactorObjective(rest), 'refactor', ctx);
+  }
+
   /**
    * `/download-project [project]` — ZIP the active (or named) project's
    * source, excluding `operator.download.exclude` (node_modules/.git/build
@@ -1888,24 +2027,7 @@ export class CommandRouter {
       };
     }
 
-    const request = this.requests.create({
-      project: active,
-      objective,
-      by: ctx.from,
-      via: ctx.channel,
-      context: this.missionContextFor(active),
-    });
-    if (!request) {
-      return { reply: 'Mission requests are unavailable (no request store is configured).' };
-    }
-
-    this.events?.append({
-      type: 'mission.created',
-      project: active,
-      actor: ctx.actor,
-      payload: { id: request.id, objective: truncate(objective, 200) },
-    });
-    return { reply: renderMissionProposal(request) };
+    return this.submitMissionTemplate(active, objective, null, ctx);
   }
 
   /**
