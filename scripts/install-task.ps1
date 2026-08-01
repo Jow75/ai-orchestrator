@@ -62,9 +62,20 @@ if ($Project) {
     $arguments = "$arguments `"$Project`""
 }
 
+# node.exe is a console-subsystem executable: Task Scheduler shows a real,
+# visible window for it under an interactive LogonType, and no task setting
+# suppresses that. Route through run-hidden.vbs (WScript.Shell.Run, window
+# style 0) so resume starts with no window at all instead.
+$wscriptPath = Join-Path $env:WINDIR 'System32\wscript.exe'
+$hiddenLauncher = Join-Path $PSScriptRoot 'run-hidden.vbs'
+$launcherArgs = "`"$hiddenLauncher`" `"$InstallRoot`" `"$nodePath`" `"$entryScript`" `"resume`""
+if ($Project) {
+    $launcherArgs = "$launcherArgs `"$Project`""
+}
+
 $action = New-ScheduledTaskAction `
-    -Execute $nodePath `
-    -Argument $arguments `
+    -Execute $wscriptPath `
+    -Argument $launcherArgs `
     -WorkingDirectory $InstallRoot
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -90,5 +101,5 @@ Register-ScheduledTask `
     -Description 'Resumes interrupted AI-Orchestrator missions after logon/reboot.' | Out-Null
 
 Write-Host "Scheduled task '$TaskName' installed." -ForegroundColor Green
-Write-Host "  Runs at logon: $nodePath $arguments"
+Write-Host "  Runs at logon (hidden): $nodePath $arguments"
 Write-Host "  Verify with:   ai-orchestrator scheduler status"

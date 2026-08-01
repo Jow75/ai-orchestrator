@@ -75,9 +75,17 @@ if (-not (Test-Path $entryScript)) {
 
 $arguments = "`"$entryScript`" serve"
 
+# node.exe is a console-subsystem executable: Task Scheduler shows a real,
+# visible window for it under an interactive LogonType, and no task setting
+# suppresses that. Route through run-hidden.vbs (WScript.Shell.Run, window
+# style 0) so the service starts with no window at all instead.
+$wscriptPath = Join-Path $env:WINDIR 'System32\wscript.exe'
+$hiddenLauncher = Join-Path $PSScriptRoot 'run-hidden.vbs'
+$launcherArgs = "`"$hiddenLauncher`" `"$InstallRoot`" `"$nodePath`" `"$entryScript`" `"serve`""
+
 $action = New-ScheduledTaskAction `
-    -Execute $nodePath `
-    -Argument $arguments `
+    -Execute $wscriptPath `
+    -Argument $launcherArgs `
     -WorkingDirectory $InstallRoot
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -111,5 +119,5 @@ Register-ScheduledTask `
     -Description 'Runs the AI-Orchestrator Core Service (API, remote approvals, scheduler, mission workers) at logon.' | Out-Null
 
 Write-Host "Scheduled task '$TaskName' installed." -ForegroundColor Green
-Write-Host "  Runs at logon: $nodePath $arguments"
+Write-Host "  Runs at logon (hidden): $nodePath $arguments"
 Write-Host "  Verify with:   ai-orchestrator daemon status"
