@@ -712,6 +712,96 @@ test('/tasks reports the real queue', async () => {
   assert.match(reply, /second thing/);
 });
 
+// ─────────────────────────── Phase 14 M5: /tests ───────────────────────────
+
+test('/tests reports which specific verifier failed and why, not just a count', async () => {
+  const { say, taskQueue } = harness();
+  const queue = taskQueue.ensure('alpha');
+  queue.tasks.push({
+    id: 'T1', state: 'done', attempts: 1,
+    checkpoint: {
+      verify: {
+        passed: false,
+        results: [
+          { type: 'command', passed: true, detail: 'npm test exited 0' },
+          { type: 'file-exists', passed: false, detail: 'dist/bundle.js not found' },
+        ],
+      },
+    },
+  });
+  queue.currentIndex = 1;
+  taskQueue.save(queue);
+
+  const { reply } = await say('/tests alpha');
+
+  assert.match(reply, /🧪 tests — alpha/);
+  assert.match(reply, /T1 \[done\]/);
+  assert.match(reply, /✅ command — npm test exited 0/);
+  assert.match(reply, /❌ file-exists — dist\/bundle\.js not found/);
+  assert.match(reply, /Verifiers: 1\/2 passed/);
+});
+
+test('/tests on a project with no queue yet says so plainly', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const { reply } = await h.say('/tests alpha');
+  assert.match(reply, /no verification data yet/);
+});
+
+test('/tests never runs a verifier — it only reports what a checkpoint already recorded', async () => {
+  const { say, taskQueue, supervisor } = harness();
+  const queue = taskQueue.ensure('alpha');
+  queue.tasks.push({ id: 'T1', state: 'done', checkpoint: { verify: { passed: true, results: [{ type: 'command', passed: true, detail: 'ok' }] } } });
+  taskQueue.save(queue);
+
+  await say('/tests alpha');
+
+  assert.deepEqual(supervisor.started, [], '/tests must never start a worker');
+});
+
+test('/tests with no argument uses the active project, like /tasks', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const queue = h.taskQueue.ensure('alpha');
+  queue.tasks.push({
+    id: 'T1', state: 'done',
+    checkpoint: { verify: { passed: true, results: [{ type: 'command', passed: true, detail: 'ok' }] } },
+  });
+  h.taskQueue.save(queue);
+  await h.say('/project alpha');
+
+  const { reply } = await h.say('/tests');
+
+  assert.match(reply, /alpha/);
+  assert.match(reply, /Verifiers: 1\/1 passed/);
+});
+
+test('/tests is refused when operator.tests is disabled', async () => {
+  const h = harness({ projects: ['alpha'], operator: { tests: { enabled: false } } });
+  const { reply } = await h.say('/tests alpha');
+  assert.match(reply, /disabled/i);
+});
+
+test('/tests names an unknown project the same way /status does', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const { reply } = await h.say('/tests nope');
+  assert.match(reply, /No project matches "nope"/);
+});
+
+test('/tests logs a tests.viewed event (matching the read-only-visibility convention)', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const queue = h.taskQueue.ensure('alpha');
+  queue.tasks.push({
+    id: 'T1', state: 'done',
+    checkpoint: { verify: { passed: true, results: [{ type: 'command', passed: true, detail: 'ok' }] } },
+  });
+  h.taskQueue.save(queue);
+
+  await h.say('/tests alpha');
+  const logged = h.events.read({ types: ['tests.viewed'] });
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].project, 'alpha');
+  assert.equal(logged[0].payload.found, true);
+});
+
 test('/events shows what actually happened, scoped to the active project', async () => {
   const { say, events } = harness();
   events.append({ type: 'worker.started', project: 'alpha' });

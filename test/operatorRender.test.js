@@ -15,7 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  relativeTime, renderProjectList, renderProjectDetail, renderTasks, renderApprovals,
+  relativeTime, renderProjectList, renderProjectDetail, renderTasks, renderTestResults, renderApprovals,
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
   renderPhaseUpdate, renderHelp, renderScanResults, truncate,
 } from '../src/operator/render.js';
@@ -207,6 +207,65 @@ test('the task list marks where the queue actually is', () => {
   assert.match(text, /▸ T2 \[active\]/);
   assert.match(text, /2 attempts/);
   assert.match(renderTasks('beta', null), /no task queue yet/);
+});
+
+test('test results show which specific verifier failed and why, not just a count', () => {
+  const text = renderTestResults('alpha', {
+    currentIndex: 1,
+    tasks: [
+      {
+        id: 'T1', state: 'done',
+        checkpoint: {
+          verify: {
+            passed: false,
+            results: [
+              { type: 'command', passed: true, detail: 'npm test exited 0' },
+              { type: 'file-exists', passed: false, detail: 'dist/bundle.js not found' },
+            ],
+          },
+        },
+      },
+      { id: 'T2', state: 'pending', checkpoint: null },
+    ],
+  });
+
+  assert.match(text, /🧪 tests — alpha/);
+  assert.match(text, /T1 \[done\]:/);
+  assert.match(text, /✅ command — npm test exited 0/);
+  assert.match(text, /❌ file-exists — dist\/bundle\.js not found/);
+  assert.doesNotMatch(text, /T2/, 'a task with no checkpoint yet has nothing to show');
+  assert.match(text, /Verifiers: 1\/2 passed/);
+  assert.match(text, /Confidence: Partially verified/);
+});
+
+test('test results exclude the completion-marker result, same rule missionCard.js applies', () => {
+  const text = renderTestResults('alpha', {
+    currentIndex: 1,
+    tasks: [{
+      id: 'T1', state: 'done',
+      checkpoint: { verify: { passed: true, results: [{ type: 'marker', passed: true, detail: 'MISSION COMPLETE seen' }] } },
+    }],
+  });
+
+  assert.doesNotMatch(text, /marker/);
+  assert.match(text, /No completed task has recorded verifier results yet/);
+});
+
+test('test results say "verified" when every real verifier passed', () => {
+  const text = renderTestResults('alpha', {
+    currentIndex: 1,
+    tasks: [{
+      id: 'T1', state: 'done',
+      checkpoint: { verify: { passed: true, results: [{ type: 'command', passed: true, detail: 'ok' }] } },
+    }],
+  });
+
+  assert.match(text, /Verifiers: 1\/1 passed/);
+  assert.match(text, /Confidence: Verified/);
+});
+
+test('test results on a project with no queue yet say so plainly', () => {
+  assert.match(renderTestResults('beta', null), /no verification data yet/);
 });
 
 test('the mission proposal shows measured history and NO invented estimate', () => {

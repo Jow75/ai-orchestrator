@@ -12,18 +12,25 @@ CHANGELOG.md (what shipped, in detail), CONFIGURATION.md, API.md,
 TROUBLESHOOTING.md, and `desktop/README.md` (the desktop app). This file
 is the "what's true *right now*" layer on top of those.
 
-**Last updated:** 2026-08-01. **Phase 14 status: M9/M0/M1/M2/M8/M3/M4
-(`v3.10.0`→`v3.17.0`) plus an unnumbered pre-M4 cleanup pass (`v3.16.0`)
-are all SHIPPED, COMMITTED, and TAGGED — M4 was reviewed and accepted by
+**Last updated:** 2026-08-01. **Phase 14 status: M9/M0/M1/M2/M8/M3/M4/M6
+(`v3.10.0`→`v3.18.0`) plus an unnumbered pre-M4 cleanup pass (`v3.16.0`)
+are all SHIPPED, COMMITTED, and TAGGED** — M4 was reviewed and accepted by
 the owner on 2026-08-01 (see `ai-orchestrator-phase14-m4-shipped.md`), who
 also directed that M6 (AI-Assisted Engineering Mission Templates) ship
 next, ahead of M5, following the plan's own dependency graph which lists
 M5 as independent (see `docs/PHASE_14_PLAN.md`'s "Actual order deviated
-once" note). **M6 (`v3.18.0` — new `/review`, `/architecture`, `/docgen`,
-`/refactor`) is IMPLEMENTED, TESTED, DOCUMENTED, and LIVE-VALIDATED —
-NOT YET COMMITTED**, per the same "stop for the owner's own review after
-validation" workflow M4 used. See the dedicated Phase 14 paragraphs below.
-Nothing in Phase 14 has been pushed to `origin` yet.
+once" note); M6 was reviewed and accepted the same day and committed as
+`d1a31e1`, tagged `v3.18.0`. **M5 (Test & Verification Visibility,
+`v3.19.0` — new `/tests [project]`) is IMPLEMENTED, TESTED, and
+LIVE-VALIDATED**, built immediately after per the owner's own direction to
+bring the roadmap back into the plan's intended order — awaiting owner
+review before commit. **M7 (the Phase 12 M4 re-evaluation) is DECIDED**:
+the owner chose to defer M4 again, formally — see
+`docs/PHASE_14_PLAN.md`'s M7 section and `docs/PHASE_12_PLAN.md`'s new
+"M7 re-evaluation and second deferral" note for the full reasoning. With
+M7 decided, **every milestone in Phase 14's plan is now closed** — only
+M5's own review/commit and the still-outstanding push to `origin` remain.
+See the dedicated Phase 14 paragraphs below.
 
 **Phase 12 (M1→M3, plus the M2.1/M2.2 response
 milestones) and Phase 13 M1→M7 are DONE and PUSHED to GitHub** — `main` and
@@ -245,9 +252,7 @@ instruction to do so. M5, M7 remain (M6 shipped next — see below — per the
 owner's own direction to prioritize it over M5).
 
 **Phase 14 M6 — AI-Assisted Engineering Mission Templates (`v3.18.0`) is
-IMPLEMENTED, TESTED, DOCUMENTED, and LIVE-VALIDATED — NOT YET COMMITTED**,
-per the same "stop for the owner's own review after validation" workflow
-M4 used. Four new commands — `/review [project]`,
+DONE.** Four new commands — `/review [project]`,
 `/architecture [project]` (alias `/arch`), `/docgen <path>`,
 `/refactor <description>` — deliver the "Class B" capability from
 `docs/PHASE_14_PLAN.md` §1 (AI actually reasoning about the code) as
@@ -292,7 +297,81 @@ approval, nothing written, switched to PowerShell for the rest of the
 pass. All 5 validation-only mission requests (M19–M23) were cancelled
 after confirming `/service` showed 0/3 missions running throughout —
 "creates a proposal and starts NOTHING" held for real, not just in tests.
-M5, M7 remain.
+Reviewed and accepted by the owner the same day (the one condition — a
+console-window fix sitting unstaged in the same tree — turned out to
+already be split into its own prior commit, `b51c7c3`, so M6's own diff
+was already clean). **Committed and tagged `v3.18.0`** as `d1a31e1`.
+
+**Phase 14 M5 — Test & Verification Visibility (`v3.19.0`) is IMPLEMENTED,
+TESTED, and LIVE-VALIDATED**, built immediately after M6 per the owner's own direction to
+bring the roadmap back into `docs/PHASE_14_PLAN.md`'s intended order. New
+`/tests [project]` surfaces which **specific** verifiers passed or failed
+on a project's most recent task run, and why — the per-checkpoint detail
+`missionCard.js`'s own aggregate "Tests: n/m passed" leaves out. No new
+module, no new data source: it reads the exact same persisted queue
+`/tasks` already reads (`checkpoint.verify.results` per task, computed by
+`verifierRegistry.js`'s `runVerifiers()`), rendering one block per task
+with each real verifier's pass/fail mark and its `detail` string
+underneath. `marker`-type results are excluded via `missionCard.js`'s own
+exported `isEvidenceVerifier()` — the same rule that keeps that module's
+aggregate honest applies here. Explicitly never runs anything: running a
+test on demand is a different risk class (arbitrary remote code
+execution), already ruled out for a bare command by the 2026-07-29
+consolidation review. New kill switch `operator.tests.enabled` (its own,
+unlike M4's `/todos` which reused `operator.search` — M5 is a genuinely
+different capability). New event `tests.viewed`, matching the
+`workspace.viewed`/`git.viewed`/`log.viewed` pattern.
+`operatorRender.test.js` (+4), `commandRouter.test.js` (+7). 1376 → 1387
+backend tests, full suite re-run clean, zero regressions (one
+`workerExit.test.js` failure seen mid-run confirmed pre-existing/flaky —
+passed 3/3 in isolation with this diff applied, and reproduced even on a
+clean stash of pre-M5 `main` — unrelated to anything this milestone
+touches). **Live-validated** via the CLI operator bridge against a freshly
+restarted `v3.19.0` daemon: `/help` renders the new Missions-category
+entry; `/tests calculator-proof` (a real project with 3 completed legacy
+tasks, none with declared verifiers) correctly reports "No completed task
+has recorded verifier results yet" rather than a fabricated count; `/tests
+"Human Typer Fast Speed"` (a real project with no task queue at all yet)
+correctly reports the distinct "no verification data yet" message; both
+aliases (`/verify`, `/verification`) resolve; an unknown project name
+produces the same refusal `/status` gives; `/events` confirms a real
+`tests.viewed` event was appended. **Disclosed limitation:** no project
+registered in this real installation has ever declared per-task verifiers
+(`grep -l "verify" config/projects/*.json` finds nothing) — every real
+mission here runs in legacy marker-only mode, so the pass/fail-DETAIL
+render path (a task with real ✅/❌ verifier results) could not be
+exercised against genuinely live mission data. That path is instead
+covered by `commandRouter.test.js`'s own tests, which use a real,
+file-backed `TaskQueue` instance (the identical `taskQueue.load()` call
+the router makes) rather than a mock — the same fidelity a live daemon
+round-trip would add, without fabricating a throwaway mission that
+doesn't reflect how this installation is actually used. Not yet
+committed — awaiting owner review.
+
+**Phase 14 M7 — Phase 12 M4 Re-evaluation is DECIDED, 2026-08-01: deferred
+again.** Per the owner's 2026-07-30 direction, formally re-evaluated
+`docs/PHASE_12_PLAN.md` §4's still-deferred scope (a launcher/Start Menu
+experience, and `/new` — remote project creation with mandatory plan
+approval) against everything Phase 13/14 actually shipped. Launch
+experience is substantially resolved by work that shipped for other
+reasons (the Phase 12 M3 desktop app; the 2026-08-01 Task Scheduler
+hidden-launcher fix, `b51c7c3`) — what remains is a Start Menu shortcut,
+minor polish rather than a capability gap. Remote project creation
+(`/new`) is untouched by anything shipped — `/import`/`/mission` only ever
+act on an EXISTING folder, never create one from nothing — and remains the
+one real gap, but is also the first surface that would create new
+filesystem state rather than extend an existing read/mutate path, a bigger
+step than any single Phase 14 milestone took. Weighed against the owner's
+own standing direction that Phase 14 should be the last infrastructure-
+heavy phase, and that no live review session ever surfaced an owner-felt
+need for it the way `/git`/`/log`/`/todos`/`/tests` each did, the owner
+chose to defer M4 again, formally, rather than resume it narrow or full —
+not currently planned, picked up only if a real need surfaces. Decision
+only, no code, no version bump (same precedent Phase 12's own first M4
+deferral note set). Full reasoning: `docs/PHASE_14_PLAN.md`'s M7 section,
+`docs/PHASE_12_PLAN.md`'s "M7 re-evaluation and second deferral" note.
+**With M7 decided, every milestone in Phase 14's plan is closed** — only
+M5's own review/commit and the still-outstanding push to `origin` remain.
 
 **Phase 13 M6 — Remote File System (`v3.6.0`) is DONE.** The first new
 runtime dependency since baseline (`archiver`) and the first filesystem
@@ -381,13 +460,14 @@ ran it live, taking the registry from 6 to 23 real projects. 1178 → 1194
 backend tests. Full report: `docs/PHASE_13_RECONCILIATION_2026-07-30.md`.
 
 **Phase 13 M9 is done** — see the top of this file. Phase 14 M9/M0/M1/M2/
-M8/M3/M4 plus the pre-M4 cleanup pass have since shipped, committed, and
-tagged (`v3.10.0`→`v3.17.0`); M6 (`v3.18.0`) is implemented, tested, and
-documented, live validation and owner review still pending before commit —
-see the top of this file for current status. **NEXT once M6 is reviewed:**
-M5 (Test/Verification Visibility), then M7 per `docs/PHASE_14_PLAN.md`'s
-dependency graph — plus the still-outstanding push of everything back to
-`v3.8.0` through `v3.18.0` to `origin` whenever the owner is ready.
+M8/M3/M4/M6 plus the pre-M4 cleanup pass have since shipped, committed, and
+tagged (`v3.10.0`→`v3.18.0`); M5 (`v3.19.0`) is implemented, tested, and
+live-validated, owner review still pending before commit; M7 (the Phase 12
+M4 re-evaluation) is decided — deferred again — see the top of this file
+for current status. **With M7 decided, every milestone in
+`docs/PHASE_14_PLAN.md` is closed. NEXT:** M5's own review/commit, plus the
+still-outstanding push of everything back to `v3.8.0` through `v3.19.0` to
+`origin` whenever the owner is ready.
 
 ---
 
@@ -753,13 +833,15 @@ Manager) — verified live end-to-end — ahead of tagging `v2.3.0`.
 | Phase 14 M3 — Repository & Symbol Search | ✅ done | `v3.15.0` |
 | Phase 14 cleanup pass (pre-M4 architecture review) | ✅ done | `v3.16.0` |
 | Phase 14 M4 — TODO/FIXME Discovery | ✅ done | `v3.17.0` |
-| Phase 14 M6 — AI-Assisted Engineering Mission Templates | ⏳ implemented, tested, live-validated, awaiting review | `v3.18.0` (not yet committed) |
+| Phase 14 M6 — AI-Assisted Engineering Mission Templates | ✅ done | `v3.18.0` |
+| Phase 14 M5 — Test & Verification Visibility | ⏳ implemented, tested, live-validated, awaiting review | `v3.19.0` (not yet committed) |
+| Phase 14 M7 — Phase 12 M4 Re-evaluation | ✅ decided — deferred again | (decision only, no version) |
 
-**Test suite (current, 2026-08-01):** 1376/1376 backend (was 1194/1194 at
+**Test suite (current, 2026-08-01):** 1387/1387 backend (was 1194/1194 at
 the Phase 13 M9 acceptance review: +20 Phase 13 M1, +31 M2, +34 M3, +17 M4,
 +26 M5, +55 M6, +18 M7, +5 M8, +16 reconciliation pass; then Phase 14 added
 +25 M9, +6 M0, +15 M1, +18 M2, +17 M8, +29 M3, +10 cleanup pass, +20 M4,
-+42 M6) + 41 desktop — the 919/919 figure above was the Phase 12 M2.1 snapshot;
++42 M6, +11 M5) + 41 desktop — the 919/919 figure above was the Phase 12 M2.1 snapshot;
 Phase 12 M2.2 and M3 each added more (see CHANGELOG for the exact
 per-release deltas).
 

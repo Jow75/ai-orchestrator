@@ -122,6 +122,15 @@ export const COMMANDS = Object.freeze([
     description: "The active project's task queue and where it is.",
   },
   {
+    name: 'tests',
+    aliases: ['verify', 'verification'],
+    usage: '/tests [project]',
+    takesRest: true,
+    category: 'Missions',
+    examples: ['/tests Remote Work'],
+    description: "Which specific verifiers passed or failed on the active (or named) project's most recent task run, and why — not just an aggregate count. Never runs anything.",
+  },
+  {
     name: 'approvals',
     aliases: ['pending'],
     usage: '/approvals [mode [conservative|balanced|autonomous]]',

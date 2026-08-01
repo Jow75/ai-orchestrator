@@ -18,11 +18,12 @@
 import { formatDuration } from '../infra/time.js';
 import {
   projectStatusIcon, projectStatusLabel, phaseIcon, phaseLabel,
-  healthLabel, decisionLabel,
+  healthLabel, decisionLabel, confidenceLabel,
 } from '../shared/vocabulary.js';
 import { COMMANDS } from './commandGrammar.js';
 import { PROJECT_STATUSES } from './projectRegistry.js';
 import { SIMULATION_BADGE, SIMULATION_NOTICE } from '../drivers/simulation.js';
+import { tallyEvidence } from '../notifications/missionCard.js';
 
 /** Longest list a single phone message should carry before it is summarized. */
 const MAX_LIST = 10;
@@ -420,6 +421,53 @@ export function renderTasks(project, queue) {
 }
 
 /**
+ * `/tests [project]` — Phase 14 M5: which specific verifiers passed or
+ * failed on each task in the project's most recent task queue, and why —
+ * the per-checkpoint detail `missionCard.js`'s own aggregate "Tests: n/m
+ * passed" leaves out. Reads the SAME persisted `checkpoint.verify.results`
+ * `/tasks` already reads; nothing here runs a test or any other verifier.
+ * `marker`-type results are excluded via `tallyEvidence` — the same
+ * rule missionCard.js's own aggregate applies — since a completion marker
+ * is the agent's own claim about itself, not a check of it.
+ *
+ * @param {string} project
+ * @param {object|null} queue - From `TaskQueue.load()`.
+ */
+export function renderTestResults(project, queue) {
+  if (!queue || !queue.tasks?.length) {
+    return `${project}: no verification data yet. It appears after the first mission run.`;
+  }
+
+  const lines = [`🧪 tests — ${project}`, ''];
+  let totalPassed = 0;
+  let totalCount = 0;
+  let tasksWithEvidence = 0;
+
+  for (const task of queue.tasks.slice(0, MAX_LIST)) {
+    const { evidence, passed, total } = tallyEvidence(task.checkpoint?.verify?.results);
+    if (!total) continue;
+    tasksWithEvidence += 1;
+    totalPassed += passed;
+    totalCount += total;
+    lines.push(`${task.id} [${task.state}]:`);
+    for (const r of evidence) {
+      lines.push(`  ${r.passed ? '✅' : '❌'} ${r.type}${r.detail ? ` — ${truncate(r.detail, 140)}` : ''}`);
+    }
+  }
+
+  if (!tasksWithEvidence) {
+    lines.push('No completed task has recorded verifier results yet.');
+    return lines.join('\n');
+  }
+  if (queue.tasks.length > MAX_LIST) lines.push(`… and ${queue.tasks.length - MAX_LIST} more task(s) not shown.`);
+
+  lines.push('');
+  lines.push(`Verifiers: ${totalPassed}/${totalCount} passed`);
+  lines.push(`Confidence: ${confidenceLabel(totalPassed === totalCount ? 'verified' : 'partial')}`);
+  return lines.join('\n');
+}
+
+/**
  * `/approvals` — every decision waiting, across every project.
  *
  * The badge matters more in this list than in most: `/approvals` is the screen
@@ -808,7 +856,7 @@ export function renderTodoResults(project, results) {
 
 export default {
   relativeTime, renderProjectLine, renderProjectList, renderProjectDetail,
-  renderTasks, renderApprovals, renderMissionProposal, renderMissionRequests,
+  renderTasks, renderTestResults, renderApprovals, renderMissionProposal, renderMissionRequests,
   renderEvents, renderConfirmation, renderPhaseUpdate, renderServiceStatus,
   renderHelp, truncate, formatBytes, renderFileListing, renderFileInline,
   renderSearchResults, renderTodoResults,

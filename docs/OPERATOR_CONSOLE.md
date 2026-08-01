@@ -13,7 +13,8 @@ read genuinely different things and the name was needed for the real one;
 `/notify` and `/approvals mode` were added in Phase 14 M8 (`v3.14.0`);
 `/grep` and `/symbol` were added in Phase 14 M3 (`v3.15.0`); `/todos` was
 added in Phase 14 M4 (`v3.17.0`); `/review`, `/architecture`, `/docgen`,
-and `/refactor` were added in Phase 14 M6 (`v3.18.0`).
+and `/refactor` were added in Phase 14 M6 (`v3.18.0`); `/tests` was added
+in Phase 14 M5 (`v3.19.0`).
 
 This is the guide to *operating* AI-Orchestrator remotely. For deciding
 individual approvals, see [REMOTE_APPROVALS.md](REMOTE_APPROVALS.md); for
@@ -97,6 +98,7 @@ Starting, watching, and stopping work.
 | `/start [project]` | Start supervising |
 | `/stop [project]` ⚠️ | Stop a mission (the session stays resumable) |
 | `/tasks [project]` | The real task queue and where it is |
+| `/tests [project]` | Which specific verifiers passed or failed on the most recent task run, and why — not just a count. Never runs anything |
 | `/reset [project]` ⚠️ | Abandon an interrupted session so the next start is fresh |
 
 ### Decisions
@@ -208,6 +210,7 @@ A few less-obvious ones in practice:
 /grep TODO
 /symbol DriverRegistry
 /todos Remote Work
+/tests Remote Work
 /download-project Remote Work
 /review Remote Work
 /docgen src/index.js

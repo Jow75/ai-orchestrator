@@ -24,7 +24,7 @@ import path from 'node:path';
 import { isLegacyMission, validateSingleTask } from '../mission/missionPlan.js';
 import { TaskState } from '../mission/taskState.js';
 import { approvalEventFor } from '../events/eventTypes.js';
-import { isEvidenceVerifier } from '../notifications/missionCard.js';
+import { tallyEvidence } from '../notifications/missionCard.js';
 import { parseCommand } from './commandGrammar.js';
 import { scanRoots } from './projectDiscovery.js';
 import { inspectProject, buildAutoMissionPrompt } from './projectInspector.js';
@@ -42,7 +42,7 @@ import {
 import { DEFAULT_CLASSIFICATION } from '../config/projectClassification.js';
 import { capabilitiesOf } from '../drivers/capabilities.js';
 import {
-  renderProjectList, renderProjectDetail, renderTasks, renderApprovals,
+  renderProjectList, renderProjectDetail, renderTasks, renderTestResults, renderApprovals,
   renderMissionProposal, renderMissionRequests, renderEvents, renderConfirmation,
   renderHelp, renderServiceStatus, renderScanResults, renderFileListing,
   renderFileInline, formatBytes, truncate, renderMissionAssignment, renderMissionBatch,
@@ -437,6 +437,7 @@ export class CommandRouter {
       case 'git': return this.commandGit(rest, ctx);
       case 'start': return this.commandStart(rest, ctx);
       case 'tasks': return this.commandTasks(rest, ctx);
+      case 'tests': return this.commandTests(rest, ctx);
       case 'approvals': return this.commandApprovals(rest, ctx);
       case 'missions': return this.commandMissions(ctx);
       case 'service': return await this.commandService();
@@ -696,6 +697,32 @@ export class CommandRouter {
     const resolved = this.resolveTarget(rest, ctx);
     if (resolved.reply) return { reply: resolved.reply };
     return { reply: renderTasks(resolved.project, this.taskQueue.load(resolved.project)) };
+  }
+
+  /**
+   * `/tests [project]` — Phase 14 M5: which specific verifiers passed or
+   * failed on the active (or named) project's most recent task run, and
+   * why — not just the aggregate count + confidence label
+   * `missionCard.js`'s own "Tests: n/m passed" summary already shows.
+   * Reads the SAME persisted task queue `/tasks` already reads
+   * (`checkpoint.verify.results` per task, from `verifierRegistry.js`'s
+   * `runVerifiers()`) — no new data source. Explicitly never runs anything
+   * itself: running a test on demand is a different risk class (executing
+   * arbitrary code remotely), ruled out for a bare command by the
+   * 2026-07-29 consolidation review and reaffirmed in
+   * docs/PHASE_14_PLAN.md's own M5 section.
+   */
+  commandTests(rest, ctx) {
+    const disabled = this.guardEnabled('tests', 'Test visibility');
+    if (disabled) return disabled;
+    const resolved = this.resolveTarget(rest, ctx);
+    if (resolved.reply) return { reply: resolved.reply };
+
+    const queue = this.taskQueue.load(resolved.project);
+    this.events?.append({
+      type: 'tests.viewed', project: resolved.project, actor: ctx.actor, payload: { found: Boolean(queue) },
+    });
+    return { reply: renderTestResults(resolved.project, queue) };
   }
 
   /**
@@ -2070,10 +2097,9 @@ export class CommandRouter {
       // Completion markers are excluded for the same reason Mission Cards
       // exclude them: a run whose only "verifier" was the agent announcing its
       // own success would otherwise report a 100% pass rate forever.
-      for (const result of (task.checkpoint?.verify?.results ?? []).filter(isEvidenceVerifier)) {
-        total += 1;
-        if (result.passed) passed += 1;
-      }
+      const tally = tallyEvidence(task.checkpoint?.verify?.results);
+      passed += tally.passed;
+      total += tally.total;
     }
     if (total) history.verifierPassRate = Math.round((passed / total) * 100);
     return history;

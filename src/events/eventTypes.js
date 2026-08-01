@@ -99,6 +99,10 @@ export const EVENT_TYPES = Object.freeze([
   /** `/log [project]` tailed the orchestrator log. */
   'log.viewed',
 
+  // ── test & verification visibility (Phase 14 M5) ────────────────────────
+  /** `/tests [project]` reported per-task verifier pass/fail detail. */
+  'tests.viewed',
+
   // ── missions requested from an interface (M2 Priority 3) ─────────────────
   /**
    * A mission request was raised, awaiting the owner's approval — from

@@ -51,6 +51,24 @@ export function isEvidenceVerifier(result) {
 }
 
 /**
+ * Reduce a checkpoint's raw `verify.results` to the evidence entries and their
+ * pass/total tally. The same `filter → count passed → count total` sequence was
+ * hand-written at three call sites (this module's own aggregate, `/tests`,
+ * `/approvals` history) — one wrong copy would silently un-fix the
+ * marker-inflation bug the exclusion rule exists to prevent. `evidence` is
+ * returned alongside the counts because `/tests` also renders the entries
+ * individually, and a second filter there would be a second place to get it
+ * wrong.
+ *
+ * @param {Array<{type?: string, passed?: boolean}>} [results]
+ * @returns {{evidence: object[], passed: number, total: number}}
+ */
+export function tallyEvidence(results) {
+  const evidence = (results ?? []).filter(isEvidenceVerifier);
+  return { evidence, passed: evidence.filter((r) => r.passed).length, total: evidence.length };
+}
+
+/**
  * Build a Mission Card.
  *
  * @param {object} params
@@ -117,11 +135,9 @@ export function buildMissionCard({
       }
       // Only real checks count. A completion marker is the agent's own claim
       // about itself, not a check of it (see NON_EVIDENCE_VERIFIERS).
-      const evidence = (cp.verify?.results ?? []).filter(
-        (r) => !NON_EVIDENCE_VERIFIERS.includes(r.type)
-      );
-      verifiersTotal += evidence.length;
-      verifiersPassed += evidence.filter((r) => r.passed).length;
+      const tally = tallyEvidence(cp.verify?.results);
+      verifiersTotal += tally.total;
+      verifiersPassed += tally.passed;
     }
     if (filesTouched.size || filesDeleted.size) {
       card.filesChanged = [...filesTouched, ...[...filesDeleted].map((f) => `${f} (deleted)`)];
@@ -259,4 +275,6 @@ function bulletBlock(label, files) {
   return [`${label}:`, ...files.map((f) => `• ${f}`)].join('\n');
 }
 
-export default { buildMissionCard, renderMissionCardText, renderArtifactSummary, isEvidenceVerifier };
+export default {
+  buildMissionCard, renderMissionCardText, renderArtifactSummary, isEvidenceVerifier, tallyEvidence,
+};

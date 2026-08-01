@@ -527,6 +527,22 @@ export const ORCHESTRATOR_DEFAULTS = {
     missionTemplates: {
       enabled: true,
     },
+    /**
+     * Phase 14 M5: `/tests [project]` — which specific verifiers passed or
+     * failed on a project's most recent task run (`checkpoint.verify.results`
+     * per task, already computed by `verifierRegistry.js`'s `runVerifiers()`
+     * and persisted by `taskQueue.js`), and why — not just the aggregate
+     * count + confidence label `missionCard.js`'s own summary already shows.
+     * Explicitly READ-ONLY: this never runs a test or any other verifier on
+     * demand — that is a different risk class (executing arbitrary code
+     * remotely), ruled out for a bare command by the 2026-07-29
+     * consolidation review and reaffirmed in docs/PHASE_14_PLAN.md's own M5
+     * section. Its own switch, following this codebase's
+     * one-switch-per-new-capability convention.
+     */
+    tests: {
+      enabled: true,
+    },
     /** Phase 13 M6: `/download-project` sizing and exclusions. */
     download: {
       /**

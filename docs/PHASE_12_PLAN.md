@@ -189,7 +189,7 @@ empty and every code path is identical to `v2.7.0`.
 | **M1** | `v2.8.0` | ✅ done | **Core Service** — daemon, worker supervision, exclusive Telegram ownership, Windows autostart, reboot recovery |
 | **M2** | `v2.9.0` | ✅ done | **Telegram Operator Interface** — command router, project context, executive Mission Cards |
 | **M3** | `v3.0.0` | ✅ done | **Operator Control Center** — multi-project desktop as a pure daemon client |
-| **M4** | ~~`v3.1.0`~~ | ⏸ **Deferred** | **Launch Experience & Remote Project Creation** — launcher, Start Menu, `/new` with mandatory plan approval |
+| **M4** | ~~`v3.1.0`~~ | ⏸ **Deferred again, 2026-08-01** | **Launch Experience & Remote Project Creation** — launcher, Start Menu, `/new` with mandatory plan approval |
 
 Each ships independently: implementation → tests → full regression → live
 validation → docs → version bump → commit → annotated tag → completion report.
@@ -209,6 +209,27 @@ architecture (in particular Phase 13 M2's discovery use of
 `operator.projectRoots`, which M4's `/new` was always going to consume for
 its write-safety check — see §6) and picked up under the next available
 `v3.x` version once Phase 13 completes.
+
+### M7 re-evaluation and second deferral (2026-08-01)
+
+Phase 14 M7 (`docs/PHASE_14_PLAN.md`) was the promised re-evaluation, run
+once Phase 13 and most of Phase 14 (M1–M6) existed. Splitting M4's scope in
+two: **launch experience** is substantially resolved by work that shipped
+for other reasons (the Phase 12 M3 desktop app; the 2026-08-01 Task
+Scheduler hidden-launcher fix, `b51c7c3`) — what remains is a Start Menu
+shortcut, minor polish rather than a capability gap. **Remote project
+creation** (`/new`) is untouched by anything shipped — `/import`/`/mission`
+only ever act on an EXISTING folder, never create one from nothing — and
+remains the one real gap, but it is also the first surface that would
+create new filesystem state rather than extend an existing read/mutate
+path, which is a bigger step than any single Phase 14 milestone took.
+Weighed against the owner's own standing direction that Phase 14 should be
+the last infrastructure-heavy phase, and that no live review session ever
+surfaced an owner-felt need for it the way `/git`/`/log`/`/todos`/`/tests`
+each did — **the owner decided (2026-08-01) to defer M4 again**, formally,
+rather than resume it narrow or full. It is not currently planned; it is
+picked up only if a real need for it surfaces. See Phase 14 M7's own
+section for the full evidence.
 
 ---
 

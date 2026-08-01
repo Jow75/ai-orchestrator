@@ -3,6 +3,60 @@
 All notable changes to AI-Orchestrator are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [3.19.0] — 2026-08-01 — Phase 14 M5: Test & Verification Visibility
+
+`/tests [project]` surfaces which **specific** verifiers passed or failed on
+a project's most recent task run, and why — the per-checkpoint detail
+`missionCard.js`'s own aggregate "Tests: n/m passed · Confidence: partial"
+leaves out. Reads the SAME persisted data `/tasks` already reads
+(`checkpoint.verify.results` per task, computed by `verifierRegistry.js`'s
+`runVerifiers()` and persisted by `taskQueue.js` — no new data source, no
+new module). **Explicitly never runs anything**: running a test or any
+other verifier on demand is a different risk class (executing arbitrary
+code remotely), already ruled out for a bare command by the 2026-07-29
+consolidation review and reaffirmed in `docs/PHASE_14_PLAN.md`'s own M5
+section — this command only ever reads what a completed task's verifiers
+already recorded on disk.
+
+- One task per block (`T1 [done]:`), each real verifier underneath it with a
+  ✅/❌ mark and its `detail` string — the actual reason a check failed, not
+  just a count. `marker`-type results are excluded, the same rule
+  `missionCard.js`'s own aggregate applies (`tallyEvidence`): a
+  completion marker is the agent's own claim about itself, not a check of
+  it. A task with no checkpoint yet (still pending/active) is silently
+  skipped rather than shown as "no data" noise.
+- A project with a real queue but no verifier evidence anywhere in it (every
+  task either unstarted or verified only by the completion marker) reports
+  "No completed task has recorded verifier results yet" rather than a bare
+  0/0. A project with no task queue at all reports "no verification data
+  yet" — distinguished from the above, since they are different facts.
+- New kill switch, `operator.tests.enabled`, following this codebase's
+  one-switch-per-new-capability convention (M5 is a genuinely different
+  capability from M3's search, unlike M4's `/todos`, which reused
+  `operator.search`). New event, `tests.viewed`, matching the
+  read-only-visibility pattern `workspace.viewed`/`git.viewed`/`log.viewed`
+  established in the pre-M4 cleanup pass.
+- Command grammar: `/tests [project]` (aliases `verify`, `verification`),
+  `Missions` category, right after `/tasks` — the two commands read the
+  same queue and answer adjacent questions ("where is it" vs. "did it pass
+  its checks").
+
+**Cleanup shipped with this milestone.** Adding `/tests` made a third copy of
+the same `filter(isEvidenceVerifier) → count passed → count total` sequence
+(the Mission Card aggregate, `/approvals`' verifier pass rate, and now
+`/tests`). Extracted to `tallyEvidence(results)` in `missionCard.js`, beside
+the `isEvidenceVerifier` rule it enforces; all three call sites now use it.
+Behaviour-identical — the point is that the marker-exclusion rule this module
+exists to enforce can no longer be got wrong in one copy and right in the
+other two. Same spirit as the v3.16.0 pre-M4 cleanup pass.
+
+`operatorRender.test.js` (+4), `commandRouter.test.js` (+7). 1376 → **1387**
+backend tests, full suite re-run clean, zero regressions (the one flaky
+`workerExit.test.js` failure seen mid-session was confirmed pre-existing —
+passed 3/3 in isolation with this diff applied, and failed even on a clean
+stash of `main` under load; a timing-sensitive worker-IPC test, unrelated to
+anything this milestone touches).
+
 ## [3.18.0] — 2026-08-01 — Phase 14 M6: AI-Assisted Engineering Mission Templates
 
 Four new commands — `/review [project]`, `/architecture [project]` (alias
