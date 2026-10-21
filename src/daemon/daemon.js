@@ -580,6 +580,7 @@ export class Daemon extends EventEmitter {
     this.startSchedulerLoop();
     this.startWorkerScan();
     this.startMissionMonitor();
+    this.statusManager.set({ orchestrator: { state: 'idle' } });
 
     this.logger.info('AI-Orchestrator Core Service started', {
       pid: process.pid,
