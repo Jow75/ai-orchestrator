@@ -35,6 +35,22 @@ export function loadOrCreateToken(tokenFile, { rotate = false } = {}) {
 }
 
 /**
+ * Constant-time string comparison using SHA-256 digests and timingSafeEqual.
+ * Hashing both inputs ensures fixed-length buffers for timingSafeEqual, avoiding
+ * length leaks or exceptions on mismatched string lengths.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+export function safeTokenCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const hashA = crypto.createHash('sha256').update(a).digest();
+  const hashB = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
+
+/**
  * Express middleware: requires `Authorization: Bearer <token>` (or the
  * equivalent `X-API-Token` header, for clients that can't easily set
  * Authorization) matching the configured token, else 401s.
@@ -46,7 +62,7 @@ export function requireAuth(token) {
     const header = req.get('authorization') ?? '';
     const bearer = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
     const provided = bearer ?? req.get('x-api-token');
-    if (!token || provided !== token) {
+    if (!token || !safeTokenCompare(provided, token)) {
       res.status(401).json({ error: 'Unauthorized — missing or invalid API token' });
       return;
     }
@@ -54,4 +70,4 @@ export function requireAuth(token) {
   };
 }
 
-export default { loadOrCreateToken, requireAuth };
+export default { loadOrCreateToken, requireAuth, safeTokenCompare };

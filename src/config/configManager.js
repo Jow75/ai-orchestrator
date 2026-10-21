@@ -19,6 +19,7 @@ import { ORCHESTRATOR_DEFAULTS, PROJECT_DEFAULTS } from './defaults.js';
 import { resolvePaths } from '../infra/paths.js';
 import { isLegacyMission, normalizeAndValidateTasks } from '../mission/missionPlan.js';
 import { PROJECT_CLASSIFICATIONS, isKnownClassification } from './projectClassification.js';
+import { writeJsonAtomic } from '../state/statePersistence.js';
 
 /** Error type thrown for any user-fixable configuration problem. */
 export class ConfigError extends Error {
@@ -313,7 +314,7 @@ export class ConfigManager {
     const file = path.join(dir, 'local.json');
     const existing = fs.existsSync(file) ? readJsonFile(file) : {};
     const merged = deepMerge(existing, patch);
-    fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+    writeJsonAtomic(file, merged);
     return file;
   }
 
@@ -331,7 +332,7 @@ export class ConfigManager {
     if (fs.existsSync(file)) {
       throw new ConfigError(`Project "${name}" already exists at ${file}.`);
     }
-    fs.writeFileSync(file, `${JSON.stringify(definition, null, 2)}\n`, 'utf8');
+    writeJsonAtomic(file, definition);
     return file;
   }
 
@@ -372,7 +373,7 @@ export class ConfigManager {
         `"classification" must be one of: ${PROJECT_CLASSIFICATIONS.join(', ')} (got "${merged.classification}").`
       );
     }
-    fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+    writeJsonAtomic(file, merged);
     return merged;
   }
 

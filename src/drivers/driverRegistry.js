@@ -15,9 +15,11 @@ import ClaudeDriver from './claudeDriver.js';
 import MockDriver from './mockDriver.js';
 import CliDriver from './cliDriver.js';
 import NvidiaDriver from './nvidiaDriver.js';
+import AgyDriver from './agyDriver.js';
 
 /** Built-in driver constructors, keyed by driver id. */
 const BUILTIN_DRIVERS = {
+  agy: AgyDriver,
   claude: ClaudeDriver,
   mock: MockDriver,
   // Phase 9: one generic, config-driven driver for any CLI engine (Gemini,

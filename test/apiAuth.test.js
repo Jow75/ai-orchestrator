@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadOrCreateToken, requireAuth } from '../src/api/apiAuth.js';
+import { loadOrCreateToken, requireAuth, safeTokenCompare } from '../src/api/apiAuth.js';
 
 function tokenFile() {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aio-token-')), 'api-token.txt');
@@ -85,4 +85,18 @@ test('requireAuth: always 401s when no token is configured (safe default, never 
   const { req, res, result } = fakeReqRes({ authorization: 'Bearer anything' });
   middleware(req, res, () => {});
   assert.equal(result().statusCode, 401);
+});
+
+test('safeTokenCompare: verifies constant-time comparison correctness', () => {
+  assert.equal(safeTokenCompare('abc', 'abc'), true);
+  assert.equal(safeTokenCompare('abc', 'abd'), false);
+  assert.equal(safeTokenCompare('abc', 'abcd'), false);
+  assert.equal(safeTokenCompare('abcd', 'abc'), false);
+  assert.equal(safeTokenCompare('', ''), true);
+  assert.equal(safeTokenCompare('', 'a'), false);
+  assert.equal(safeTokenCompare('a', ''), false);
+  assert.equal(safeTokenCompare(null, 'abc'), false);
+  assert.equal(safeTokenCompare('abc', null), false);
+  assert.equal(safeTokenCompare(undefined, undefined), false);
+  assert.equal(safeTokenCompare(123, '123'), false);
 });

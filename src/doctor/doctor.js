@@ -113,7 +113,10 @@ function findCorruptFiles(dir) {
  */
 export async function buildDoctorFindings({
   configManager = new ConfigManager(),
-  driverRegistry = new DriverRegistry({ logger: silentLogger }),
+  driverRegistry = new DriverRegistry({
+    logger: silentLogger,
+    nvidiaConfigProvider: () => configManager.get('nvidia'),
+  }),
   platform = process.platform,
   checkScheduledTask = defaultCheckScheduledTask,
   checkCoreServiceTask = defaultCheckCoreServiceTask,
@@ -220,9 +223,22 @@ export async function buildDoctorFindings({
         ));
       }
     } catch (error) {
+      let fix = undefined;
+      if (error.message.includes('"workingDirectory" does not exist')) {
+        fix = {
+          description: `Remove stale registration with 'ai-orchestrator projects remove "${name}"' (or /forget "${name}").`,
+          safe: false,
+        };
+      } else if (error.message.includes('"promptFile"')) {
+        fix = {
+          description: `Generate a starter mission with '/mission "${name}"' (or configure promptFile in config/projects/${name}.json).`,
+          safe: false,
+        };
+      }
       findings.push(failFinding(`project-valid:${name}`, `Project "${name}" is valid`, error.message, {
         cause: error.message,
         impact: `"${name}" cannot be loaded or supervised until this is fixed.`,
+        ...(fix ? { fix } : {}),
       }));
     }
   }

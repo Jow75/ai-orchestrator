@@ -16,7 +16,8 @@
 
 import fs from 'node:fs';
 import { deepMerge } from '../config/configManager.js';
-import { validateAgentList } from './agentProfile.js';
+import { validateAgentList, CANONICAL_NINE_AGENTS } from './agentProfile.js';
+import { writeJsonAtomic } from '../state/statePersistence.js';
 
 /** The synthetic agent an agent-less project runs everything on. */
 export function implicitDefaultAgent(project) {
@@ -150,6 +151,65 @@ export class AgentRegistry {
   effectiveProject(project, agent) {
     if (!agent.config || !Object.keys(agent.config).length) return project;
     return deepMerge(project, agent.config);
+  }
+
+  /**
+   * Return the canonical permanent nine agents definition catalog.
+   */
+  static canonicalNineAgents() {
+    return CANONICAL_NINE_AGENTS;
+  }
+
+  /**
+   * Return the canonical permanent nine agents definition catalog (instance helper).
+   */
+  canonicalAgents() {
+    return CANONICAL_NINE_AGENTS;
+  }
+
+  /**
+   * Lookup a canonical agent by id ('agent-one' .. 'agent-nine') or role ('diagnostic' .. 'authorization').
+   * @param {string} idOrRole
+   * @returns {object|null}
+   */
+  getCanonicalAgent(idOrRole) {
+    if (!idOrRole || typeof idOrRole !== 'string') return null;
+    const target = idOrRole.trim().toLowerCase();
+    return (
+      CANONICAL_NINE_AGENTS.find((a) => a.id.toLowerCase() === target)
+      ?? CANONICAL_NINE_AGENTS.find((a) => a.role.toLowerCase() === target)
+      ?? null
+    );
+  }
+
+  /**
+   * Ensure `config/agents.json` exists on disk with the canonical nine agent definitions.
+   * If absent or empty, atomically writes the canonical roster.
+   *
+   * @param {string} [filePath] - Optional override file path; defaults to this.agentsFile.
+   * @returns {boolean} True if the file was initialized or already exists.
+   */
+  ensureCanonicalAgentsFile(filePath = this.agentsFile) {
+    if (!filePath) return false;
+    if (fs.existsSync(filePath)) {
+      try {
+        const stats = fs.statSync(filePath);
+        if (stats.size > 2) return true; // Already populated
+      } catch {
+        // Fall through to rewrite
+      }
+    }
+    try {
+      writeJsonAtomic(filePath, { agents: CANONICAL_NINE_AGENTS });
+      this._globalAgents = null; // Invalidate cache so next read sees the file
+      return true;
+    } catch (error) {
+      this.logger.warn('Failed to initialize canonical agents file', {
+        file: filePath,
+        error: error.message,
+      });
+      return false;
+    }
   }
 }
 

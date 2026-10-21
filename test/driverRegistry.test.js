@@ -12,7 +12,7 @@ import { silentLogger } from '../src/infra/logger.js';
 
 test('listDrivers returns every built-in driver id, sorted', () => {
   const registry = new DriverRegistry({ logger: silentLogger });
-  assert.deepEqual(registry.listDrivers(), ['claude', 'cli', 'mock', 'nvidia']);
+  assert.deepEqual(registry.listDrivers(), ['agy', 'claude', 'cli', 'mock', 'nvidia']);
 });
 
 test('getDriver lazily creates and caches one instance per id', () => {

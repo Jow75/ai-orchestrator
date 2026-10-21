@@ -1,0 +1,10 @@
+{
+  "name": "e2e-real-task",
+  "version": "1.0.0",
+  "description": "E2E verification project for AI-Orchestrator Mission 2",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/index.test.js"
+  }
+}
+

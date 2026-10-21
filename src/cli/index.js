@@ -176,7 +176,10 @@ function registryContext() {
 function agentContext(projectName) {
   const configManager = new ConfigManager();
   const paths = configManager.getPaths();
-  const driverRegistry = new DriverRegistry({ logger: silentLogger });
+  const driverRegistry = new DriverRegistry({
+    logger: silentLogger,
+    nvidiaConfigProvider: () => configManager.get('nvidia'),
+  });
   const registry = new AgentRegistry({ driverRegistry, logger: silentLogger, agentsFile: paths.agentsFile });
   const health = new AgentHealth({ healthFile: paths.agentHealthFile, logger: silentLogger });
   const roster = projectName

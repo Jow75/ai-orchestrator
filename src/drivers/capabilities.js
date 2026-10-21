@@ -18,6 +18,20 @@
  */
 
 export const DRIVER_CAPABILITIES = Object.freeze({
+  agy: Object.freeze({
+    label: 'Antigravity CLI (Gemini 3.8 Flash High / Claude / GPT-OSS)',
+    models: Object.freeze([
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low',
+      'claude-sonnet-4-6',
+      'claude-opus-4-6-thinking',
+      'gpt-oss-120b-medium',
+    ]),
+    streaming: true,
+    cancellation: true,
+    toolUse: true,
+  }),
   claude: Object.freeze({
     label: 'Claude Code',
     models: Object.freeze(['sonnet', 'opus', 'haiku']),

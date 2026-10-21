@@ -1104,6 +1104,18 @@ test('/mission never overwrites a project that already has a promptFile', async 
   assert.equal(h.events.read({ types: ['project.mission-assigned'] }).length, 0);
 });
 
+test('/mission regenerates prompt when promptFile is configured but missing on disk', async () => {
+  const h = harness({ projects: ['alpha'] });
+  const rawAlpha = JSON.parse(fs.readFileSync(path.join(h.paths.projectsDir, 'alpha.json'), 'utf8'));
+  const promptOnDisk = path.join(rawAlpha.workingDirectory, rawAlpha.promptFile);
+  if (fs.existsSync(promptOnDisk)) fs.rmSync(promptOnDisk);
+
+  const { reply } = await h.say('/mission alpha');
+  assert.match(reply, /mission assigned/i);
+  assert.ok(fs.existsSync(promptOnDisk));
+  assert.equal(h.events.read({ types: ['project.mission-assigned'] }).length, 1);
+});
+
 test('/mission is refused when operator.mission is disabled', async () => {
   const h = harness({ projects: ['alpha'], operator: { mission: { enabled: false } } });
   const { reply } = await h.say('/mission alpha');
@@ -1624,7 +1636,7 @@ test('/provider shows the default provider/model, capabilities, and known driver
   assert.match(reply, /Default provider: claude/);
   assert.match(reply, /Default model: \(engine default\)/);
   assert.match(reply, /sonnet, opus, haiku/);
-  assert.match(reply, /Known drivers: claude, cli, mock/);
+  assert.match(reply, /Known drivers:.*claude.*cli.*mock/);
 });
 
 test('/provider shows the active project\'s own driver/model override, side by side', async () => {
@@ -1635,6 +1647,18 @@ test('/provider shows the active project\'s own driver/model override, side by s
   const { reply } = await say('/provider');
   assert.match(reply, /alpha's own driver: claude/);
   assert.match(reply, /alpha's own model: haiku/);
+});
+
+test('/provider <name> sets default provider to a known driver, and refuses unknown', async () => {
+  const { say } = harness();
+  const { reply: okReply } = await say('/provider agy');
+  assert.match(okReply, /Default provider set to "agy"/);
+
+  const { reply: checkReply } = await say('/provider');
+  assert.match(checkReply, /Default provider: agy/);
+
+  const { reply: badReply } = await say('/provider unknown_driver');
+  assert.match(badReply, /is not a known driver/);
 });
 
 test('/model with no argument reports there is no default set yet', async () => {

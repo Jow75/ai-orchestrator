@@ -184,7 +184,10 @@ export class Daemon extends EventEmitter {
       memoryDir: this.paths.memoryDir,
       logger: childLogger(this.logger, 'memory'),
     });
-    this.driverRegistry = new DriverRegistry({ logger: this.logger });
+    this.driverRegistry = new DriverRegistry({
+      logger: this.logger,
+      nvidiaConfigProvider: () => this.configManager.get('nvidia'),
+    });
     this.agentRegistry = new AgentRegistry({
       driverRegistry: this.driverRegistry,
       logger: childLogger(this.logger, 'agents'),

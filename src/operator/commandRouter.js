@@ -453,7 +453,7 @@ export class CommandRouter {
       case 'hide': return this.commandHide(rest, ctx);
       case 'unhide': return this.commandUnhide(rest, ctx);
       case 'roots': return this.commandRoots(rest, ctx);
-      case 'provider': return this.commandProvider(ctx);
+      case 'provider': return this.commandProvider(rest, ctx);
       case 'model': return this.commandModel(rest, ctx);
       case 'safemode': return this.commandSafeMode(rest, ctx);
       case 'notify': return this.commandNotify(rest, ctx);
@@ -1012,12 +1012,18 @@ export class CommandRouter {
   assignMission(name, ctx, { via }) {
     const raw = this.configManager.getProjectFileContents(name);
     if (!raw) return { ok: false, reason: `"${name}" has no readable config.` };
-    if (raw.promptFile || (Array.isArray(raw.tasks) && raw.tasks.length > 0)) {
-      return { ok: false, alreadyReady: true, reason: 'already has a mission (a promptFile or task plan is set)' };
-    }
     const workingDirectory = raw.workingDirectory;
     if (!workingDirectory || !fs.existsSync(workingDirectory)) {
       return { ok: false, reason: missingFolderDetail(workingDirectory) };
+    }
+
+    const promptPath = raw.promptFile
+      ? (path.isAbsolute(raw.promptFile) ? raw.promptFile : path.join(workingDirectory, raw.promptFile))
+      : null;
+    const promptExists = promptPath ? fs.existsSync(promptPath) : false;
+    const hasTasks = Array.isArray(raw.tasks) && raw.tasks.length > 0;
+    if ((raw.promptFile && promptExists) || hasTasks) {
+      return { ok: false, alreadyReady: true, reason: 'already has a mission (a promptFile or task plan is set)' };
     }
 
     const detected = inspectProject(workingDirectory);
@@ -1092,7 +1098,14 @@ export class CommandRouter {
   commandMissionAll(ctx) {
     const candidates = this.registry.names().filter((name) => {
       const raw = this.configManager.getProjectFileContents(name);
-      return raw && !raw.promptFile && (!Array.isArray(raw.tasks) || raw.tasks.length === 0);
+      if (!raw) return false;
+      const hasTasks = Array.isArray(raw.tasks) && raw.tasks.length > 0;
+      if (hasTasks) return false;
+      if (!raw.promptFile) return true;
+      const promptPath = path.isAbsolute(raw.promptFile)
+        ? raw.promptFile
+        : path.join(raw.workingDirectory ?? '', raw.promptFile);
+      return !fs.existsSync(promptPath);
     });
     if (!candidates.length) {
       return { reply: `All ${this.registry.names().length} project(s) already have a mission.` };
@@ -1260,7 +1273,26 @@ export class CommandRouter {
    * use" is never ambiguous. No setter exists for provider in this
    * milestone (only `/model`) — see docs/PHASE_13_PLAN.md M5.
    */
-  commandProvider(ctx) {
+  commandProvider(rest, ctx) {
+    const trimmed = (rest ?? '').trim().toLowerCase();
+    if (trimmed) {
+      const disabled = this.guardLiveConfig();
+      if (disabled) return disabled;
+
+      const drivers = this.driverRegistry?.listDrivers() ?? ['agy', 'claude', 'cli', 'mock', 'nvidia'];
+      if (!drivers.includes(trimmed)) {
+        return { reply: `"${trimmed}" is not a known driver. Known drivers: ${drivers.join(', ')}.` };
+      }
+
+      const previous = this.operatorConfig.defaultProvider || 'claude';
+      this.liveConfig.applyPatch({ 'operator.defaultProvider': trimmed });
+      this.events?.append({
+        type: 'provider.provider-changed',
+        actor: ctx?.actor,
+        payload: { provider: trimmed, previousProvider: previous },
+      });
+      return { reply: `Default provider set to "${trimmed}". Applies to the next mission that starts.` };
+    }
     const defaultProvider = this.operatorConfig.defaultProvider || 'claude';
     const defaultModel = this.operatorConfig.defaultModel || '';
     const caps = capabilitiesOf(defaultProvider);

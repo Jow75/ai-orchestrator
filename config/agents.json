@@ -1,0 +1,213 @@
+{
+  "$schema": "./schema/agents.schema.json",
+  "$comment": "Permanent Nine Canonical Agents for AI-Orchestrator (Mission 2). Loaded automatically across all missions.",
+  "agents": [
+    {
+      "id": "agent-one",
+      "name": "Agent One — Principal Diagnostic Engineer",
+      "role": "diagnostic",
+      "driver": "agy",
+      "capabilities": [
+        "inspection",
+        "diagnostics",
+        "code-audit"
+      ],
+      "responsibilities": [
+        "Project discovery and workspace audit",
+        "Defect and bottleneck identification",
+        "Baseline establishment and verification",
+        "Evidence-backed diagnostic reporting"
+      ],
+      "config": {
+        "agy": {
+          "model": "gemini-3.8-flash-high"
+        }
+      },
+      "enabled": true
+    },
+    {
+      "id": "agent-two",
+      "name": "Agent Two — Chief Architect and Engineering Planner",
+      "role": "architecture",
+      "driver": "agy",
+      "capabilities": [
+        "planning",
+        "architecture",
+        "task-decomposition"
+      ],
+      "responsibilities": [
+        "Engineering roadmap and implementation plan",
+        "Architectural integrity and trade-off evaluation",
+        "Explicit acceptance criteria definition",
+        "Dependency and concurrency ordering"
+      ],
+      "config": {
+        "agy": {
+          "model": "gemini-3.8-flash-high"
+        }
+      },
+      "enabled": true
+    },
+    {
+      "id": "agent-three",
+      "name": "Agent Three — Principal Implementation Engineer",
+      "role": "implementation",
+      "driver": "agy",
+      "capabilities": [
+        "coding",
+        "refactoring",
+        "tool-execution"
+      ],
+      "responsibilities": [
+        "Codebase implementation and defect repair",
+        "Persistence, error recovery, and resilience",
+        "Substantive code changes and refactoring",
+        "Test authoring and updating"
+      ],
+      "config": {
+        "agy": {
+          "model": "gemini-3.8-flash-high"
+        }
+      },
+      "enabled": true
+    },
+    {
+      "id": "agent-four",
+      "name": "Agent Four — Independent Verification Engineer",
+      "role": "verification",
+      "driver": "claude",
+      "capabilities": [
+        "testing",
+        "verification",
+        "regression-check"
+      ],
+      "responsibilities": [
+        "Independent verification of implementation against criteria",
+        "Full test suite and regression suite execution",
+        "Runtime health and service verification",
+        "Evidence recording for test claims"
+      ],
+      "config": {
+        "claude": {
+          "model": "sonnet"
+        }
+      },
+      "enabled": true
+    },
+    {
+      "id": "agent-five",
+      "name": "Agent Five — AI Provider, Model Integration, and Routing Specialist",
+      "role": "provider-routing",
+      "driver": "agy",
+      "capabilities": [
+        "provider-audit",
+        "model-routing",
+        "api-integration"
+      ],
+      "responsibilities": [
+        "Provider inventory and model availability matrix",
+        "Task-aware intelligent routing and fallback policies",
+        "Provider health monitoring and failure classification",
+        "Latency, capacity, and capability verification"
+      ],
+      "config": {
+        "agy": {
+          "model": "gemini-3.8-flash-high"
+        }
+      },
+      "enabled": true
+    },
+    {
+      "id": "agent-six",
+      "name": "Agent Six — Adversarial Reviewer and Failure Investigator",
+      "role": "adversarial",
+      "driver": "agy",
+      "capabilities": [
+        "adversarial-review",
+        "stress-testing",
+        "failure-investigation"
+      ],
+      "responsibilities": [
+        "Adversarial challenge of claims and edge cases",
+        "Failure reproduction and resilience analysis",
+        "Security boundaries and resource leak checks",
+        "Discovery of unhandled failure modes"
+      ],
+      "config": {
+        "agy": {
+          "model": "claude-opus-4-6-thinking"
+        }
+      },
+      "enabled": true
+    },
+    {
+      "id": "agent-seven",
+      "name": "Agent Seven — Remediation and Iteration Coordinator",
+      "role": "remediation",
+      "driver": "agy",
+      "capabilities": [
+        "remediation",
+        "iteration-management",
+        "coordination"
+      ],
+      "responsibilities": [
+        "Evaluation of verification and adversarial findings",
+        "Remediation decision making and priority scheduling",
+        "Prevention of circular or ineffective patching loops",
+        "Coordination of corrective engineering iterations"
+      ],
+      "config": {
+        "agy": {
+          "model": "gemini-3.8-flash-high"
+        }
+      },
+      "enabled": true
+    },
+    {
+      "id": "agent-eight",
+      "name": "Agent Eight — Integration Auditor and Completion Gate",
+      "role": "auditor",
+      "driver": "claude",
+      "capabilities": [
+        "audit",
+        "compliance",
+        "cross-agent-reconciliation"
+      ],
+      "responsibilities": [
+        "Cross-agent reconciliation and evidence audit",
+        "Requirements coverage and acceptance criteria verification",
+        "Git readiness and secret hygiene auditing",
+        "Completion qualification and gate assessment"
+      ],
+      "config": {
+        "claude": {
+          "model": "sonnet"
+        }
+      },
+      "enabled": true
+    },
+    {
+      "id": "agent-nine",
+      "name": "Agent Nine — Executive Authorization, Continuation, and Mission Control",
+      "role": "authorization",
+      "driver": "agy",
+      "capabilities": [
+        "authorization",
+        "mission-control",
+        "checkpoint-management"
+      ],
+      "responsibilities": [
+        "Standing internal project-scoped authorization authority",
+        "Continuation approvals and autonomous unblocking",
+        "Mission state and checkpoint preservation",
+        "Formal completion sign-off and closure"
+      ],
+      "config": {
+        "agy": {
+          "model": "gemini-3.8-flash-high"
+        }
+      },
+      "enabled": true
+    }
+  ]
+}
