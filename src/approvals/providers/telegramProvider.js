@@ -19,9 +19,10 @@ import { writeJsonAtomic, readJsonSafe } from '../../state/statePersistence.js';
 import { escapeHtml, formatTelegramText } from '../../notifications/telegramFormat.js';
 import { sendLongText } from '../../notifications/telegramSplit.js';
 import { MAX_DOCUMENT_BYTES } from '../../notifications/channels/telegram.js';
+import { telegramFetch } from '../../infra/telegramFetch.js';
 
 /** Abort a hung Telegram call after this long. */
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export class TelegramApprovalProvider extends ApprovalProvider {
   /**
@@ -39,7 +40,7 @@ export class TelegramApprovalProvider extends ApprovalProvider {
     /** Phase 12 M2: this provider can hand back raw messages and reply. */
     this.canRoute = true;
     this.offsetFile = offsetFile;
-    this.fetchFn = fetchFn ?? globalThis.fetch;
+    this.fetchFn = fetchFn ?? telegramFetch;
     this.memoryOffset = 0;
   }
 

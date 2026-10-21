@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { add, multiply, factorial } from '../src/mathUtils.js';
+import { add, multiply, factorial, power, fibonacci } from '../src/mathUtils.js';
 
 describe('Math Utilities — E2E Real Task', () => {
   describe('add()', () => {
@@ -62,6 +62,66 @@ describe('Math Utilities — E2E Real Task', () => {
       assert.throws(() => factorial(3.5), TypeError);
       assert.throws(() => factorial('5'), TypeError);
       assert.throws(() => factorial(null), TypeError);
+    });
+  });
+
+  describe('power()', () => {
+    it('computes positive integer powers', () => {
+      assert.equal(power(2, 3), 8);
+      assert.equal(power(10, 4), 10000);
+    });
+
+    it('computes power with 0 exponent', () => {
+      assert.equal(power(5, 0), 1);
+      assert.equal(power(-3, 0), 1);
+    });
+
+    it('computes negative exponents', () => {
+      assert.equal(power(2, -1), 0.5);
+      assert.equal(power(4, -2), 0.0625);
+    });
+
+    it('computes fractional exponents', () => {
+      assert.equal(power(9, 0.5), 3);
+      assert.equal(power(27, 1 / 3), 3);
+    });
+
+    it('throws RangeError when raising 0 to negative power', () => {
+      assert.throws(() => power(0, -2), RangeError);
+    });
+
+    it('throws TypeError on invalid inputs', () => {
+      assert.throws(() => power('2', 3), TypeError);
+      assert.throws(() => power(2, NaN), TypeError);
+      assert.throws(() => power(NaN, 2), TypeError);
+    });
+  });
+
+  describe('fibonacci()', () => {
+    it('computes base cases F(0)=0 and F(1)=1', () => {
+      assert.equal(fibonacci(0), 0);
+      assert.equal(fibonacci(1), 1);
+    });
+
+    it('computes standard Fibonacci numbers', () => {
+      assert.equal(fibonacci(2), 1);
+      assert.equal(fibonacci(3), 2);
+      assert.equal(fibonacci(4), 3);
+      assert.equal(fibonacci(5), 5);
+      assert.equal(fibonacci(6), 8);
+      assert.equal(fibonacci(10), 55);
+      assert.equal(fibonacci(20), 6765);
+    });
+
+    it('throws RangeError on negative numbers', () => {
+      assert.throws(() => fibonacci(-1), RangeError);
+      assert.throws(() => fibonacci(-5), RangeError);
+    });
+
+    it('throws TypeError on non-integers or non-numbers', () => {
+      assert.throws(() => fibonacci(2.5), TypeError);
+      assert.throws(() => fibonacci('10'), TypeError);
+      assert.throws(() => fibonacci(null), TypeError);
     });
   });
 });

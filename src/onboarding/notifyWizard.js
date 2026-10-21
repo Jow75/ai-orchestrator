@@ -19,13 +19,14 @@ import { EmailChannel } from '../notifications/channels/email.js';
 import { silentLogger } from '../infra/logger.js';
 import { severityLabel } from '../shared/vocabulary.js';
 import { buildCommandMenu } from '../operator/commandMenu.js';
+import { telegramFetch } from '../infra/telegramFetch.js';
 
 /** Channels `notify tune` can set a per-channel `minSeverity` for. */
 const TUNABLE_CHANNELS = ['desktop', 'webhook', 'discord', 'telegram', 'email'];
 const SEVERITIES = ['info', 'warning', 'critical'];
 
 /** Abort a hung Telegram call after this long. */
-const TELEGRAM_TIMEOUT_MS = 15_000;
+const TELEGRAM_TIMEOUT_MS = 30_000;
 
 /** Call the Telegram Bot API, returning {ok, result} or {ok:false, error}. */
 async function telegramCall(fetchFn, token, method, params, timeoutMs = TELEGRAM_TIMEOUT_MS) {
@@ -79,7 +80,7 @@ function chatIdFromUpdates(updates) {
  * @returns {Promise<{botToken:string, chatId:string, file:string}|null>}
  */
 export async function runTelegramSetup({
-  configManager, prompter, fetchFn = globalThis.fetch,
+  configManager, prompter, fetchFn = telegramFetch,
   pollAttempts = 20, pollDelayMs = 3_000, sleepFn,
 }) {
   const p = prompter;

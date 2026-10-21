@@ -15,9 +15,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { escapeHtml, formatTelegramText } from '../telegramFormat.js';
 import { sendLongText } from '../telegramSplit.js';
+import { telegramFetch } from '../../infra/telegramFetch.js';
 
 /** Abort a hung Telegram call after this long. */
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 /** Telegram's bot-API document size ceiling. */
 export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
@@ -33,7 +34,7 @@ export class TelegramChannel {
     this.name = 'telegram';
     this.config = config;
     this.logger = logger;
-    this.fetchFn = fetchFn ?? globalThis.fetch;
+    this.fetchFn = fetchFn ?? telegramFetch;
   }
 
   api(method) {
